@@ -1,0 +1,22 @@
+FROM python:3.10-slim-bullseye
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+         ffmpeg
+
+
+RUN pip3 install -U pip
+RUN pip3 install --no-cache --upgrade pip setuptools
+
+COPY requirements.txt .
+
+RUN pip3 install --default-timeout=900 -r requirements.txt
+
+WORKDIR /app
+
+COPY main.py .
+COPY utils.py .
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
+
+CMD ["./entrypoint.sh"]

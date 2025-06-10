@@ -1,0 +1,7 @@
+discord.py[voice]
+python-dotenv
+requests
+aiohttp
+psutil
+Pillow
+gtts
