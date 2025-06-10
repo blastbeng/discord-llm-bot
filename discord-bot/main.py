@@ -358,7 +358,7 @@ class PlayAudioWorker:
             voice_client.play(FFmpegPCMAudioBytesIO(content.read(), pipe=True), after=lambda e: logging.info(logmessage))
             await self.interaction.followup.edit_message(message_id=self.message.id,content=self.text, view = view)
 
-            if save:
+            if self.save:
                 database.insert_sentence(dbms, self.text)
 
         except Exception as e:
