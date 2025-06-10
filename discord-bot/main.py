@@ -3,6 +3,7 @@ import sys
 import json
 import time
 import utils
+import database
 import socket
 import random as randompy
 import urllib
@@ -28,10 +29,15 @@ import requests.exceptions
 import psutil
 import json
 from utils import FFmpegPCMAudioBytesIO
-
+from io import BytesIO
+from gtts import gTTS
 dotenv_path = join(dirname(__file__), '.env')
 load_dotenv(dotenv_path)
 
+
+
+dbms = database.Database(database.SQLITE, dbname='discord-bot.sqlite3')
+database.create_db_tables(dbms)
 
 GUILD_ID = discord.Object(id=os.environ.get("GUILD_ID"))
 
@@ -318,22 +324,21 @@ def get_tts_google(text: str):
 
 class PlayAudioWorker:
     
-    def __init__(self, text, interaction, message, ephermeal = True):
+    def __init__(self, text, interaction, message, save=False, ephermeal = True):
         global audio_count_queue
         audio_count_queue = audio_count_queue + 1
         self.interaction = interaction
         self.text = text
         self.ephermeal = ephermeal
         self.message = message
+        self.save = save
 
     @tasks.loop(seconds=0.1, count=1)
     async def play_audio_worker(self):
         global audio_count_queue
         currentguildid = get_current_guild_id(str(self.interaction.guild.id))
         try:   
-            text = None
-            voice = None
-
+            content = get_tts_google(self.text)
             voice_client = get_voice_client_by_guildid(client.voice_clients, self.interaction.guild.id)            
             if not voice_client:
                 raise ClientException("voice_client is None")
@@ -341,18 +346,21 @@ class PlayAudioWorker:
                 voice_client.stop()                               
 
             view = discord.ui.View()
-            view.add_item(PlayButton(content, text))
+            view.add_item(PlayButton(content, self.text))
             view.add_item(StopButton())
                             
             if not voice_client.is_connected():
                 await voice_client.channel.connect()
                 time.sleep(5)   
 
-            content = get_tts_google(text)
 
-            logmessage = 'play_audio_worker - ' + text
+            logmessage = 'play_audio_worker - ' + self.text
             voice_client.play(FFmpegPCMAudioBytesIO(content.read(), pipe=True), after=lambda e: logging.info(logmessage))
-            await self.interaction.followup.edit_message(message_id=self.message.id,content=text, view = view)
+            await self.interaction.followup.edit_message(message_id=self.message.id,content=self.text, view = view)
+
+            if save:
+                database.insert_sentence(dbms, self.text)
+
         except Exception as e:
             exc_type, exc_obj, exc_tb = sys.exc_info()
             fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
@@ -508,16 +516,15 @@ async def speak(interaction: discord.Interaction, text: str, voice: str = "rando
 
             currentguildid = get_current_guild_id(interaction.guild.id)
             
-            lang_to_use = utils.get_guild_language(currentguildid)
 
             if voice != "random":
-                voice = await listvoices_api(language=lang_to_use, filter=voice)
+                voice = await listvoices_api(filter=voice)
             else:
                 voice = 'google'
 
             if voice is not None:
                 message:discord.Message = await interaction.followup.send("I'm starting to generate the audio for:" + " **" + text + "**" + await get_queue_message(), ephemeral = True)
-                worker = PlayAudioWorker(text, interaction, message)
+                worker = PlayAudioWorker(text, interaction, message, save=True)
                 worker.play_audio_worker.start()   
             else:
                 await interaction.followup.send("Discord API Error, " + "please try again later", ephemeral = True)      
@@ -632,27 +639,24 @@ async def random(interaction: discord.Interaction, voice: str = "random", text: 
             currentguildid = get_current_guild_id(interaction.guild.id)                
 
             if voice != "random":
-                voice = await listvoices_api(language=utils.get_guild_language(currentguildid), filter=voice)
+                voice = await listvoices_api(filter=voice)
 
             if voice is not None:
                 
-                content = None
+                sentences = None
 
                 if text is not None:
-                    data = []
-                    with open(join(dirname(__file__), 'config/sentences.txt'), 'rt') as f:
-                        data = f.readlines()
-                    for line in data:
-                        if text in line:
-                            data.append(line)
-                    content = get_tts_google(random.choice(data))
+                    sentences = randompy.choice(database.select_like_sentence(dbms, text))
                 else:
-                    content = get_tts_google(random.choice(list(open(join(dirname(__file__), 'config/sentences.txt')))))
+                    sentences = randompy.choice(database.select_all_sentence(dbms))
 
-                message:discord.Message = await interaction.followup.send("I'm searching a random sentence"  + await get_queue_message(), ephemeral = True)
-                
-                worker = PlayAudioWorker(content, interaction, message)
-                worker.play_audio_worker.start()
+                if sentences is not None and len(sentences) > 0:
+                    message:discord.Message = await interaction.followup.send("I'm searching a random sentence"  + await get_queue_message(), ephemeral = True)
+                    
+                    worker = PlayAudioWorker(randompy.choice(sentences), interaction, message)
+                    worker.play_audio_worker.start()
+                else:
+                    await interaction.followup.send((('No sentence containing "'+text+'" found') if text is not None else "") + "Nothing found", ephemeral = True)
             else:
                 await interaction.followup.send("Discord API Error, please try again later", ephemeral = True)
         else:

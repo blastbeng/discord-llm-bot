@@ -16,6 +16,8 @@ WORKDIR /app
 
 COPY main.py .
 COPY utils.py .
+COPY database.py .
+COPY populate_db.py .
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 
