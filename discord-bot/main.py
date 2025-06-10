@@ -1,4 +1,3 @@
-
 import os
 import sys
 import json
@@ -102,7 +101,7 @@ class PlayButton(discord.ui.Button["InteractionRoles"]):
                     await voice_client.stop()
 
             if voice_client is not None:
-                voice_client.play(FFmpegPCMAudioBytesIO(self.content, pipe=True), after=lambda e: logging.info("play_button - " + self.message))
+                voice_client.play(FFmpegPCMAudioBytesIO(self.content.read(), pipe=True), after=lambda e: logging.info("play_button - " + self.message))
                 await interaction.followup.send(self.message, ephemeral = True)
                 
         except Exception as e:
@@ -352,7 +351,7 @@ class PlayAudioWorker:
             content = get_tts_google(text)
 
             logmessage = 'play_audio_worker - ' + text
-            voice_client.play(FFmpegPCMAudioBytesIO(content, pipe=True), after=lambda e: logging.info(logmessage))
+            voice_client.play(FFmpegPCMAudioBytesIO(content.read(), pipe=True), after=lambda e: logging.info(logmessage))
             await self.interaction.followup.edit_message(message_id=self.message.id,content=text, view = view)
         except Exception as e:
             exc_type, exc_obj, exc_tb = sys.exc_info()
