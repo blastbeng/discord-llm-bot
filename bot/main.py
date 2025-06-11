@@ -22,6 +22,7 @@ from datetime import datetime
 from typing import List
 import asyncio
 import requests
+import requests_cache
 import aiohttp
 import io
 from random import randint
@@ -29,12 +30,12 @@ import requests.exceptions
 import psutil
 import json
 from utils import FFmpegPCMAudioBytesIO
-from io import BytesIO
-from gtts import gTTS
+from datetime import timedelta
 dotenv_path = join(dirname(__file__), '.env')
 load_dotenv(dotenv_path)
 
 
+requests_cache.install_cache('discord_bot_cache')
 
 dbms = database.Database(database.SQLITE, dbname='discord-bot.sqlite3')
 database.create_db_tables(dbms)
@@ -57,7 +58,13 @@ def get_anythingllm_online_status():
         return False
     else:
         return True
-    
+
+def get_tts_google(text: str):
+    mp3_fp = BytesIO()
+    tts = gTTS(text=text, lang="it", slow=False)
+    tts.write_to_fp(mp3_fp)
+    mp3_fp.seek(0)
+    return mp3_fp 
 
 class MyClient(discord.Client):
     def __init__(self, *, intents: discord.Intents):
@@ -84,9 +91,8 @@ class CustomTextInput(discord.ui.TextInput):
         
 class PlayButton(discord.ui.Button["InteractionRoles"]):
 
-    def __init__(self, content, message):
+    def __init__(self, message):
         super().__init__(style=discord.ButtonStyle.green, label="Play")
-        self.content = content
         self.message = message
     
     async def callback(self, interaction: discord.Interaction):
@@ -106,8 +112,10 @@ class PlayButton(discord.ui.Button["InteractionRoles"]):
                 if voice_client is not None and voice_client.is_playing():
                     await voice_client.stop()
 
+            content = get_tts_google(self.message)
+
             if voice_client is not None:
-                voice_client.play(FFmpegPCMAudioBytesIO(self.content.read(), pipe=True), after=lambda e: logging.info("play_button - " + self.message))
+                voice_client.play(FFmpegPCMAudioBytesIO(content.read(), pipe=True), after=lambda e: logging.info("play_button - " + self.message))
                 await interaction.followup.send(self.message, ephemeral = True)
                 
         except Exception as e:
@@ -315,23 +323,16 @@ def get_current_guild_id(guildid):
     else:
         return str(guildid)
 
-def get_tts_google(text: str):
-    mp3_fp = BytesIO()
-    tts = gTTS(text=text, lang="it", slow=False)
-    tts.write_to_fp(mp3_fp)
-    mp3_fp.seek(0)
-    return mp3_fp
-
 class PlayAudioWorker:
     
-    def __init__(self, text, interaction, message, save=False, ephermeal = True):
+    def __init__(self, text, interaction, message, save=False, initial_text=None):
         global audio_count_queue
         audio_count_queue = audio_count_queue + 1
         self.interaction = interaction
         self.text = text
-        self.ephermeal = ephermeal
         self.message = message
         self.save = save
+        self.initial_text = initial_text
 
     @tasks.loop(seconds=0.1, count=1)
     async def play_audio_worker(self):
@@ -346,7 +347,7 @@ class PlayAudioWorker:
                 voice_client.stop()                               
 
             view = discord.ui.View()
-            view.add_item(PlayButton(content, self.text))
+            view.add_item(PlayButton(self.text))
             view.add_item(StopButton())
                             
             if not voice_client.is_connected():
@@ -356,7 +357,7 @@ class PlayAudioWorker:
 
             logmessage = 'play_audio_worker - ' + self.text
             voice_client.play(FFmpegPCMAudioBytesIO(content.read(), pipe=True), after=lambda e: logging.info(logmessage))
-            await self.interaction.followup.edit_message(message_id=self.message.id,content=self.text, view = view)
+            await self.interaction.followup.edit_message(message_id=self.message.id,content=self.text if self.initial_text is None else self.initial_text + self.text, view = view)
 
             if self.save:
                 database.insert_sentence(dbms, self.text)
@@ -604,7 +605,7 @@ async def ask(interaction: discord.Interaction, text: str, voice: str = "google"
                                 anything_llm_json = await anything_llm_response.json()
                                 anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
                                 
-                                worker = PlayAudioWorker(anything_llm_text, interaction, message)
+                                worker = PlayAudioWorker(anything_llm_text, interaction, message, initial_text="**"+str(interaction.user.name) + '**: '+ text + '\n**' + interaction.guild.me.nick + "**: ")
                                 worker.play_audio_worker.start()
                         await anything_llm_session.close()
                 else:
@@ -646,9 +647,9 @@ async def random(interaction: discord.Interaction, voice: str = "random", text: 
                 sentences = None
 
                 if text is not None:
-                    sentences = randompy.choice(database.select_like_sentence(dbms, text))
+                    sentences = database.select_like_sentence(dbms, text)
                 else:
-                    sentences = randompy.choice(database.select_all_sentence(dbms))
+                    sentences = database.select_all_sentence(dbms)
 
                 if sentences is not None and len(sentences) > 0:
                     message:discord.Message = await interaction.followup.send("I'm searching a random sentence"  + await get_queue_message(), ephemeral = True)

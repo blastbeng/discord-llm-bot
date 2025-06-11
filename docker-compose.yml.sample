@@ -2,7 +2,7 @@ services:
   discord-llm-bot:
     pull_policy: build
     build:
-      context: ./discord-bot
+      context: ./bot
       dockerfile: Dockerfile.client
       network: host
     container_name: discord-bot
@@ -15,6 +15,23 @@ services:
       - "./config:/app/config"
       - "/tmp/discord-llm-bot:/tmp/discord-llm-bot"
     image: "blastbeng/discord-llm-bot:1.0.0"
+    restart: unless-stopped
+  telegram-llm-bot:
+    pull_policy: build
+    build:
+      context: ./bot
+      dockerfile: Dockerfile.telegram
+      network: host
+    container_name: telegram-bot
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Rome
+    volumes:
+      - ".env:/app/.env"
+      - "./config:/app/config"
+      - "/tmp/discord-llm-bot:/tmp/discord-llm-bot"
+    image: "blastbeng/telegram-llm-bot:1.0.0"
     restart: unless-stopped
   anythingllm:
     image: mintplexlabs/anythingllm
@@ -30,7 +47,7 @@ services:
       - JWT_SECRET="changeme"
       - LLM_PROVIDER=ollama
       - OLLAMA_BASE_PATH=http://192.168.1.1:11434
-      - OLLAMA_MODEL_PREF=huihui_ai/granite3.1-dense-abliterated:8b-instruct
+      - OLLAMA_MODEL_PREF=hf.co/Triangle104/Meta-Llama-3.1-8B-Instruct-abliterated-Q5_K_M-GGUF:latest
       - OLLAMA_MODEL_TOKEN_LIMIT=4096
       - EMBEDDING_ENGINE=ollama
       - EMBEDDING_BASE_PATH=http://192.168.1.1:11434
@@ -45,7 +62,7 @@ services:
     volumes:
       - anythingllm_storage:/app/server/storage
     extra_hosts:
-      - "changeme:192.168.1.1"
+      - "X:192.168.1.1"
     restart: unless-stopped
     labels:
       - "com.centurylinklabs.watchtower.enable=true"

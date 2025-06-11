@@ -1,14 +1,13 @@
 import os
 import subprocess
 import shlex
-import urllib
 import io
 import random
 import logging
 from discord.opus import Encoder
 import discord
-import aiohttp
 from io import BytesIO
+from gtts import gTTS
 from pathlib import Path
 from os.path import join, dirname
 from dotenv import load_dotenv

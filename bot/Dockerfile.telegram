@@ -1,0 +1,21 @@
+FROM python:3.8-slim-bullseye
+
+#RUN apt-get update && \
+#    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+#        gcc
+
+RUN pip3 install -U pip
+RUN pip3 install --no-cache --upgrade pip setuptools
+
+COPY requirements-telegram.txt .
+
+RUN pip3 install --default-timeout=900 -r requirements-telegram.txt
+
+WORKDIR /app
+
+COPY telegram-bot.py .
+COPY database.py .
+COPY entrypoint-telegram.sh .
+RUN chmod +x entrypoint-telegram.sh
+
+CMD ["./entrypoint-telegram.sh"]
