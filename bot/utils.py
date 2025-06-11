@@ -6,8 +6,6 @@ import random
 import logging
 from discord.opus import Encoder
 import discord
-from io import BytesIO
-from gtts import gTTS
 from pathlib import Path
 from os.path import join, dirname
 from dotenv import load_dotenv

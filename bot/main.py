@@ -29,8 +29,11 @@ from random import randint
 import requests.exceptions
 import psutil
 import json
+from io import BytesIO
+from gtts import gTTS
 from utils import FFmpegPCMAudioBytesIO
 from datetime import timedelta
+
 dotenv_path = join(dirname(__file__), '.env')
 load_dotenv(dotenv_path)
 
