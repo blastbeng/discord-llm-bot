@@ -13,6 +13,7 @@ services:
     volumes:
       - ".env:/app/.env"
       - "./config:/app/config"
+      - "./models:/app/models"
       - "/tmp/discord-llm-bot:/tmp/discord-llm-bot"
     image: "blastbeng/discord-llm-bot:1.0.0"
     restart: unless-stopped
@@ -30,6 +31,7 @@ services:
     volumes:
       - ".env:/app/.env"
       - "./config:/app/config"
+      - "./models:/app/models"
       - "/tmp/discord-llm-bot:/tmp/discord-llm-bot"
     image: "blastbeng/telegram-llm-bot:1.0.0"
     restart: unless-stopped

@@ -12,7 +12,8 @@ import pathlib
 import urllib.request
 from PIL import Image
 from typing import Optional
-from os.path import join, dirname
+from os.path import join as joinpy
+from os.path import dirname
 from dotenv import load_dotenv, set_key
 import discord
 from discord import app_commands
@@ -33,8 +34,13 @@ from io import BytesIO
 from gtts import gTTS
 from utils import FFmpegPCMAudioBytesIO
 from datetime import timedelta
+import uuid
+from piper.voice import PiperVoice
+from pydub import AudioSegment
+import wave
+import copy
 
-dotenv_path = join(dirname(__file__), '.env')
+dotenv_path = joinpy(dirname(__file__), '.env')
 load_dotenv(dotenv_path)
 
 
@@ -69,6 +75,23 @@ def get_tts_google(text: str):
     mp3_fp.seek(0)
     return mp3_fp 
 
+
+
+def get_tts_piper(text: str, voice_str: str):
+    model = joinpy(dirname(__file__), "models/" + voice_str + '.onnx') 
+    if os.path.isfile(model):
+        voice = PiperVoice.load(model)
+        file_path = os.environ.get("TMP_DIR") + str(uuid.uuid4()) + ".wav"
+        with wave.open(file_path, "w") as wav_file:
+            voice.synthesize(text, wav_file)
+        audio = AudioSegment.from_wav(file_path)
+        out = BytesIO()
+        audio.export(out, format='mp3', bitrate="256k")
+        out.seek(0)
+        os.remove(file_path)
+        return out
+    return None
+
 class MyClient(discord.Client):
     def __init__(self, *, intents: discord.Intents):
         super().__init__(intents=intents)
@@ -94,9 +117,10 @@ class CustomTextInput(discord.ui.TextInput):
         
 class PlayButton(discord.ui.Button["InteractionRoles"]):
 
-    def __init__(self, message):
+    def __init__(self, message, content):
         super().__init__(style=discord.ButtonStyle.green, label="Play")
         self.message = message
+        self.content = content
     
     async def callback(self, interaction: discord.Interaction):
         is_deferred=True
@@ -115,10 +139,8 @@ class PlayButton(discord.ui.Button["InteractionRoles"]):
                 if voice_client is not None and voice_client.is_playing():
                     await voice_client.stop()
 
-            content = get_tts_google(self.message)
-
             if voice_client is not None:
-                voice_client.play(FFmpegPCMAudioBytesIO(content.read(), pipe=True), after=lambda e: logging.info("play_button - " + self.message))
+                voice_client.play(FFmpegPCMAudioBytesIO(copy.deepcopy(self.content).read(), pipe=True), after=lambda e: logging.info("play_button - " + self.message))
                 await interaction.followup.send(self.message, ephemeral = True)
                 
         except Exception as e:
@@ -138,7 +160,7 @@ class StopButton(discord.ui.Button["InteractionRoles"]):
             await connect_bot_by_voice_client(voice_client, interaction.user.voice.channel, interaction.guild)
 
             logging.info("stop - StopButton.callback.stop()")
-            await interaction.followup.send("I'm interrupting the bot", ephemeral = True)
+            await interaction.followup.send("Interrompo il bot", ephemeral = True)
             voice_client.stop()
                 
         except Exception as e:
@@ -162,38 +184,17 @@ logging.getLogger('discord.voice_client').setLevel(int(os.environ.get("LOG_LEVEL
 
 discord.utils.setup_logging(level=int(os.environ.get("LOG_LEVEL")), root=False)
 
-available_voices = {}
-
-async def listvoices_api(language="it", filter=None):
-    try:
-        global available_voices
-        available_voices = {}
-        available_voices ["google"] = "google"
-        return available_voices
-    except Exception as e:
-        exc_type, exc_obj, exc_tb = sys.exc_info()
-        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-        logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
-        return None
+available_voices = ["Google", "Paola", "Riccardo"]
 
 async def rps_autocomplete(interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
     currentguildid=get_current_guild_id(interaction.guild.id)
     choices = {}
-    choices ["google"] = "google"
+    choices ["Google"] = "Google"
+    choices ["Paola"] = "Paola"
+    choices ["Riccardo"] = "Riccardo"
+    choices ["random"] = "random"
     choices = [app_commands.Choice(name=choice, value=choice) for choice in choices if current.lower() in choice.lower()][:25]
     return choices
-
-
-
-def get_true_false_menu():
-
-    options = []    
-    options.append(app_commands.Choice(name="False", value="0"))
-    options.append(app_commands.Choice(name="True",  value="1"))
-
-    return options
-
-truefalsemenu = get_true_false_menu()
 
 audio_count_queue = 0
 
@@ -204,14 +205,14 @@ async def send_error(e, interaction, from_generic=False, is_deferred=False):
         try:
             dtc = "Spam detected."
             spamarray=[]
-            spamarray.append(dtc + " " + interaction.user.mention + " I am watching you.")
-            spamarray.append(dtc + " " + interaction.user.mention + " This doesn't make you a good person.")
-            spamarray.append(dtc + " " + interaction.user.mention + " I'm stupid but not annoying.")
-            spamarray.append(dtc + " " + interaction.user.mention + " Take your time.")
-            spamarray.append(dtc + " " + interaction.user.mention + " Keep calm.")
-            spamarray.append(dtc + " " + interaction.user.mention + " Do you also do this at your home?")
-            spamarray.append(dtc + " " + interaction.user.mention + " Why are you so anxious?")
-            spamarray.append(dtc + " " + interaction.user.mention + " I'll add you to the blacklist.")
+            spamarray.append(dtc + " " + interaction.user.mention + " Ti sto guardando.")
+            spamarray.append(dtc + " " + interaction.user.mention + " Questo non ti rende una brava persona.")
+            spamarray.append(dtc + " " + interaction.user.mention + " Sono stupido ma non noioso.")
+            spamarray.append(dtc + " " + interaction.user.mention + " Prenditi il tuo tempo.")
+            spamarray.append(dtc + " " + interaction.user.mention + " Mantieni la calma.")
+            spamarray.append(dtc + " " + interaction.user.mention + " Anche a casa tua ti comporto cosí?")
+            spamarray.append(dtc + " " + interaction.user.mention + " Perché sei cosí ansioso?")
+            spamarray.append(dtc + " " + interaction.user.mention + " Ti aggiungo alla blacklist.")
             command = str(interaction.data['name'])
             cooldown = command + ' -> Cooldown: ' + str(e.cooldown.per) + '[' + str(round(e.retry_after, 2)) + ']s'
 
@@ -225,9 +226,9 @@ async def send_error(e, interaction, from_generic=False, is_deferred=False):
             fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
             logging.error("[GUILDID : %s] %s %s %s", currentguildid, exc_type, fname, exc_tb.tb_lineno, exc_info=1)
             if is_deferred:
-                await interaction.followup.send("Discord API Error, please try again later", ephemeral = True)
+                await interaction.followup.send("Discord API Error, per favore riprova piú tardi", ephemeral = True)
             else:
-                await interaction.response.send_message("Discord API Error, please try again later", ephemeral = True)
+                await interaction.response.send_message("Discord API Error, per favore riprova piú tardi", ephemeral = True)
     elif isinstance(e, ExcludedPermissionError):
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
@@ -244,33 +245,33 @@ async def send_error(e, interaction, from_generic=False, is_deferred=False):
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logging.error("[GUILDID : %s] %s %s %s - %s", currentguildid, exc_type, fname, exc_tb.tb_lineno, e.args[0])
         if is_deferred:
-            await interaction.followup.send("You do not have permission to use this command.", ephemeral = True)
+            await interaction.followup.send("Non hai i permessi per utilizzare questo comando.", ephemeral = True)
         else:
-            await interaction.response.send_message("You do not have permission to use this command.", ephemeral = True)
+            await interaction.response.send_message("Non hai i permessi per utilizzare questo comando.", ephemeral = True)
     elif isinstance(e, PermissionError):
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logging.error("[GUILDID : %s] %s %s %s - %s", currentguildid, exc_type, fname, exc_tb.tb_lineno, e.args[0])
         if is_deferred:
-            await interaction.followup.send("You do not have permission to use this bot in this voice channel.", ephemeral = True)
+            await interaction.followup.send("Non hai i permessi per utilizzare questo comando in questo canale vocale.", ephemeral = True)
         else:
-            await interaction.response.send_message("You do not have permission to use this bot in this voice channel.", ephemeral = True)
+            await interaction.response.send_message("Non hai i permessi per utilizzare questo comando in questo canale vocale.", ephemeral = True)
     elif isinstance(e, NoChannelError):
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logging.error("[GUILDID : %s] %s %s %s - %s", currentguildid, exc_type, fname, exc_tb.tb_lineno, e.args[0])
         if is_deferred:
-            await interaction.followup.send("You must be connected to a voice channel to use this command", ephemeral = True)
+            await interaction.followup.send("Devi essere connesso a un canale vocale per utilizzare questo comando", ephemeral = True)
         else:
-            await interaction.response.send_message("You must be connected to a voice channel to use this command", ephemeral = True)
+            await interaction.response.send_message("Devi essere connesso a un canale vocale per utilizzare questo comando", ephemeral = True)
     else:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logging.error("[GUILDID : %s] %s %s %s", currentguildid, exc_type, fname, exc_tb.tb_lineno, e.args[0])
         if is_deferred:
-            await interaction.followup.send("Discord API Error, please try again later", ephemeral = True)
+            await interaction.followup.send("Discord API Error, per favore riprova piú tardi", ephemeral = True)
         else:
-            await interaction.response.send_message("Discord API Error, please try again later", ephemeral = True)
+            await interaction.response.send_message("Discord API Error, per favore riprova piú tardi", ephemeral = True)
     
 
 def get_voice_client_by_guildid(voice_clients, guildid):
@@ -328,12 +329,13 @@ def get_current_guild_id(guildid):
 
 class PlayAudioWorker:
     
-    def __init__(self, text, interaction, message, save=False, initial_text=None):
+    def __init__(self, text, interaction, message, voice, save=False, initial_text=None):
         global audio_count_queue
         audio_count_queue = audio_count_queue + 1
         self.interaction = interaction
         self.text = text
         self.message = message
+        self.voice = voice
         self.save = save
         self.initial_text = initial_text
 
@@ -341,26 +343,38 @@ class PlayAudioWorker:
     async def play_audio_worker(self):
         global audio_count_queue
         currentguildid = get_current_guild_id(str(self.interaction.guild.id))
-        try:   
-            content = get_tts_google(self.text)
+        try:
+            content = None
+            if self.voice == "Google":
+                content = get_tts_google(self.text)
+            elif self.voice == "random":
+                rnd_voice = randompy.choice(available_voices)
+                if rnd_voice == "Google":
+                    content = get_tts_google(self.text)
+                else:
+                    content = get_tts_piper(self.text, rnd_voice)
+            else:
+                content = get_tts_piper(self.text, self.voice)
             voice_client = get_voice_client_by_guildid(client.voice_clients, self.interaction.guild.id)            
             if not voice_client:
                 raise ClientException("voice_client is None")
             if voice_client.is_playing():
-                voice_client.stop()                               
-
-            view = discord.ui.View()
-            view.add_item(PlayButton(self.text))
-            view.add_item(StopButton())
+                voice_client.stop()               
                             
             if not voice_client.is_connected():
                 await voice_client.channel.connect()
                 time.sleep(5)   
 
+            if content is not None:                
 
-            logmessage = 'play_audio_worker - ' + self.text
-            voice_client.play(FFmpegPCMAudioBytesIO(content.read(), pipe=True), after=lambda e: logging.info(logmessage))
-            await self.interaction.followup.edit_message(message_id=self.message.id,content=self.text if self.initial_text is None else self.initial_text + self.text, view = view)
+                view = discord.ui.View()
+                view.add_item(PlayButton(self.text, copy.deepcopy(content)))
+                view.add_item(StopButton())
+                logmessage = 'play_audio_worker - ' + self.text
+                voice_client.play(FFmpegPCMAudioBytesIO(copy.deepcopy(content).read(), pipe=True), after=lambda e: logging.info(logmessage))
+                await self.interaction.followup.edit_message(message_id=self.message.id,content=self.text if self.initial_text is None else self.initial_text + self.text, view = view)
+            else:
+                await self.interaction.followup.edit_message(message_id=self.message.id,content="Errore nella generazione dell'audio, prova a selezionare una voce diversa.")
 
             if self.save:
                 database.insert_sentence(dbms, self.text)
@@ -378,11 +392,11 @@ class PlayAudioWorker:
 async def get_queue_message():
     global audio_count_queue
     message = "\n\n"
-    message = message + "If the server is overloaded, it may take some time"
+    message = message + "Se il server é sovraccarico, potrebbe volerci un po' di tempo"
     message = message + "\n"
     message = message + "*CPU: " + str(psutil.cpu_percent()) + "% - RAM: " + str(psutil.virtual_memory()[2]) + "%*"
     message = message + "\n"
-    message = message + "**" + "TTS in queue:" + " " + str(0 if audio_count_queue == 0 else audio_count_queue - 1) + "**"
+    message = message + "**" + "TTS in coda:" + " " + str(0 if audio_count_queue == 0 else audio_count_queue - 1) + "**"
     return message
 
 @tasks.loop(hours=6)
@@ -434,8 +448,7 @@ async def on_connect():
 @client.event
 async def on_guild_available(guild):
     try:
-        currentguildid = get_current_guild_id(str(guild.id))       
-        await listvoices_api(filter=None)  
+        currentguildid = get_current_guild_id(str(guild.id))
 
     except Exception as e:
         exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -473,7 +486,7 @@ async def join(interaction: discord.Interaction):
             time.sleep(5)
         await connect_bot_by_voice_client(voice_client, interaction.user.voice.channel, interaction.guild)
 
-        await interaction.followup.send("I'm joining the voice channel", ephemeral = True)
+        await interaction.followup.send("Sto entrando nel canale", ephemeral = True)
          
     except Exception as e:
         await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
@@ -490,21 +503,21 @@ async def leave(interaction: discord.Interaction):
         voice_client = get_voice_client_by_guildid(client.voice_clients, interaction.guild.id)
         if voice_client:       
             await voice_client.disconnect()     
-            await interaction.followup.send("I'm leaving the voice channel", ephemeral = True)
+            await interaction.followup.send("Sto lasciando il canale", ephemeral = True)
         else:
-            await interaction.followup.send("I'm not connected to any voice channel", ephemeral = True)       
+            await interaction.followup.send("Non sono connesso a nessun canale", ephemeral = True)       
          
     except Exception as e:
         await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
 
 @client.tree.command()
 @app_commands.rename(text='text')
-@app_commands.describe(text="The sentence to repeat")
+@app_commands.describe(text="La frase da ripetere")
 @app_commands.rename(voice='voice')
-@app_commands.describe(voice="The voice to use")
+@app_commands.describe(voice="La voce da usare")
 @app_commands.autocomplete(voice=rps_autocomplete)
 @app_commands.checks.cooldown(1, 5.0, key=lambda i: (i.user.id))
-async def speak(interaction: discord.Interaction, text: str, voice: str = "random"):
+async def speak(interaction: discord.Interaction, text: str, voice: str = "Google"):
     """Repeat a sentence"""
     is_deferred=True
     try:
@@ -515,30 +528,20 @@ async def speak(interaction: discord.Interaction, text: str, voice: str = "rando
         await connect_bot_by_voice_client(voice_client, interaction.user.voice.channel, interaction.guild)
 
         if voice_client and not hasattr(voice_client, 'play') and voice_client.is_connected():
-            await interaction.followup.send("Please try again later, I'm initializing the voice connection...", ephemeral = True)
+            await interaction.followup.send("Per favore riprova piú tardi, Sto inizializzando la connessione...", ephemeral = True)
         else:
 
             currentguildid = get_current_guild_id(interaction.guild.id)
-            
-
-            if voice != "random":
-                voice = await listvoices_api(filter=voice)
-            else:
-                voice = 'google'
-
-            if voice is not None:
-                message:discord.Message = await interaction.followup.send("I'm starting to generate the audio for:" + " **" + text + "**" + await get_queue_message(), ephemeral = True)
-                worker = PlayAudioWorker(text, interaction, message, save=True)
-                worker.play_audio_worker.start()   
-            else:
-                await interaction.followup.send("Discord API Error, " + "please try again later", ephemeral = True)      
+            message:discord.Message = await interaction.followup.send("Inizio a generare l'audio per la frase:" + " **" + text + "**" + await get_queue_message(), ephemeral = True)
+            worker = PlayAudioWorker(text, interaction, message, voice, save=True)
+            worker.play_audio_worker.start()
                  
     except Exception as e:
         await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
 
 @client.tree.command()
 @app_commands.rename(audio='audio')
-@app_commands.describe(audio="The audio (mp3 or wav)")
+@app_commands.describe(audio="Il file audio (mp3 or wav)")
 @app_commands.checks.cooldown(1, 5.0, key=lambda i: (i.user.id))
 async def audio(interaction: discord.Interaction, audio: discord.Attachment):
     """Audio playback from the input audio"""
@@ -550,7 +553,7 @@ async def audio(interaction: discord.Interaction, audio: discord.Attachment):
         await connect_bot_by_voice_client(voice_client, interaction.user.voice.channel, interaction.guild)
 
         if voice_client and not hasattr(voice_client, 'play') and voice_client.is_connected():
-            await interaction.followup.send("Please try again later, I'm initializing the voice connection...", ephemeral = True)
+            await interaction.followup.send("Per favore riprova piú tardi, Sto inizializzando la connessione...", ephemeral = True)
         elif voice_client:            
             if not utils.allowed_audio(audio.filename):
                 await interaction.followup.send("The file extension is not valid.", ephemeral = True)     
@@ -559,23 +562,23 @@ async def audio(interaction: discord.Interaction, audio: discord.Attachment):
                 voice_client.play(FFmpegPCMAudioBytesIO(audiofile.fp.read(), pipe=True), after=lambda e: logging.info(urllib.parse.quote(str(interaction.user.name)) + " requested an audio playback from file"))
                 await interaction.followup.send("Done! I'm starting the audio playback!", ephemeral = True)   
         else:
-            await interaction.followup.send("The bot is not ready yet or another user is already using another command." +"\n" + "Please try again later or use stop command", ephemeral = True)            
+            await interaction.followup.send("Il bot non é ancora pronto opppure un altro user sta usando qualche altro comando.\nPer favore riprova piú tardi o utilizza il comando /stop", ephemeral = True)            
         
     except Exception as e:
         await send_error(e, interaction)
 
 @client.tree.command()
 @app_commands.rename(text='text')
-@app_commands.describe(text="the sentence to ask")
+@app_commands.describe(text="La frase da chiedere")
 @app_commands.rename(voice='voice')
-@app_commands.describe(voice="The voice to use")
+@app_commands.describe(voice="La voce da usare")
 @app_commands.autocomplete(voice=rps_autocomplete)
 @app_commands.checks.cooldown(1, 30.0, key=lambda i: (i.user.id))
-async def ask(interaction: discord.Interaction, text: str, voice: str = "google"):
+async def ask(interaction: discord.Interaction, text: str, voice: str = "Google"):
     """Ask something."""
     is_deferred=True
     try:
-        await interaction.response.defer(thinking=True, ephemeral=True)
+        await interaction.response.defer(thinking=True, ephemeral=False)
         check_permissions(interaction)
         
         voice_client = get_voice_client_by_guildid(client.voice_clients, interaction.guild.id)
@@ -583,50 +586,43 @@ async def ask(interaction: discord.Interaction, text: str, voice: str = "google"
 
         
         if voice_client and not hasattr(voice_client, 'play') and voice_client.is_connected():
-            await interaction.followup.send("Please try again later, I'm initializing the voice connection...", ephemeral = True)
+            await interaction.followup.send("Per favore riprova piú tardi, Sto inizializzando la connessione...", ephemeral = True)
         else:
             currentguildid = get_current_guild_id(interaction.guild.id)
-
-            if voice != "google":
-                voice = await listvoices_api(language=lang_to_use, filter=voice)
-
-            if voice is not None:
-                if currentguildid == '000000' and get_anythingllm_online_status():
-                    data = {
-                            "message": text.rstrip(),
-                            "mode": "chat"
-                        }
-                    headers = {
-                        'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
+            if currentguildid == '000000' and get_anythingllm_online_status():
+                data = {
+                        "message": text.rstrip(),
+                        "mode": "chat"
                     }
-                    connector = aiohttp.TCPConnector(force_close=True)
-                    anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
-                    message:discord.Message = await interaction.followup.send("I'm looking for an answer to:" + " **" + text + "**" + await get_queue_message(), ephemeral = True)            
-                    async with aiohttp.ClientSession(connector=connector) as anything_llm_session:
-                        async with anything_llm_session.post(anything_llm_url, headers=headers, json=data) as anything_llm_response:
-                            if (anything_llm_response.status == 200):
-                                anything_llm_json = await anything_llm_response.json()
-                                anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
-                                
-                                worker = PlayAudioWorker(anything_llm_text, interaction, message, initial_text="**"+str(interaction.user.name) + '**: '+ text + '\n**' + interaction.guild.me.nick + "**: ")
-                                worker.play_audio_worker.start()
-                        await anything_llm_session.close()
-                else:
-                    await interaction.followup.send("The AI Chatbot is currently offline, please try again later", ephemeral = True) 
+                headers = {
+                    'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
+                }
+                connector = aiohttp.TCPConnector(force_close=True)
+                anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
+                message:discord.Message = await interaction.followup.send('**' + str(interaction.user.name) + "** ha chiesto al bot:" + " **" + text + "**" + await get_queue_message(), ephemeral = False)            
+                async with aiohttp.ClientSession(connector=connector) as anything_llm_session:
+                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data) as anything_llm_response:
+                        if (anything_llm_response.status == 200):
+                            anything_llm_json = await anything_llm_response.json()
+                            anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
+                            
+                            worker = PlayAudioWorker(anything_llm_text, interaction, message, voice, initial_text="**"+str(interaction.user.name) + '**: '+ text + '\n**' + interaction.guild.me.nick + "**: ")
+                            worker.play_audio_worker.start()
+                    await anything_llm_session.close()
             else:
-                await interaction.followup.send("Discord API Error, please try again later", ephemeral = True) 
+                await interaction.followup.send("Il Chatbot AI é offline, per favore riprova piú tardi", ephemeral = True) 
                    
     except Exception as e:
         await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
 
 @client.tree.command()
 @app_commands.rename(voice='voice')
-@app_commands.describe(voice="The voice to use")
+@app_commands.describe(voice="La voce da usare")
 @app_commands.autocomplete(voice=rps_autocomplete)
 @app_commands.rename(text='text')
-@app_commands.describe(text="The text to search")
+@app_commands.describe(text="Il testo da cercare")
 @app_commands.checks.cooldown(1, 5.0, key=lambda i: (i.user.id))
-async def random(interaction: discord.Interaction, voice: str = "random", text: str = ""):
+async def random(interaction: discord.Interaction, voice: str = "Google", text: str = ""):
     """Say a random sentence"""
     is_deferred=True
     try:
@@ -637,34 +633,28 @@ async def random(interaction: discord.Interaction, voice: str = "random", text: 
         await connect_bot_by_voice_client(voice_client, interaction.user.voice.channel, interaction.guild)
 
         if voice_client and (not hasattr(voice_client, 'play') or not voice_client.is_connected()):
-            await interaction.followup.send("Please try again later, I'm initializing the voice connection...", ephemeral = True)
+            await interaction.followup.send("Per favore riprova piú tardi, sto initializzando la connessione...", ephemeral = True)
         elif voice_client:
             
-            currentguildid = get_current_guild_id(interaction.guild.id)                
-
-            if voice != "random":
-                voice = await listvoices_api(filter=voice)
-
-            if voice is not None:
+            currentguildid = get_current_guild_id(interaction.guild.id)  
                 
-                sentences = None
+            sentences = None
 
-                if text is not None:
-                    sentences = database.select_like_sentence(dbms, text)
-                else:
-                    sentences = database.select_all_sentence(dbms)
-
-                if sentences is not None and len(sentences) > 0:
-                    message:discord.Message = await interaction.followup.send("I'm searching a random sentence"  + await get_queue_message(), ephemeral = True)
-                    
-                    worker = PlayAudioWorker(randompy.choice(sentences), interaction, message)
-                    worker.play_audio_worker.start()
-                else:
-                    await interaction.followup.send((('No sentence containing "'+text+'" found') if text is not None else "") + "Nothing found", ephemeral = True)
+            if text is not None:
+                sentences = database.select_like_sentence(dbms, text)
             else:
-                await interaction.followup.send("Discord API Error, please try again later", ephemeral = True)
+                sentences = database.select_all_sentence(dbms)
+
+            if sentences is not None and len(sentences) > 0:
+                message:discord.Message = await interaction.followup.send("I'm searching a random sentence"  + await get_queue_message(), ephemeral = True)
+                
+                worker = PlayAudioWorker(randompy.choice(sentences), interaction, message, voice)
+                worker.play_audio_worker.start()
+            else:
+                await interaction.followup.send((('No sentence containing "'+text+'" found') if text is not None else "") + "Nothing found", ephemeral = True)
+
         else:
-            await interaction.followup.send("The bot is not ready yet or another user is already using another command.\nPlease try again later or use stop command", ephemeral = True)
+            await interaction.followup.send("Il bot non é ancora pronto opppure un altro user sta usando qualche altro comando.\nPer favore riprova piú tardi o utilizza il comando /stop", ephemeral = True)
 
          
     except Exception as e:
@@ -680,12 +670,12 @@ async def restart(interaction: discord.Interaction):
         await interaction.response.defer(thinking=True, ephemeral=True)
         if str(interaction.guild.id) == str(os.environ.get("GUILD_ID")) and str(interaction.user.id) == str(os.environ.get("ADMIN_ID")):
             if interaction.user.guild_permissions.administrator:
-                await interaction.followup.send("I am restarting the bot.", ephemeral = True)
+                await interaction.followup.send("Sto riavviando il bot.", ephemeral = True)
                 os.execv(sys.executable, ['python'] + sys.argv)
             else:
-                await interaction.followup.send("Only administrators can use this command", ephemeral = True)
+                await interaction.followup.send("Solo gli amministratori possono utilizzare questo comando", ephemeral = True)
         else:
-            await interaction.followup.send("This is a private command and can only be used by members with specific permissions on the main Bot Server", ephemeral = True)
+            await interaction.followup.send("Solo gli amministratori possono utilizzare questo comando nel server padre", ephemeral = True)
     except Exception as e:
         await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
 
@@ -701,7 +691,7 @@ async def stop(interaction: discord.Interaction):
         await connect_bot_by_voice_client(voice_client, interaction.user.voice.channel, interaction.guild)
 
         logging.info("stop - voice_client.stop()")
-        await interaction.followup.send("I'm interrupting the bot", ephemeral = True)
+        await interaction.followup.send("Interrompo il bot", ephemeral = True)
         voice_client.stop()
             
     except Exception as e:
@@ -709,7 +699,7 @@ async def stop(interaction: discord.Interaction):
 
 @client.tree.command()
 @app_commands.rename(name='name')
-@app_commands.describe(name="New bot nickname (32 chars limit)")
+@app_commands.describe(name="Nuovo nickname del bot (limite di 32 caratteri)")
 @app_commands.checks.cooldown(1, 5.0, key=lambda i: (i.user.id))
 async def rename(interaction: discord.Interaction, name: str):
     """Rename bot."""
@@ -721,18 +711,18 @@ async def rename(interaction: discord.Interaction, name: str):
         if len(name) < 32:
             currentguildid = get_current_guild_id(interaction.guild.id)
             
-            message = "You renamed me to" + ' "'+name+'"'
+            message = "Mi hai rinominato in" + ' "'+name+'"'
             await interaction.guild.me.edit(nick=name)
             await interaction.followup.send(message, ephemeral = True)
         else:
-            await interaction.followup.send("My name cannot be longer than 32 characters", ephemeral = True)
+            await interaction.followup.send("Il mio nickname non puó essere piú lungo di 32 caratteri", ephemeral = True)
     except Exception as e:
         await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
 
 @client.tree.command()
 @app_commands.guilds(discord.Object(id=os.environ.get("GUILD_ID")))
 @app_commands.rename(image='image')
-@app_commands.describe(image="New bot avatar")
+@app_commands.describe(image="Nuovo avatar del bot")
 @app_commands.checks.cooldown(1, 5.0, key=lambda i: (i.user.id))
 async def avatar(interaction: discord.Interaction, image: discord.Attachment):
     """Change bot avatar."""
@@ -749,12 +739,12 @@ async def avatar(interaction: discord.Interaction, image: discord.Attachment):
                 with open(filepath, 'rb') as f:
                     image = f.read()
                 await client.user.edit(avatar=image)
-                await interaction.followup.send("The image has been changed", ephemeral = True)
+                await interaction.followup.send("L'immagine é stata modificata", ephemeral = True)
                 os.remove(filepath)
             else:
-                await interaction.followup.send("This file type is not supported", ephemeral = True)
+                await interaction.followup.send("Questo tipo di file non é supportato", ephemeral = True)
         else:
-            await interaction.followup.send("This is a private command and can only be used by members with specific permissions on the main Bot Server", ephemeral = True)
+            await interaction.followup.send("Solo gli amministratori possono utilizzare questo comando nel server padre", ephemeral = True)
     except Exception as e:
         await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
 

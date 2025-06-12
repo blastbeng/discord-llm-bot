@@ -1,8 +1,8 @@
-FROM python:3.8-slim-bullseye
+FROM python:3.11-slim-bullseye
 
-#RUN apt-get update && \
-#    DEBIAN_FRONTEND=noninteractive apt-get install -y \
-#        gcc
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        ffmpeg
 
 RUN pip3 install -U pip
 RUN pip3 install --no-cache --upgrade pip setuptools

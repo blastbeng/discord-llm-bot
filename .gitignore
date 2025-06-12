@@ -134,6 +134,7 @@ dmypy.json
 .pyre/
 .vscode/
 config/
+models/
 pixray
 pixray/
 diffvg
@@ -141,6 +142,7 @@ diffvg/.env.example
 docker-compose.yml
 battuteapi_data
 battuteapi_data/
+models
 config
 config_old
 backups

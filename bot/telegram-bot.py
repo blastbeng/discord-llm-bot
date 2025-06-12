@@ -9,13 +9,19 @@ import sys
 import urllib
 import time
 import aiohttp
+import hashlib
 import database
+import wave
+import uuid
 from datetime import datetime
+from os.path import join, dirname
 from dotenv import load_dotenv
 from io import BytesIO
 from gtts import gTTS
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
+from piper.voice import PiperVoice
+from pydub import AudioSegment
 
 load_dotenv()
 
@@ -176,7 +182,6 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
           
 application.add_handler(CommandHandler('ask', ask))
 
-
 async def speak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         chatid = str(update.effective_chat.id)
@@ -186,9 +191,25 @@ async def speak(update: Update, context: ContextTypes.DEFAULT_TYPE):
             splitted = userinput.split("-")
             message = splitted[0].strip()
             if(message != "" and len(message) <= 500  and not message.endswith('bot')):
-                audio = get_tts_google(message)
-                await update.message.reply_audio(audio, disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=get_random_string(12)+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
-                
+                if len(splitted) > 1 and splitted[1] is not None and lower(splitted[1].strip() != 'google'):
+                    voice_str = splitted[1].strip()
+                    model = join(dirname(__file__), "models/" + voice_str + '.onnx') 
+                    if os.path.isfile(model):
+                        voice = PiperVoice.load(model)
+                        file_path = os.environ.get("TMP_DIR") + str(uuid.uuid4()) + ".wav"
+                        with wave.open(file_path, "w") as wav_file:
+                            voice.synthesize(message, wav_file)
+                        audio = AudioSegment.from_wav(file_path)
+                        out = BytesIO()
+                        audio.export(out, format='mp3', bitrate="256k")
+                        out.seek(0)
+                        os.remove(file_path)
+                        await update.message.reply_audio(out, disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=get_random_string(12)+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
+                    else:
+                        await update.message.reply_text("Voce " + voice_str + " non trovata!", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+                else:
+                    await update.message.reply_audio(get_tts_google(message), disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=get_random_string(12)+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
+                #await embed_message(message)
             else:
 
                 text = "se vuoi che ripeto qualcosa devi scrivere una frase dopo /speak (massimo 500 caratteri)."
