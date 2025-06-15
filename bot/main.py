@@ -184,14 +184,24 @@ logging.getLogger('discord.voice_client').setLevel(int(os.environ.get("LOG_LEVEL
 
 discord.utils.setup_logging(level=int(os.environ.get("LOG_LEVEL")), root=False)
 
-available_voices = ["Google", "Paola", "Riccardo"]
+def get_available_voices():
+    voices = []
+    filenames = next(os.walk(joinpy(dirname(__file__), "models")), (None, None, []))[2]
+    for filename in filenames:
+        name = filename.split(".")[0]
+        if name not in voices:
+            voices.append(name)
+    voices.append("Google")
+    return voices
+
+available_voices = get_available_voices()
 
 async def rps_autocomplete(interaction: discord.Interaction, current: str) -> List[app_commands.Choice[str]]:
-    currentguildid=get_current_guild_id(interaction.guild.id)
+    global available_voices
+    available_voices = get_available_voices()
     choices = {}
-    choices ["Google"] = "Google"
-    choices ["Paola"] = "Paola"
-    choices ["Riccardo"] = "Riccardo"
+    for voice in available_voices:
+        choices [voice] = voice
     choices ["random"] = "random"
     choices = [app_commands.Choice(name=choice, value=choice) for choice in choices if current.lower() in choice.lower()][:25]
     return choices
@@ -646,12 +656,12 @@ async def random(interaction: discord.Interaction, voice: str = "Google", text: 
                 sentences = database.select_all_sentence(dbms)
 
             if sentences is not None and len(sentences) > 0:
-                message:discord.Message = await interaction.followup.send("I'm searching a random sentence"  + await get_queue_message(), ephemeral = True)
+                message:discord.Message = await interaction.followup.send("Sto cercando una frase casuale"  + await get_queue_message(), ephemeral = True)
                 
                 worker = PlayAudioWorker(randompy.choice(sentences), interaction, message, voice)
                 worker.play_audio_worker.start()
             else:
-                await interaction.followup.send((('No sentence containing "'+text+'" found') if text is not None else "") + "Nothing found", ephemeral = True)
+                await interaction.followup.send((('Nessuna frase trovata contenente il testo "'+text+'"') if text is not None else "") + "Nothing found", ephemeral = True)
 
         else:
             await interaction.followup.send("Il bot non é ancora pronto opppure un altro user sta usando qualche altro comando.\nPer favore riprova piú tardi o utilizza il comando /stop", ephemeral = True)
