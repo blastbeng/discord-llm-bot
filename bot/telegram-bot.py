@@ -240,7 +240,7 @@ async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE, from_cmd=
                     if is_video:
                         content = await update.message.effective_attachment.get_file()
                         video = {"video":handle_file(content.file_path)}
-                    else:
+                    elif not from_cmd:
                         content = await update.message.effective_attachment[-1].get_file()
                         photo = handle_file(content.file_path)
 
@@ -255,7 +255,7 @@ async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE, from_cmd=
                             param_6="",
                             param_7=random.randint(0,9223372036854775807),
                             param_8=False,
-                            param_9=1,
+                            param_9=5,
                             param_10=9,
                             param_11=25,
                             param_12=1,
@@ -271,8 +271,8 @@ async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE, from_cmd=
                             param_22="Noise",
                             param_23=True,
                             param_24=[],
-                            param_25=384,
-                            param_26=640,
+                            param_25=256,
+                            param_26=512,
                             param_27=True,
                             param_28=5,
                             api_name="/handle_start_button"
