@@ -216,7 +216,7 @@ async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE, from_cmd=
                     prompt = None
                     if message == "" or message == None:
                         data = {
-                            "message": "Mi serve un prompt casuale da usare in un generatore AI text-to-video o img-to-video",
+                            "message": "Mi serve un prompt casuale da usare in un generatore AI text-to-video o image-to-video",
                             "mode": "chat"
                         }
                         headers = {
