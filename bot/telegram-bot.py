@@ -22,6 +22,7 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 from piper.voice import PiperVoice
 from pydub import AudioSegment
+from gradio_client import Client, handle_file
 
 load_dotenv()
 
@@ -55,6 +56,22 @@ def get_tts_google(text: str):
 def get_anythingllm_online_status():
     try:
         r = requests.get(os.environ.get("ANYTHING_LLM_ENDPOINT_OLLAMA"), timeout=1)
+        if (r.status_code == 200):
+            return True
+        else:
+            return False
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+        logging.info("AnythingLLM Host Offline.")
+        return False
+    except requests.exceptions.HTTPError:
+        logging.info("AnythingLLM Host Error 4xx or 5xx.")
+        return False
+    else:
+        return True
+
+def get_framepack_online_status():
+    try:
+        r = requests.get(os.environ.get("FRAMEPACK_ENDPOINT"), timeout=1)
         if (r.status_code == 200):
             return True
         else:
@@ -142,7 +159,7 @@ application.add_handler(CommandHandler('random', random_cmd))
 async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         chatid = str(update.effective_chat.id)
-        if((CHAT_ID == chatid or GROUP_CHAT_ID == chatid)):
+        if(CHAT_ID == chatid):
             strid = "000000"
             message = update.message.text[5:].strip()
             if(message != "" and len(message) <= 500  and not message.endswith('bot')):
@@ -181,6 +198,115 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
           
 application.add_handler(CommandHandler('ask', ask))
+
+async def generate_from_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await generate(update, context, from_cmd=True)
+
+async def generate_from_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await generate(update, context, from_cmd=False, model=random.choice(["Video","Video F1"]), is_video=True)
+
+async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE, from_cmd=False, model=random.choice(["Original","F1"]), is_video=False):
+    try:
+        chatid = str(update.effective_chat.id)
+        if(CHAT_ID == chatid):
+            strid = "000000"
+            message = update.message.text[10:].strip() if from_cmd else update.message.caption
+            if(len(message) <= 500  and not message.endswith('bot')):
+                if get_anythingllm_online_status() and get_framepack_online_status():
+                    prompt = None
+                    if message == "" or message == None:
+                        data = {
+                            "message": "Mi serve un prompt casuale da usare in un generatore AI text-to-video o img-to-video",
+                            "mode": "chat"
+                        }
+                        headers = {
+                            'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
+                        }
+                        connector = aiohttp.TCPConnector(force_close=True)
+                        anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
+                        async with aiohttp.ClientSession(connector=connector) as anything_llm_session:
+                            async with anything_llm_session.post(anything_llm_url, headers=headers, json=data) as anything_llm_response:
+                                if (anything_llm_response.status == 200):
+                                    anything_llm_json = await anything_llm_response.json()
+                                    prompt = anything_llm_json["textResponse"].rstrip()
+                                else:
+                                    raise Exception("Prompt from AnythingLLM is None")
+                            await anything_llm_session.close()
+                    else:
+                        prompt = message
+
+                    photo = None
+                    video = None
+                    if is_video:
+                        content = await update.message.effective_attachment.get_file()
+                        video = {"video":handle_file(content.file_path)}
+                    else:
+                        content = await update.message.effective_attachment[-1].get_file()
+                        photo = handle_file(content.file_path)
+
+                    client = Client(os.environ.get("FRAMEPACK_ENDPOINT"))
+                    result = client.predict(
+                            selected_model=model,
+                            param_1=photo,
+                            param_2=video,
+                            param_3=None,
+                            param_4=1,
+                            param_5=prompt,
+                            param_6="",
+                            param_7=random.randint(0,9223372036854775807),
+                            param_8=False,
+                            param_9=1,
+                            param_10=9,
+                            param_11=25,
+                            param_12=1,
+                            param_13=10,
+                            param_14=0,
+                            param_15="MagCache",
+                            param_16=25,
+                            param_17=0.15,
+                            param_18=0.1,
+                            param_19=2,
+                            param_20=0.25,
+                            param_21=4,
+                            param_22="Noise",
+                            param_23=True,
+                            param_24=[],
+                            param_25=384,
+                            param_26=640,
+                            param_27=True,
+                            param_28=5,
+                            api_name="/handle_start_button"
+                    )
+                    monitor_result = client.predict(
+                        job_id=result[1],
+                        api_name="/monitor_job"
+                    )
+                    if monitor_result[3] == "Completed" and monitor_result[0]["video"] is not None:
+                        await update.message.reply_video(monitor_result[0]["video"], caption=prompt, show_caption_above_media=True, width=384, height=640, disable_notification=True, filename=get_random_string(12)+ "video.mp4", reply_to_message_id=update.message.message_id, protect_content=False)
+                    else:
+                        await update.message.reply_text("La generazione di questo video é stata interrotta", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+
+                else:
+                    await update.message.reply_text("AI API Offline, riprova piú tardi", disable_notification=True, protect_content=False)
+
+                
+            else:
+                await update.message.reply_text("se vuoi che genero video devi scrivere una frase dopo /generate (massimo 500 caratteri)", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+
+    except Exception as e:
+      exc_type, exc_obj, exc_tb = sys.exc_info()
+      fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+      logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
+      await update.message.reply_text("Errore!", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+
+          
+application.add_handler(CommandHandler('generate', generate_from_cmd))
+
+application.add_handler(MessageHandler(filters.PHOTO, generate))
+
+application.add_handler(MessageHandler(filters.VIDEO, generate_from_video))
+
+application.add_handler(MessageHandler(filters.ANIMATION, generate_from_video))
 
 async def speak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:

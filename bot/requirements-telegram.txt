@@ -9,3 +9,4 @@ sqlalchemy==2.0.7
 requests-cache
 piper-tts
 pydub
+gradio_client

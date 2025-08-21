@@ -2,8 +2,8 @@ FROM python:3.11-slim-bullseye
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        ffmpeg
-
+        ffmpeg \
+        git
 
 RUN pip3 install -U pip
 RUN pip3 install --no-cache --upgrade pip setuptools
@@ -12,8 +12,14 @@ COPY requirements.txt .
 
 RUN pip3 install --default-timeout=900 -r requirements.txt
 
-WORKDIR /app
+RUN git clone https://github.com/Rapptz/discord.py discord.py
+WORKDIR /discord.py
+RUN pip3 install -U .[voice]
 
+WORKDIR /
+RUN rm -rf discord.py
+
+WORKDIR /app
 COPY main.py .
 COPY utils.py .
 COPY database.py .

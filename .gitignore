@@ -155,3 +155,5 @@ ollama
 ollama/
 storage
 storage/
+bot/discord_bot_cache.sqlite
+discord_bot_cache.sqlite
