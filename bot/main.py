@@ -54,7 +54,7 @@ GUILD_ID = discord.Object(id=os.environ.get("GUILD_ID"))
 
 def get_anythingllm_online_status():
     try:
-        r = requests.get(os.environ.get("ANYTHING_LLM_ENDPOINT_OLLAMA"), timeout=1)
+        r = requests.get(os.environ.get("ANYTHING_LLM_ENDPOINT"), timeout=1)
         if (r.status_code == 200):
             return True
         else:
