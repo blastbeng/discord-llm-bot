@@ -3,7 +3,6 @@ import os
 import base64
 import random
 import requests
-import requests_cache
 import string
 import sys
 import urllib
@@ -24,8 +23,6 @@ from piper.voice import PiperVoice
 from pydub import AudioSegment
 
 load_dotenv()
-
-requests_cache.install_cache('discord_bot_cache')
 
 dbms = database.Database(database.SQLITE, dbname='discord-bot.sqlite3')
 database.create_db_tables(dbms)
@@ -54,7 +51,7 @@ def get_tts_google(text: str):
 
 def get_anythingllm_online_status():
     try:
-        r = requests.get(os.environ.get("ANYTHING_LLM_ENDPOINT"), timeout=1)
+        r = requests.get(os.environ.get("ANYTHING_LLM_ENDPOINT"), timeout=5)
         if (r.status_code == 200):
             return True
         else:
@@ -64,6 +61,22 @@ def get_anythingllm_online_status():
         return False
     except requests.exceptions.HTTPError:
         logging.info("AnythingLLM Host Error 4xx or 5xx.")
+        return False
+    else:
+        return True
+
+def get_aivg_online_status():
+    try:
+        r = requests.get(os.environ.get("AIVG_ENDPOINT"), timeout=5)
+        if (r.status_code == 200):
+            return True
+        else:
+            return False
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+        logging.info("AIVG Host Offline.")
+        return False
+    except requests.exceptions.HTTPError:
+        logging.info("AIVG Host Error 4xx or 5xx.")
         return False
     else:
         return True
@@ -109,7 +122,6 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
       exc_type, exc_obj, exc_tb = sys.exc_info()
       fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
       logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
-      await update.message.reply_text("Errore!", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
 
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
@@ -136,7 +148,6 @@ async def random_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
       exc_type, exc_obj, exc_tb = sys.exc_info()
       fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
       logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
-      await update.message.reply_text("Errore!", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
 
 application.add_handler(CommandHandler('random', random_cmd))
 
@@ -146,15 +157,8 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if(CHAT_ID == chatid):
             strid = "000000"
             message = update.message.text[5:].strip()
-            if(message != "" and len(message) <= 500  and not message.endswith('bot')):
+            if(len(message) <= 500  and not message.endswith('bot')):
                 if get_anythingllm_online_status():
-                    data = {
-                            "message": message.rstrip(),
-                            "mode": "chat"
-                        }
-                    headers = {
-                        'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
-                    }
                     connector = aiohttp.TCPConnector(force_close=True)
                     anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
                     async with aiohttp.ClientSession(connector=connector) as anything_llm_session:
@@ -164,7 +168,7 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 anything_llm_text = anything_llm_json["textResponse"].rstrip()
                                 await update.message.reply_text(anything_llm_text, disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
                             else:
-                                await update.message.reply_text("si è verificato un errore stronzo", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+                                await update.message.reply_text(r.reason + " - Il server potrebbe essere sovraccarico o potrebbe esserci una generazione ancora in corso, riprovare in un secondo momento", disable_notification=True, protect_content=False)
                         await anything_llm_session.close()  
 
                 else:
@@ -174,14 +178,115 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text("se vuoi dirmi o chiedermi qualcosa devi scrivere una frase dopo /ask (massimo 500 caratteri)", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
 
+    except (requests.exceptions.RequestException, ValueError) as e:
+      exc_type, exc_obj, exc_tb = sys.exc_info()
+      fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+      logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
+      await update.message.reply_text("Il server potrebbe essere sovraccarico, riprovare in un secondo momento", disable_notification=True, protect_content=False)
     except Exception as e:
       exc_type, exc_obj, exc_tb = sys.exc_info()
       fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
       logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
-      await update.message.reply_text("Errore!", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
-
           
 application.add_handler(CommandHandler('ask', ask))
+
+async def genai(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        chatid = str(update.effective_chat.id)
+        if(CHAT_ID == chatid):
+            strid = "000000"
+            video_len = "5"
+            mode = "1"
+            message = update.message.text[7:].strip()
+            if message is not None and message != "":
+                splitted_msg = message.split("-")
+                if len(splitted_msg) >= 2:
+                    message = splitted_msg[0].strip()
+                    video_len = splitted_msg[1].strip()
+                elif len(splitted_msg) >= 3:
+                    message = splitted_msg[0].strip()
+                    video_len = splitted_msg[1].strip()
+                    mode = splitted_msg[2].strip()
+            if(len(message) <= 500  and not message.endswith('bot')):
+                if get_aivg_online_status():
+                    url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/enhance/"+mode+"/"+video_len+"/"
+                    if message is not None and message != "":
+                        url = url + urllib.parse.quote(str(message))+"/"
+                    r = requests.post(url, timeout=43200, stream=True)
+                    if (r.status_code == 200):
+                        file_path = os.environ.get("TMP_DIR") + str(uuid.uuid4()) + ".mp4"
+                        with open(file_path, "wb") as f:
+                            f.write(r.content)
+                        await update.message.reply_video(file_path, disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+                    elif (r.status_code == 206):
+                        await update.message.reply_text(r.text + " - Un altra generazione é ancora in corso, riprovare in un secondo momento", reply_to_message_id=update.message.message_id, disable_notification=True, protect_content=False)
+                    else:
+                        await update.message.reply_text(r.reason + " - Il server potrebbe essere sovraccarico o potrebbe esserci una generazione ancora in corso, riprovare in un secondo momento", reply_to_message_id=update.message.message_id, disable_notification=True, protect_content=False)
+                else:
+                    await update.message.reply_text("AI API Offline, riprova piú tardi", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+            else:
+                await update.message.reply_text("se vuoi che genero un video enhanced by LLM il testo deve essere di massimo 500 caratteri", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+
+    except (requests.exceptions.RequestException, ValueError) as e:
+      exc_type, exc_obj, exc_tb = sys.exc_info()
+      fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+      logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
+      await update.message.reply_text("Il server potrebbe essere sovraccarico o potrebbe esserci una generazione ancora in corso, riprovare in un secondo momento", reply_to_message_id=update.message.message_id, disable_notification=True, protect_content=False)
+    except Exception as e:
+      exc_type, exc_obj, exc_tb = sys.exc_info()
+      fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+      logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
+
+application.add_handler(CommandHandler('genai', genai))
+
+async def genpr(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        chatid = str(update.effective_chat.id)
+        if(CHAT_ID == chatid):
+            strid = "000000"
+            video_len = "5"
+            mode = "1"
+            message = update.message.text[7:].strip()
+            if message is not None and message != "":
+                splitted_msg = message.split("-")
+                if len(splitted_msg) >= 2:
+                    message = splitted_msg[0].strip()
+                    video_len = splitted_msg[1].strip()
+                elif len(splitted_msg) >= 3:
+                    message = splitted_msg[0].strip()
+                    video_len = splitted_msg[1].strip()
+                    mode = splitted_msg[2].strip()
+            if(message is not None and message != "" and len(message) <= 500  and not message.endswith('bot')):
+                if get_aivg_online_status():
+                    url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/prompt/"+urllib.parse.quote(str(message))+"/"+mode+"/"+video_len+"/"
+                    r = requests.post(url, timeout=43200, stream=True)
+                    if (r.status_code == 200):
+                        file_path = os.environ.get("TMP_DIR") + str(uuid.uuid4()) + ".mp4"
+                        with open(file_path, "wb") as f:
+                            f.write(r.content)
+                        await update.message.reply_video(file_path, disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+                    elif (r.status_code == 206):
+                        await update.message.reply_text(r.text + " - Un altra generazione é ancora in corso, riprovare in un secondo momento", reply_to_message_id=update.message.message_id, disable_notification=True, protect_content=False)
+                    else:
+                        await update.message.reply_text(r.reason + " - Il server potrebbe essere sovraccarico o potrebbe esserci una generazione ancora in corso, riprovare in un secondo momento", reply_to_message_id=update.message.message_id, disable_notification=True, protect_content=False)
+  
+                else:
+                    await update.message.reply_text("AI API Offline, riprova piú tardi", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+            else:
+
+                await update.message.reply_text("se vuoi che genero un video a partire da un prompt devi scrivere una frase dopo /genpr (massimo 500 caratteri)", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+
+    except (requests.exceptions.RequestException, ValueError) as e:
+      exc_type, exc_obj, exc_tb = sys.exc_info()
+      fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+      logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
+      await update.message.reply_text("Il server potrebbe essere sovraccarico o potrebbe esserci una generazione ancora in corso, riprovare in un secondo momento", reply_to_message_id=update.message.message_id, disable_notification=True, protect_content=False)
+    except Exception as e:
+      exc_type, exc_obj, exc_tb = sys.exc_info()
+      fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+      logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
+
+application.add_handler(CommandHandler('genpr', genpr))
 
 async def speak(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -220,7 +325,6 @@ async def speak(update: Update, context: ContextTypes.DEFAULT_TYPE):
       exc_type, exc_obj, exc_tb = sys.exc_info()
       fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
       logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
-      await update.message.reply_text("Errore!", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
 
           
 application.add_handler(CommandHandler('speak', speak))
@@ -239,7 +343,6 @@ async def restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
-        await update.message.reply_text("Errore!", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
 
 
 application.run_polling(allowed_updates=Update.ALL_TYPES)

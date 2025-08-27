@@ -577,53 +577,53 @@ async def audio(interaction: discord.Interaction, audio: discord.Attachment):
     except Exception as e:
         await send_error(e, interaction)
 
-@client.tree.command()
-@app_commands.rename(text='text')
-@app_commands.describe(text="La frase da chiedere")
-@app_commands.rename(voice='voice')
-@app_commands.describe(voice="La voce da usare")
-@app_commands.autocomplete(voice=rps_autocomplete)
-@app_commands.checks.cooldown(1, 30.0, key=lambda i: (i.user.id))
-async def ask(interaction: discord.Interaction, text: str, voice: str = "Google"):
-    """Ask something."""
-    is_deferred=True
-    try:
-        await interaction.response.defer(thinking=True, ephemeral=False)
-        check_permissions(interaction)
-        
-        voice_client = get_voice_client_by_guildid(client.voice_clients, interaction.guild.id)
-        await connect_bot_by_voice_client(voice_client, interaction.user.voice.channel, interaction.guild)
-
-        
-        if voice_client and not hasattr(voice_client, 'play') and voice_client.is_connected():
-            await interaction.followup.send("Per favore riprova piú tardi, Sto inizializzando la connessione...", ephemeral = True)
-        else:
-            currentguildid = get_current_guild_id(interaction.guild.id)
-            if currentguildid == '000000' and get_anythingllm_online_status():
-                data = {
-                        "message": text.rstrip(),
-                        "mode": "chat"
-                    }
-                headers = {
-                    'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
-                }
-                connector = aiohttp.TCPConnector(force_close=True)
-                anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
-                message:discord.Message = await interaction.followup.send('**' + str(interaction.user.name) + "** ha chiesto al bot:" + " **" + text + "**" + await get_queue_message(), ephemeral = False)            
-                async with aiohttp.ClientSession(connector=connector) as anything_llm_session:
-                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data) as anything_llm_response:
-                        if (anything_llm_response.status == 200):
-                            anything_llm_json = await anything_llm_response.json()
-                            anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
-                            
-                            worker = PlayAudioWorker(anything_llm_text, interaction, message, voice, initial_text="**"+str(interaction.user.name) + '**: '+ text + '\n**' + interaction.guild.me.nick + "**: ")
-                            worker.play_audio_worker.start()
-                    await anything_llm_session.close()
-            else:
-                await interaction.followup.send("Il Chatbot AI é offline, per favore riprova piú tardi", ephemeral = True) 
-                   
-    except Exception as e:
-        await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
+#@client.tree.command()
+#@app_commands.rename(text='text')
+#@app_commands.describe(text="La frase da chiedere")
+#@app_commands.rename(voice='voice')
+#@app_commands.describe(voice="La voce da usare")
+#@app_commands.autocomplete(voice=rps_autocomplete)
+#@app_commands.checks.cooldown(1, 30.0, key=lambda i: (i.user.id))
+#async def ask(interaction: discord.Interaction, text: str, voice: str = "Google"):
+#    """Ask something."""
+#    is_deferred=True
+#    try:
+#        await interaction.response.defer(thinking=True, ephemeral=False)
+#        check_permissions(interaction)
+#        
+#        voice_client = get_voice_client_by_guildid(client.voice_clients, interaction.guild.id)
+#        await connect_bot_by_voice_client(voice_client, interaction.user.voice.channel, interaction.guild)
+#
+#        
+#        if voice_client and not hasattr(voice_client, 'play') and voice_client.is_connected():
+#            await interaction.followup.send("Per favore riprova piú tardi, Sto inizializzando la connessione...", ephemeral = True)
+#        else:
+#            currentguildid = get_current_guild_id(interaction.guild.id)
+#            if currentguildid == '000000' and get_anythingllm_online_status():
+#                data = {
+#                        "message": text.rstrip(),
+#                        "mode": "chat"
+#                    }
+#                headers = {
+#                    'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
+#                }
+#                connector = aiohttp.TCPConnector(force_close=True)
+#                anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
+#                message:discord.Message = await interaction.followup.send('**' + str(interaction.user.name) + "** ha chiesto al bot:" + " **" + text + "**" + await get_queue_message(), ephemeral = False)            
+#                async with aiohttp.ClientSession(connector=connector) as anything_llm_session:
+#                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data) as anything_llm_response:
+#                        if (anything_llm_response.status == 200):
+#                            anything_llm_json = await anything_llm_response.json()
+#                            anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
+#                            
+#                            worker = PlayAudioWorker(anything_llm_text, interaction, message, voice, initial_text="**"+str(interaction.user.name) + '**: '+ text + '\n**' + interaction.guild.me.nick + "**: ")
+#                            worker.play_audio_worker.start()
+#                    await anything_llm_session.close()
+#            else:
+#                await interaction.followup.send("Il Chatbot AI é offline, per favore riprova piú tardi", ephemeral = True) 
+#                   
+#    except Exception as e:
+#        await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
 
 @client.tree.command()
 @app_commands.rename(voice='voice')
