@@ -1,7 +1,6 @@
 import os
 import sys
 import logging
-from sqlalchemy import create_engine
 from sqlalchemy import create_engine, insert, select, update, delete, Table, Column, Integer, String, MetaData
 
 SQLITE          = 'sqlite'
