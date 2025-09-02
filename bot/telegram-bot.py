@@ -526,6 +526,8 @@ async def genimg(update: Update, context: ContextTypes.DEFAULT_TYPE, message=Non
                                 content = await response.content.read()
                                 f.write(content)
                             await update.message.reply_photo(file_path, filename=str(uuid.uuid4()) + ".png", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+                        elif response.status == 206:
+                            await update.message.reply_text("Un altra generazione é ancora in corso, riprovare in un secondo momento", reply_to_message_id=update.message.message_id, disable_notification=True, protect_content=False)
                         else:
                             await update.message.reply_text(response.reason + " - Si é verificato un errore nella richiesta", reply_to_message_id=update.message.message_id, disable_notification=True, protect_content=False)
                 await session.close() 
@@ -545,6 +547,41 @@ async def genimg(update: Update, context: ContextTypes.DEFAULT_TYPE, message=Non
       
 
 application.add_handler(CommandHandler('genimg', genimg))
+
+async def genskip(update: Update, context: ContextTypes.DEFAULT_TYPE, message=None, image=None):
+    try:
+        chatid = str(update.effective_chat.id)
+        if(CHAT_ID == chatid):
+            generation_id = update.message.text[9:].strip()
+            if get_aivg_online_status():
+                url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/skip/"
+                if generation_id is not None and generation_id != "":
+                    url = url + urllib.parse.quote(str(generation_id))+"/"
+                    connector = aiohttp.TCPConnector(force_close=True)
+                    await update.message.reply_text("Richiedo una nuova generazione", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+                    async with aiohttp.ClientSession(connector=connector) as session:
+                        async with session.post(url,timeout=TIMEOUT) as response:
+                            if (response.status == 200):
+                                await update.message.reply_text("generation_id " + str(generation_id) + " impostato a skipped Si é verificato un errore nella richiesta", reply_to_message_id=update.message.message_id, disable_notification=True, protect_content=False)
+                            else:
+                                await update.message.reply_text(response.reason + " - Si é verificato un errore nella richiesta", reply_to_message_id=update.message.message_id, disable_notification=True, protect_content=False)
+                    await session.close() 
+                await update.message.reply_text("Il generation_id é obbligatorio", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+            else:
+                await update.message.reply_text("AI API Offline oppure un altra richiesta é ancora in corso, riprova piú tardi", disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+                
+    except (requests.exceptions.RequestException, ValueError) as e:
+      exc_type, exc_obj, exc_tb = sys.exc_info()
+      fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+      logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
+      await update.message.reply_text("Il server potrebbe essere sovraccarico o potrebbe esserci una generazione ancora in corso, riprovare in un secondo momento", reply_to_message_id=update.message.message_id, disable_notification=True, protect_content=False)
+    except Exception as e:
+      exc_type, exc_obj, exc_tb = sys.exc_info()
+      fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+      logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
+    
+      
+application.add_handler(CommandHandler('genskip', genskip))
 
 async def background_generation():
     try:
