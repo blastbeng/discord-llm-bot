@@ -238,7 +238,7 @@ def download_video(url, file_path=os.environ.get("TMP_DIR")):
         final_path = full_path
     return final_path
 
-async def ask_for_generation(message_id, url, image, video):
+async def ask_for_generation(message_id, url, image, video, from_scheduler=False):
     connector = aiohttp.TCPConnector(force_close=True)
     async with aiohttp.ClientSession(connector=connector) as session:
         try:
@@ -254,13 +254,13 @@ async def ask_for_generation(message_id, url, image, video):
                             await f.write(chunk)
                         time.sleep(5)
                     caption = ""
-                    for keyh, valueh in response.headers:
-                        if keyh.startswith("X-FramePack-"):
-                            caption = caption + keyh.replace("X-FramePack-","") + ":" + valueh + "\n"
-                    await Bot(TOKEN).sendVideo(video=f'{os.environ.get("TMP_DIR")}video.mp4', chat_id=CHAT_ID, caption=caption, filename=str(uuid.uuid4())+".mp4",  disable_notification=True, protect_content=False, reply_to_message_id=message_id)
-                elif response.status == 206:
+                    for keyh, valueh in response.headers.items():
+                        if keyh.startswith("X-FramePack-") and keyh != "X-FramePack-Prompt":
+                            caption = caption + keyh.replace("X-FramePack-","") + ": " + valueh + "\n"
+                    await Bot(TOKEN).sendVideo(video=f'{os.environ.get("TMP_DIR")}video.mp4', show_caption_above_media=True, chat_id=CHAT_ID, caption=caption, filename=str(uuid.uuid4())+".mp4",  disable_notification=True, protect_content=False, reply_to_message_id=message_id)
+                elif response.status == 206 and not from_scheduler:
                     await Bot(TOKEN).sendMessage(text="Un altra generazione é ancora in corso, riprovare in un secondo momento", chat_id=CHAT_ID, disable_notification=True, protect_content=False, reply_to_message_id=message_id)
-                else:
+                elif not from_scheduler:
                     await Bot(TOKEN).sendMessage(text="Si é verificato un errore nella richiesta", chat_id=CHAT_ID, disable_notification=True, protect_content=False, reply_to_message_id=message_id)
 
         except Exception as e:
@@ -552,7 +552,7 @@ async def background_generation():
         
             message, video_len, mode, gen_photo = get_params(None, None, 0)
             url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/enhance/"+str(mode)+"/"+str(gen_photo)+"/"+str(video_len)+"/"
-            await ask_for_generation(None, url, None, None)
+            await ask_for_generation(None, url, None, None, from_scheduler=True)
         
     except Exception as e:
         exc_type, exc_obj, exc_tb = sys.exc_info()
