@@ -98,10 +98,6 @@ def get_aivg_online_status():
     else:
         return True
 
-def get_random_string(length):
-    random_string = ''.join(random.choices(string.ascii_letters + string.digits, k=length))
-    return random_string
-
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         chatid = str(update.effective_chat.id)
@@ -156,7 +152,8 @@ async def random_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sentences = database.select_all_sentence(dbms)
 
             if sentences is not None and len(sentences) > 0:         
-                await update.message.reply_text(random.choice(sentences), reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+                text_found = random.choice(sentences)
+                await update.message.reply_audio(get_tts_google(text_found), reply_markup=reply_keyboard(), caption=text_found, disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=str(uuid.uuid4())+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
             else:
                 await update.message.reply_text("si è verificato un errore stronzo", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
 
@@ -189,7 +186,8 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             if (anything_llm_response.status == 200):
                                 anything_llm_json = await anything_llm_response.json()
                                 anything_llm_text = anything_llm_json["textResponse"].rstrip()
-                                await update.message.reply_text(anything_llm_text, reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+                                await update.message.reply_audio(get_tts_google(anything_llm_text), reply_markup=reply_keyboard(), caption=anything_llm_text, disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=str(uuid.uuid4())+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
+            
                             else:
                                 await update.message.reply_text(anything_llm_response.reason + " - Il server potrebbe essere sovraccarico o potrebbe esserci una generazione ancora in corso, riprovare in un secondo momento", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
                         await anything_llm_session.close()  
@@ -419,11 +417,11 @@ async def speak(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         audio.export(out, format='mp3', bitrate="256k")
                         out.seek(0)
                         os.remove(file_path)
-                        await update.message.reply_audio(out, reply_markup=reply_keyboard(), disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=get_random_string(12)+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
+                        await update.message.reply_audio(out, reply_markup=reply_keyboard(), disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=str(uuid.uuid4())+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
                     else:
                         await update.message.reply_text("Voce " + voice_str + " non trovata!", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
                 else:
-                    await update.message.reply_audio(get_tts_google(message), reply_markup=reply_keyboard(), disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=get_random_string(12)+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
+                    await update.message.reply_audio(get_tts_google(message), reply_markup=reply_keyboard(), disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=str(uuid.uuid4())+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
                 #await embed_message(message)
             else:
 
