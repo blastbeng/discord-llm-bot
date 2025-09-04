@@ -271,9 +271,11 @@ async def ask_for_generation(message_id, url, image, video, from_scheduler=False
                     await Bot(TOKEN).sendMessage(text=caption, chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False, reply_to_message_id=message_id)
                 elif response.status == 206 and from_scheduler is False:
                     await Bot(TOKEN).sendMessage(text="Un altra generazione é ancora in corso, riprovare in un secondo momento", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False, reply_to_message_id=message_id)
+                elif response.status == 408 and from_scheduler is False:
+                    await Bot(TOKEN).sendMessage(text=response.reason + " - La generazione del video é stata interrotta perché ha superato il tempo di esecuzione massimo, si prega di attendere prima di inviare un altro comando", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False, reply_to_message_id=message_id) 
                 elif response.status != 206 and response.status != 200 and from_scheduler is False:
                     await Bot(TOKEN).sendMessage(text=response.reason + " - Si é verificato un errore nella richiesta", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False, reply_to_message_id=message_id)
-
+                
         except Exception as e:
             if from_scheduler is False:
                 await Bot(TOKEN).sendMessage(text=(str(e) + " - Si é verificato un errore nella richiesta"), chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False, reply_to_message_id=message_id)
@@ -661,7 +663,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         
         if len(splitted_data) == 1:
             if str(splitted_data[0]) == "1":
-                await Bot(TOKEN).sendMessage(text="Richiesta di interruzione inviata", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+                await Bot(TOKEN).sendMessage(text="Interrompo la generazione e riavvio il generatore AI, si prega di attendere prima di inviare un altro comando", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+                time.sleep(1)
                 restart_ai_app()
         elif len(splitted_data) == 2:
             skipped_status = ""
@@ -673,6 +676,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 skipped_status = splitted_data[0]
             await set_skipped_status(skipped_status, splitted_data[1])
             if str(splitted_data[0]) == "3" or str(splitted_data[0]) == "4":
+                await Bot(TOKEN).sendMessage(text="Interrompo la generazione e riavvio il generatore AI, si prega di attendere prima di inviare un altro comando", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
                 time.sleep(1)
                 restart_ai_app()
         else:
