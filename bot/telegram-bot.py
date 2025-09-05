@@ -576,7 +576,7 @@ async def gencheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def set_skipped_status(skipped, generation_id):
     try:
-        if await get_aivg_online_status():
+        if await get_aivg_online_status(asking_for_ai=False):
             url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/skipped/" + str(skipped) + "/" + str(generation_id) + "/"
             connector = aiohttp.TCPConnector(force_close=True)
             async with aiohttp.ClientSession(connector=connector) as session:
@@ -622,7 +622,7 @@ async def background_generation():
 
 def restart_ai_app():
     try:
-        requests.get(os.environ.get("AIVG_ENDPOINT") + "/aivg/stop/")
+        requests.get(os.environ.get("AIVG_ENDPOINT") + "/aivg/stop/", timeout=5)
     except:
         pass
 
