@@ -66,33 +66,29 @@ def get_tts_google(text: str):
     mp3_fp.seek(0)
     return mp3_fp
 
-def get_anythingllm_online_status():
+async def get_aivg_online_status(show_message=True, message_id=None, asking_for_ai=True):
     try:
-        r = requests.get(os.environ.get("ANYTHING_LLM_ENDPOINT"), timeout=5)
+        r = requests.get(os.environ.get("AIVG_ENDPOINT")+"/aivg/generate/checkrunning/", timeout=5)
         if (r.status_code == 200):
             return True
-        else:
-            return False
-    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-        logging.info("AnythingLLM Host Offline.")
-        return False
-    except requests.exceptions.HTTPError:
-        logging.info("AnythingLLM Host Error 4xx or 5xx.")
-        return False
-    else:
-        return True
-
-def get_aivg_online_status():
-    try:
-        r = requests.get(os.environ.get("AIVG_ENDPOINT"), timeout=5)
-        if (r.status_code == 200):
+        elif (asking_for_ai is False and r.status_code == 206):
             return True
+        elif (asking_for_ai is True and r.status_code == 206):
+            if show_message:
+                await Bot(TOKEN).sendMessage(text="Un altra richiesta é ancora in corso, riprova piú tardi", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False, reply_to_message_id=message_id)
+            return False
         else:
+            if show_message:
+                await Bot(TOKEN).sendMessage(text="Si é verificato un errore, riprova piú tardi", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False, reply_to_message_id=message_id)
             return False
     except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+        if show_message:
+            await Bot(TOKEN).sendMessage(text="AI API Offline, riprova piú tardi", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False, reply_to_message_id=message_id)
         logging.info("AIVG Host Offline.")
         return False
     except requests.exceptions.HTTPError:
+        if show_message:
+            await Bot(TOKEN).sendMessage(text="AI API Offline, riprova piú tardi", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False, reply_to_message_id=message_id)
         logging.info("AIVG Host Error 4xx or 5xx.")
         return False
     else:
@@ -105,7 +101,7 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             message = update.message.text.strip()
             if(message != ""):
-                if get_anythingllm_online_status():
+                if await get_aivg_online_status(message_id=update.message.message_id):
                     data = {
                             "message": message.rstrip(),
                             "mode": "chat"
@@ -125,8 +121,6 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 logging.error(anything_llm_response)
                                 await update.message.reply_text("si è verificato un errore stronzo", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
                         await anything_llm_session.close()  
-                else:
-                    await update.message.reply_text("AI API Offline oppure un altra richiesta é ancora in corso, riprova piú tardi", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
                 
             else:
                 await update.message.reply_text("se vuoi dirmi o chiedermi qualcosa devi scrivere una frase dopo /ask (massimo 500 caratteri)", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
@@ -171,7 +165,7 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             message = update.message.text[5:].strip()
             if(message != "" and len(message) <= 500  and not message.endswith('bot')):
-                if get_anythingllm_online_status():
+                if await get_aivg_online_status(message_id=update.message.message_id):
                     connector = aiohttp.TCPConnector(force_close=True)
                     anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
                     data = {
@@ -192,8 +186,6 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 await update.message.reply_text(anything_llm_response.reason + " - Il server potrebbe essere sovraccarico o potrebbe esserci una generazione ancora in corso, riprovare in un secondo momento", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
                         await anything_llm_session.close()  
 
-                else:
-                    await update.message.reply_text("AI API Offline oppure un altra richiesta é ancora in corso, riprova piú tardi", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
 
                 
             else:
@@ -270,7 +262,7 @@ async def ask_for_generation(message_id, url, image, video, from_scheduler=False
                 elif response.status == 206 and from_scheduler is False:
                     await Bot(TOKEN).sendMessage(text="Un altra generazione é ancora in corso, riprovare in un secondo momento", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False, reply_to_message_id=message_id)
                 elif response.status == 408 and from_scheduler is False:
-                    await Bot(TOKEN).sendMessage(text=response.reason + " - La generazione del video é stata interrotta perché ha superato il tempo di esecuzione massimo, si prega di attendere prima di inviare un altro comando", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False, reply_to_message_id=message_id) 
+                    await Bot(TOKEN).sendMessage(text=response.reason + " - La generazione del video é stata interrotta perché ha superato il tempo di esecuzione massimo", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False, reply_to_message_id=message_id) 
                 elif response.status != 206 and response.status != 200 and from_scheduler is False:
                     await Bot(TOKEN).sendMessage(text=response.reason + " - Si é verificato un errore nella richiesta", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False, reply_to_message_id=message_id)
                 
@@ -284,7 +276,6 @@ def get_params(init_message, message, split_size):
     video_len = str(7)
     #video_len = str(random.randint(6, 15))
     mode = str(random.randint(0, 1))
-    gen_photo = str(random.randint(0, 1))
     if message is not None and message.strip() != "":
         init_message = message
     if init_message is not None and init_message.strip() != "":
@@ -299,13 +290,8 @@ def get_params(init_message, message, split_size):
             message = splitted_msg[0].strip()
             video_len = splitted_msg[1].strip()
             mode = splitted_msg[2].strip()
-        elif len(splitted_msg) == 4:
-            message = splitted_msg[0].strip()
-            video_len = splitted_msg[1].strip()
-            mode = splitted_msg[2].strip()
-            gen_photo = splitted_msg[3].strip()
 
-    return "" if message is None else message, video_len, mode, gen_photo
+    return "" if message is None else message, video_len, mode
 
 
 async def genai(update: Update, context: ContextTypes.DEFAULT_TYPE, image=None, video=None):
@@ -313,19 +299,17 @@ async def genai(update: Update, context: ContextTypes.DEFAULT_TYPE, image=None, 
         chatid = str(update.effective_chat.id)
         if(CHAT_ID == chatid):
             
-            message, video_len, mode, gen_photo = get_params(update.message.text, None, 7 if (image is None and video is None) else 0)
+            message, video_len, mode = get_params(update.message.text, None, 7 if (image is None and video is None) else 0)
 
-            if len(mode) == 1 and len(gen_photo) == 1 and (len(video_len) == 1 or len(video_len) == 2):
+            if len(mode) == 1 and (len(video_len) == 1 or len(video_len) == 2):
                 if(len(message) <= 500  and not message.endswith('bot')):
-                    if get_aivg_online_status():
-                        url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/enhance/"+mode+"/"+gen_photo+"/"+video_len+"/"
+                    if await get_aivg_online_status(message_id=update.message.message_id):
+                        url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/enhance/"+mode+"/"+video_len+"/"
 
                         if message is not None and message != "":
                             url = url + urllib.parse.quote(str(message))+"/"
                         await update.message.reply_text("Richiedo una nuova generazione in background", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
                         asyncio.create_task(ask_for_generation(update.message.message_id, url, image, video))
-                    else:
-                        await update.message.reply_text("AI API Offline oppure un altra richiesta é ancora in corso, riprova piú tardi", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
                 else:
                     await update.message.reply_text("se vuoi che genero un video enhanced by LLM il testo deve essere di massimo 500 caratteri", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
             else:
@@ -351,16 +335,13 @@ async def genpr(update: Update, context: ContextTypes.DEFAULT_TYPE, message=None
     try:
         chatid = str(update.effective_chat.id)
         if(CHAT_ID == chatid):
-            message, video_len, mode, gen_photo = get_params(update.message.text, message, 7 if (image is None and video is None) else 0)
-            if len(mode) == 1 and len(gen_photo) == 1 and (len(video_len) == 1 or len(video_len) == 2):
-                caption = "Generato utilizzando " + ("FramePack" if mode == "0" else "FramePack F1") + ("" if gen_photo == 0 else ". Immagine iniziale generata con Fooocus") + ". Audio generato tramite MMAudio. Lunghezza video: " + video_len + " secondi."
+            message, video_len, mode = get_params(update.message.text, message, 7 if (image is None and video is None) else 0)
+            if len(mode) == 1 and (len(video_len) == 1 or len(video_len) == 2):
                 if(message is not None and message != "" and len(message) <= 500  and not message.endswith('bot')):
-                    if get_aivg_online_status():
-                        url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/prompt/"+urllib.parse.quote(str(message))+"/"+mode+"/"+gen_photo+"/"+video_len+"/"
+                    if await get_aivg_online_status(message_id=update.message.message_id):
+                        url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/prompt/"+urllib.parse.quote(str(message))+"/"+mode+"/"+video_len+"/"
                         await update.message.reply_text("Richiedo una nuova generazione in background", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
                         asyncio.create_task(ask_for_generation(update.message.message_id, url, image, video))
-                    else:
-                        await update.message.reply_text("AI API Offline oppure un altra richiesta é ancora in corso, riprova piú tardi", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
                 else:
 
                     await update.message.reply_text("se vuoi che genero un video a partire da un prompt devi scrivere una frase dopo /genpr (massimo 500 caratteri)", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
@@ -444,8 +425,8 @@ async def restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if((CHAT_ID == chatid or GROUP_CHAT_ID == chatid)):
                 
             await update.message.reply_text("Riavvio in corso...", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
-
-            os.execl(sys.executable, os.path.abspath(__file__), *sys.argv)
+            restart_ai_app()
+            os.system("pkill -f python -9")
     except Exception as e:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
@@ -505,7 +486,7 @@ async def genimg(update: Update, context: ContextTypes.DEFAULT_TYPE, message=Non
         chatid = str(update.effective_chat.id)
         if(CHAT_ID == chatid):
             message = update.message.text[8:].strip()
-            if get_aivg_online_status():
+            if await get_aivg_online_status(message_id=update.message.message_id):
                 url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/image/"
                 if message is not None and message != "":
                     url = url + urllib.parse.quote(str(message))+"/"
@@ -524,9 +505,7 @@ async def genimg(update: Update, context: ContextTypes.DEFAULT_TYPE, message=Non
                         else:
                             await update.message.reply_text(response.reason + " - Si é verificato un errore nella richiesta", reply_to_message_id=update.message.message_id, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
                 await session.close() 
-            else:
-                await update.message.reply_text("AI API Offline oppure un altra richiesta é ancora in corso, riprova piú tardi", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
-                
+                      
     except (requests.exceptions.RequestException, ValueError) as e:
       exc_type, exc_obj, exc_tb = sys.exc_info()
       fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
@@ -543,7 +522,7 @@ async def gencheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         chatid = str(update.effective_chat.id)
         if(CHAT_ID == chatid):
-            if get_aivg_online_status():
+            if await get_aivg_online_status(message_id=update.message.message_id, asking_for_ai=False):
                 url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/check/job/"
                 connector = aiohttp.TCPConnector(force_close=True)
                 async with aiohttp.ClientSession(connector=connector) as session:
@@ -567,13 +546,13 @@ async def gencheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 if file_name != "":
                                     filename, file_extension = os.path.splitext(file_name)
                                     compressed_name = filename + "_comp" + file_extension 
-                                    if not os.path.isfile(file_name) :       
+                                    if not os.path.isfile(compressed_name) :       
                                         async with aiofiles.open(file_name, 'wb') as f:
                                             async for chunk in response.content.iter_chunked(4096):
                                                 await f.write(chunk)
                                             time.sleep(1)
                                         (AsposeCompressor().compress_video(file_name)).save(compressed_name)
-                                    await Bot(TOKEN).sendVideo(video=compressed_name, reply_markup=reply_markup, chat_id=chatid, filename=str(uuid.uuid4())+".mp4", disable_notification=True, protect_content=False, reply_to_message_id=update.message.message_id)
+                                    await update.message.reply_video(compressed_name, reply_markup=reply_markup, filename=str(uuid.uuid4())+".mp4", disable_notification=True, protect_content=False, reply_to_message_id=update.message.message_id)
                                     await update.message.reply_text(caption, reply_to_message_id=update.message.message_id, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
                             elif response.status == 202:
                                 await update.message.reply_text(caption, reply_markup=reply_markup, reply_to_message_id=update.message.message_id, disable_notification=True, protect_content=False)
@@ -583,9 +562,7 @@ async def gencheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         else:
                             await update.message.reply_text(response.reason + " - Si é verificato un errore nella richiesta", reply_to_message_id=update.message.message_id, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
                 await session.close() 
-            else:
-                await update.message.reply_text("AI API Offline oppure un altra richiesta é ancora in corso, riprova piú tardi", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
-                
+                      
     except (requests.exceptions.RequestException, ValueError) as e:
       exc_type, exc_obj, exc_tb = sys.exc_info()
       fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
@@ -599,7 +576,7 @@ async def gencheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def set_skipped_status(skipped, generation_id):
     try:
-        if get_aivg_online_status():
+        if await get_aivg_online_status():
             url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/skipped/" + str(skipped) + "/" + str(generation_id) + "/"
             connector = aiohttp.TCPConnector(force_close=True)
             async with aiohttp.ClientSession(connector=connector) as session:
@@ -609,9 +586,7 @@ async def set_skipped_status(skipped, generation_id):
                     else:
                         await Bot(TOKEN).sendMessage(text=response.reason + " - Si é verificato un errore nella richiesta", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
             await session.close() 
-        else:
-            await Bot(TOKEN).sendMessage(text="AI API Offline oppure un altra richiesta é ancora in corso, riprova piú tardi", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
-                
+                        
     except (requests.exceptions.RequestException, ValueError) as e:
       exc_type, exc_obj, exc_tb = sys.exc_info()
       fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
@@ -634,10 +609,10 @@ async def remove_directory_tree(start_directory: Path):
 
 async def background_generation():
     try:
-        if get_aivg_online_status():
+        if await get_aivg_online_status(show_message=False):
         
-            message, video_len, mode, gen_photo = get_params(None, None, 0)
-            url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/enhance/"+str(mode)+"/"+str(gen_photo)+"/"+str(video_len)+"/"
+            message, video_len, mode = get_params(None, None, 0)
+            url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/enhance/"+str(mode)+"/"+str(video_len)+"/"
             await ask_for_generation(None, url, None, None, from_scheduler=True)
         
     except Exception as e:
@@ -704,7 +679,7 @@ def main() -> None:
     application.add_handler(CommandHandler('genloop', genloop))
     application.add_handler(CommandHandler('genimg', genimg))
 
-    application.job_queue.scheduler.add_job(lambda: run(background_generation()), trigger='interval', minutes=30, id='background_generation')
+    application.job_queue.scheduler.add_job(lambda: run(background_generation()), trigger='interval', minutes=15, id='background_generation')
     application.job_queue.scheduler.add_job(lambda: run(remove_directory_tree(Path(os.environ.get("TMP_DIR")))), trigger='interval', minutes=120, id='clean_temp_dir')
     #application.job_queue.scheduler.pause_job('background_generation')
     application.job_queue.scheduler.resume_job('background_generation')
