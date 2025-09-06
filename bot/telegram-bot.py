@@ -250,13 +250,23 @@ async def ask_for_generation(message_id, url, image, video, from_scheduler=False
                     header_items = response.headers.items()
                     reply_markup = None
                     for keyh, valueh in header_items:
-                        if keyh.startswith("X-FramePack-") and keyh != "X-FramePack-Prompt":
+                        if keyh.startswith("X-FramePack-") and keyh != "X-FramePack-Prompt" and keyh != "X-FramePack-Prompt-Image":
                             caption = caption + keyh.replace("X-FramePack-","") + ": " + valueh + "\n"
                             if keyh == "X-FramePack-Generation-Id":
                                 keyboard = [
                                     [InlineKeyboardButton("Valida", callback_data=("1,"+str(valueh))),InlineKeyboardButton("Skippa", callback_data=("2,"+str(valueh)))],
                                 ]
                                 reply_markup = InlineKeyboardMarkup(keyboard)
+                            #if keyh == "X-FramePack-Prompt":
+                            #    prompt = valueh.replace("&nbsp;","\n")
+                            #    with open(f'{os.environ.get("TMP_DIR")}prompt.txt', "w") as text_file:
+                            #        text_file.write(prompt)
+                            #    await Bot(TOKEN).sendDocument(document=open(f'{os.environ.get("TMP_DIR")}prompt.txt', 'rb'), chat_id=CHAT_ID, filename=str(uuid.uuid4())+".mp4", disable_notification=True, protect_content=False, reply_to_message_id=message_id)
+                            #if keyh == "X-FramePack-Prompt-Image":
+                            #    prompt_image = valueh.replace("&nbsp;","\n")
+                            #    with open(f'{os.environ.get("TMP_DIR")}prompt_image.txt', "w") as text_file:
+                            #        text_file.write(prompt_image)
+                            #    await Bot(TOKEN).sendDocument(document=open(f'{os.environ.get("TMP_DIR")}prompt_image.txt', 'rb'), chat_id=CHAT_ID, filename=str(uuid.uuid4())+".mp4", disable_notification=True, protect_content=False, reply_to_message_id=message_id)
                     await Bot(TOKEN).sendVideo(video=f'{os.environ.get("TMP_DIR")}video.mp4', reply_markup=reply_markup, chat_id=CHAT_ID, filename=str(uuid.uuid4())+".mp4", disable_notification=True, protect_content=False, reply_to_message_id=message_id)
                     await Bot(TOKEN).sendMessage(text=caption, chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False, reply_to_message_id=message_id)
                 elif response.status == 206 and from_scheduler is False:
@@ -679,7 +689,7 @@ def main() -> None:
     application.add_handler(CommandHandler('genloop', genloop))
     application.add_handler(CommandHandler('genimg', genimg))
 
-    application.job_queue.scheduler.add_job(lambda: run(background_generation()), trigger='interval', minutes=15, id='background_generation')
+    application.job_queue.scheduler.add_job(lambda: run(background_generation()), trigger='interval', minutes=10, id='background_generation')
     application.job_queue.scheduler.add_job(lambda: run(remove_directory_tree(Path(os.environ.get("TMP_DIR")))), trigger='interval', minutes=120, id='clean_temp_dir')
     #application.job_queue.scheduler.pause_job('background_generation')
     application.job_queue.scheduler.resume_job('background_generation')
