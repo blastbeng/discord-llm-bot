@@ -11,4 +11,3 @@ piper-tts
 pydub
 pillow
 MoviePy
-aspose-compressor
