@@ -535,30 +535,25 @@ async def gencheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 async with aiohttp.ClientSession(connector=connector) as session:
                      async with session.post(url,timeout=60) as response:
                         if (response.status >= 200 or response.status < 300):
+                            reply_markup = None
                             caption = ""
+                            generation_id = ""
+                            header_items = response.headers.items()                            
+                            for keyh, valueh in header_items:
+                                if keyh == "X-FramePack-Generation-Id" and response.status == 200 or response.status == 201:
+                                    generation_id = valueh
+                                    keyboard = [
+                                        [InlineKeyboardButton("Interrompi", callback_data=("1")),InlineKeyboardButton("Valida", callback_data=("3,"+str(valueh))),InlineKeyboardButton("Skippa", callback_data=("4,"+str(valueh)))],
+                                    ]
+                                    reply_markup = InlineKeyboardMarkup(keyboard)
+                                
+                                if keyh.startswith("X-FramePack-") and keyh != "X-FramePack-Prompt" and keyh != "X-FramePack-Prompt-Image":
+                                    caption = caption + keyh.replace("X-FramePack-","") + ": " + valueh.replace("&nbsp;","\n") + "\n"
+                                elif keyh.lower() == "Content-Type".lower():
+                                    mimetype = valueh
+                            if caption != "":
+                                await update.message.reply_text(caption, reply_to_message_id=update.message.message_id, reply_markup=reply_markup, disable_notification=True, protect_content=False)
                             if response.status == 200 or response.status == 205:
-                                caption = ""
-                                file_name = ""
-                                generation_id = ""
-                                reply_markup = None
-                                header_items = response.headers.items()
-                                mimetype = None
-                                for keyh, valueh in header_items:
-                                    if keyh == "X-FramePack-Generation-Id":
-                                        generation_id = valueh
-                                        keyboard = [
-                                            [InlineKeyboardButton("Interrompi", callback_data=("1")),InlineKeyboardButton("Valida", callback_data=("3,"+str(valueh))),InlineKeyboardButton("Skippa", callback_data=("4,"+str(valueh)))],
-                                        ]
-                                        reply_markup = InlineKeyboardMarkup(keyboard)
-                                    elif keyh == "X-FramePack-Check-Current-Job":
-                                        caption = valueh.replace("&nbsp;","\n")
-                                    elif keyh == "X-FramePack-File-Name" and valueh != "":
-                                        file_name = valueh
-                                    elif keyh.lower() == "Content-Type".lower():
-                                        mimetype = valueh
-                                if caption != "":
-                                    caption = "File-Name: " + (file_name if file_name != "" else "not available")+ "\nGeneration-Id: " + generation_id + "\n\n" + caption
-                                    await update.message.reply_text(caption, reply_to_message_id=update.message.message_id, reply_markup=reply_markup, disable_notification=True, protect_content=False)
                                 await update.message.reply_text("Generazione in corso...", reply_to_message_id=update.message.message_id, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
                                 if response.status == 200 and mimetype is not None:
                                     filename = os.environ.get("TMP_DIR") + ("video.mp4" if mimetype == "video/mp4" else "image.png")
@@ -572,8 +567,10 @@ async def gencheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                         await update.message.reply_photo(filename, filename=str(uuid.uuid4()) + ".png", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
                             elif response.status == 201:
                                 await update.message.reply_text("Avvio generazione in corso...", reply_to_message_id=update.message.message_id, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
-                            elif response.status == 204:
+                            elif response.status == 202:
                                 await update.message.reply_text("Upscaling in corso...", reply_to_message_id=update.message.message_id, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+                            elif response.status == 204:
+                                await update.message.reply_text("Generazione audio in corso...", reply_to_message_id=update.message.message_id, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
                             elif response.status == 206:
                                 await update.message.reply_text("Nessuna generazione video in esecuzione", reply_to_message_id=update.message.message_id, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
                             else:
