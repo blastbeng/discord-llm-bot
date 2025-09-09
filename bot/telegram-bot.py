@@ -51,6 +51,13 @@ logging.basicConfig(
         format='%(asctime)s %(levelname)-8s %(message)s',
         level=int(os.environ.get("LOG_LEVEL")),
         datefmt='%Y-%m-%d %H:%M:%S')
+
+class NoRunningFilter(logging.Filter):
+    def filter(self, record):
+        return not record.msg.startswith('Running job')
+
+logging.getLogger('apscheduler.executors.default').setLevel(int(os.environ.get("LOG_LEVEL")))
+logging.getLogger("apscheduler.scheduler").addFilter(NoRunningFilter())
             
 def reply_keyboard():
     return ReplyKeyboardMarkup(
@@ -538,33 +545,38 @@ async def gencheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             reply_markup = None
                             caption = ""
                             generation_id = ""
+                            is_ai_generated = False
                             header_items = response.headers.items()                            
                             for keyh, valueh in header_items:
-                                if keyh == "X-FramePack-Generation-Id" and response.status == 200 or response.status == 201:
-                                    generation_id = valueh
-                                    keyboard = [
-                                        [InlineKeyboardButton("Interrompi", callback_data=("1")),InlineKeyboardButton("Valida", callback_data=("3,"+str(valueh))),InlineKeyboardButton("Skippa", callback_data=("4,"+str(valueh)))],
-                                    ]
-                                    reply_markup = InlineKeyboardMarkup(keyboard)
                                 
-                                if keyh.startswith("X-FramePack-") and keyh != "X-FramePack-Prompt" and keyh != "X-FramePack-Prompt-Image":
+                                if keyh.startswith("X-FramePack-") and keyh != "X-FramePack-Prompt" and keyh != "X-FramePack-Prompt-Image" and keyh != "X-FramePack-Execution-Time":
                                     caption = caption + keyh.replace("X-FramePack-","") + ": " + valueh.replace("&nbsp;","\n") + "\n"
-                                elif keyh.lower() == "Content-Type".lower():
-                                    mimetype = valueh
+                                    if keyh == "X-FramePack-Generation-Id" and response.status == 200 or response.status == 201:
+                                        generation_id = valueh
+                                        keyboard = [
+                                            [InlineKeyboardButton("Preview", callback_data=("2")),InlineKeyboardButton("Interrompi", callback_data=("1"))],
+                                            [InlineKeyboardButton("Valida", callback_data=("3,"+str(valueh))),InlineKeyboardButton("Skippa", callback_data=("4,"+str(valueh)))],
+                                        ]
+                                        reply_markup = InlineKeyboardMarkup(keyboard)
+                                    elif keyh == "X-FramePack-Image-AI-Generated" and valueh == "True":
+                                        is_ai_generated = True                                        
+                                #elif keyh.lower() == "Content-Type".lower():
+                                #    mimetype = valueh
                             if caption != "":
                                 await update.message.reply_text(caption, reply_to_message_id=update.message.message_id, reply_markup=reply_markup, disable_notification=True, protect_content=False)
                             if response.status == 200 or response.status == 205:
                                 await update.message.reply_text("Generazione in corso...", reply_to_message_id=update.message.message_id, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
-                                if response.status == 200 and mimetype is not None:
-                                    filename = os.environ.get("TMP_DIR") + ("video.mp4" if mimetype == "video/mp4" else "image.png")
-                                    async with aiofiles.open(filename, 'wb') as f:
-                                        async for chunk in response.content.iter_chunked(4096):
-                                            await f.write(chunk)
-                                        time.sleep(1)
-                                    if mimetype == "video/mp4":
-                                        await update.message.reply_video(filename, reply_markup=reply_keyboard(), filename=str(uuid.uuid4())+".mp4", disable_notification=True, protect_content=False, reply_to_message_id=update.message.message_id)
-                                    elif mimetype == "image/png":
-                                        await update.message.reply_photo(filename, filename=str(uuid.uuid4()) + ".png", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+                                #if response.status == 200 and mimetype is not None:
+                                #    if (mimetype == "video/mp4") or (mimetype == "image/png" and not is_ai_generated):
+                                #       filename = os.environ.get("TMP_DIR") + ("video.mp4" if mimetype == "video/mp4" else "image.png")
+                                #       async with aiofiles.open(filename, 'wb') as f:
+                                #           async for chunk in response.content.iter_chunked(4096):
+                                #               await f.write(chunk)
+                                #           time.sleep(1)
+                                #       if mimetype == "video/mp4":
+                                #           await update.message.reply_video(filename, reply_markup=reply_keyboard(), filename=str(uuid.uuid4())+".mp4", disable_notification=True, protect_content=False, reply_to_message_id=update.message.message_id)
+                                #       elif mimetype == "image/png" and not is_ai_generated:
+                                #           await update.message.reply_photo(filename, filename=str(uuid.uuid4()) + ".png", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
                             elif response.status == 201:
                                 await update.message.reply_text("Avvio generazione in corso...", reply_to_message_id=update.message.message_id, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
                             elif response.status == 202:
@@ -628,6 +640,7 @@ async def background_generation():
         if await get_aivg_online_status(show_message=False):
                 
             message, video_len, mode = get_params(None, None, 0)
+            video_len = str(2)
             url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/enhance/"+str(mode)+"/"+str(video_len)+"/"
             await ask_for_generation(None, url, None, None, from_scheduler=True)
         
@@ -642,34 +655,74 @@ def restart_ai_app():
     except:
         pass
 
+async def send_preview():
+    if await get_aivg_online_status(asking_for_ai=False):
+        url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/check/job/"
+        connector = aiohttp.TCPConnector(force_close=True)
+        async with aiohttp.ClientSession(connector=connector) as session:
+             async with session.post(url,timeout=60) as response:
+                if (response.status >= 200 or response.status < 300):
+                    preview_sent = False
+                    if (response.status == 200):
+                        is_ai_generated = False
+                        header_items = response.headers.items()                            
+                        for keyh, valueh in header_items:
+                            if keyh.lower() == "Content-Type".lower():
+                                mimetype = valueh
+                        if mimetype is not None:
+                            if (mimetype == "video/mp4") or (mimetype == "image/png" and not is_ai_generated):
+                                filename = os.environ.get("TMP_DIR") + ("video.mp4" if mimetype == "video/mp4" else "image.png")
+                                async with aiofiles.open(filename, 'wb') as f:
+                                    async for chunk in response.content.iter_chunked(4096):
+                                        await f.write(chunk)
+                                    time.sleep(1)
+                                if mimetype == "video/mp4":
+                                    preview_sent = True
+                                    await Bot(TOKEN).sendVideo(video=filename, reply_markup=reply_keyboard(), chat_id=CHAT_ID, filename=str(uuid.uuid4()) + ".mp4", disable_notification=True, protect_content=False)
+                                elif mimetype == "image/png" and not is_ai_generated:
+                                    preview_sent = True
+                                    await Bot(TOKEN).sendPhoto(photo=filename, reply_markup=reply_keyboard(), chat_id=CHAT_ID, filename=str(uuid.uuid4()) + ".png", disable_notification=True, protect_content=False)
+                    if not preview_sent:
+                        await Bot(TOKEN).sendMessage(text="Preview non disponibile", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+                else:
+                    await Bot(TOKEN).sendMessage(text=response.reason + " - Si é verificato un errore nella richiesta", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False) 
+        await session.close() 
+
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    chatid = str(update.effective_chat.id)
-    if(CHAT_ID == chatid):
-        query = update.callback_query
-        await query.answer()
-        data = query.data
-        splitted_data = data.split(",")
-        
-        if len(splitted_data) == 1:
-            if str(splitted_data[0]) == "1":
-                await Bot(TOKEN).sendMessage(text="Interrompo la generazione e riavvio il generatore AI, si prega di attendere prima di inviare un altro comando", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
-                time.sleep(1)
-                restart_ai_app()
-        elif len(splitted_data) == 2:
-            skipped_status = ""
-            if str(splitted_data[0]) == "3":
-                skipped_status = "1"
-            if str(splitted_data[0]) == "4":
-                skipped_status = "2"
+    try:
+        chatid = str(update.effective_chat.id)
+        if(CHAT_ID == chatid):
+            query = update.callback_query
+            await query.answer()
+            data = query.data
+            splitted_data = data.split(",")
+            
+            if len(splitted_data) == 1:
+                if str(splitted_data[0]) == "1":
+                    await Bot(TOKEN).sendMessage(text="Interrompo la generazione e riavvio il generatore AI, si prega di attendere prima di inviare un altro comando", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+                    time.sleep(1)
+                    restart_ai_app()
+                if str(splitted_data[0]) == "2":
+                    await send_preview()
+            elif len(splitted_data) == 2:
+                skipped_status = ""
+                if str(splitted_data[0]) == "3":
+                    skipped_status = "1"
+                if str(splitted_data[0]) == "4":
+                    skipped_status = "2"
+                else:
+                    skipped_status = splitted_data[0]
+                await set_skipped_status(skipped_status, splitted_data[1])
+                if str(splitted_data[0]) == "3" or str(splitted_data[0]) == "4":
+                    await Bot(TOKEN).sendMessage(text="Interrompo la generazione e riavvio il generatore AI, si prega di attendere prima di inviare un altro comando", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+                    time.sleep(1)
+                    restart_ai_app()
             else:
-                skipped_status = splitted_data[0]
-            await set_skipped_status(skipped_status, splitted_data[1])
-            if str(splitted_data[0]) == "3" or str(splitted_data[0]) == "4":
-                await Bot(TOKEN).sendMessage(text="Interrompo la generazione e riavvio il generatore AI, si prega di attendere prima di inviare un altro comando", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
-                time.sleep(1)
-                restart_ai_app()
-        else:
-            await update.message.reply_text("Errore nell'esecuzione del comando", reply_to_message_id=update.message.message_id, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+                await update.message.reply_text("Errore nell'esecuzione del comando", reply_to_message_id=update.message.message_id, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+    except Exception as e:
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -695,7 +748,7 @@ def main() -> None:
     application.add_handler(CommandHandler('genloop', genloop))
     application.add_handler(CommandHandler('genimg', genimg))
 
-    application.job_queue.scheduler.add_job(lambda: run(background_generation()), trigger='interval', minutes=10, id='background_generation')
+    application.job_queue.scheduler.add_job(lambda: run(background_generation()), trigger='interval', minutes=2, id='background_generation')
     application.job_queue.scheduler.add_job(lambda: run(remove_directory_tree(Path(os.environ.get("TMP_DIR")))), trigger='interval', minutes=120, id='clean_temp_dir')
     #application.job_queue.scheduler.pause_job('background_generation')
     application.job_queue.scheduler.resume_job('background_generation')
