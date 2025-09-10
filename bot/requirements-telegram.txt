@@ -11,3 +11,4 @@ piper-tts
 pydub
 pillow
 MoviePy
+tzlocal
