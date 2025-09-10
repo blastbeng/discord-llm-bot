@@ -65,7 +65,7 @@ class NoRunningFilter(logging.Filter):
             
 def reply_keyboard():
     return ReplyKeyboardMarkup(
-            [["/random", "/ask", "/speak"], ["/genai", "/genpr", "/genimg", "/genloop"],  ["/gencheck", "/genstop", "/restart"]], 
+            [["/random", "/ask", "/speak"], ["/gencheck", "/genai", "/genpr", "/genimg"],  ["/genloop", "/genstop", "/restart"]], 
             one_time_keyboard=False
         )
 
@@ -534,7 +534,6 @@ async def genimg(update: Update, context: ContextTypes.DEFAULT_TYPE, message=Non
       exc_type, exc_obj, exc_tb = sys.exc_info()
       fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
       logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
-
 
 async def gencheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
