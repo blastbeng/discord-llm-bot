@@ -65,7 +65,7 @@ class NoRunningFilter(logging.Filter):
             
 def reply_keyboard():
     return ReplyKeyboardMarkup(
-            [["/random", "/ask", "/speak"], ["/gencheck", "/genai", "/genpr", "/genimg"],  ["/genloop", "/genstop", "/restart"]], 
+            [["/random", "/ask", "/speak"], ["/check", "/genai", "/genpr", "/genimg"],  ["/genloop", "/genstop", "/restart"]], 
             one_time_keyboard=False
         )
 
@@ -285,15 +285,18 @@ async def ask_for_generation(message_id, url, image, video, from_scheduler=False
                 elif response.status != 206 and response.status != 200 and from_scheduler is False:
                     await Bot(TOKEN).sendMessage(text=response.reason + " - Si é verificato un errore nella richiesta", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False, reply_to_message_id=message_id)
                 
-        except Exception as e:
+        except Exception as e:   
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
             if from_scheduler is False:
                 await Bot(TOKEN).sendMessage(text=(str(e) + " - Si é verificato un errore nella richiesta"), chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False, reply_to_message_id=message_id)
             raise(e)
     await session.close()
 
 def get_params(init_message, message, split_size):
-    video_len = str(7)
-    #video_len = str(random.randint(6, 15))
+    #video_len = str(7)
+    video_len = str(random.randint(12, 30))
     mode = str(random.randint(0, 1))
     if message is not None and message.strip() != "":
         init_message = message
@@ -535,7 +538,7 @@ async def genimg(update: Update, context: ContextTypes.DEFAULT_TYPE, message=Non
       fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
       logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
 
-async def gencheck(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         chatid = str(update.effective_chat.id)
         if(CHAT_ID == chatid):
@@ -643,7 +646,7 @@ async def background_generation():
         if await get_aivg_online_status(show_message=False):
                 
             message, video_len, mode = get_params(None, None, 0)
-            video_len = str(2)
+            video_len = str(random.randint(12, 30))
             url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/enhance/"+str(mode)+"/"+str(video_len)+"/"
             await ask_for_generation(None, url, None, None, from_scheduler=True)
         
@@ -688,16 +691,18 @@ async def send_preview(context):
                                 elif mimetype == "image/png" and is_ai_generated:
                                     preview_sent = True
                                     msg = await Bot(TOKEN).sendPhoto(photo=filename, reply_markup=reply_keyboard(), chat_id=CHAT_ID, filename=str(uuid.uuid4()) + ".png", disable_notification=True, protect_content=False)
+                                if msg is not None:
+                                    application.job_queue.scheduler.add_job(
+                                        delete_message,
+                                        trigger="date",
+                                        run_date=(datetime.now() + timedelta(minutes=10)),
+                                        args=[CHAT_ID, msg.message_id],
+                                        timezone=get_localzone()
+                                    )
                     if not preview_sent:
-                        msg = await Bot(TOKEN).sendMessage(text="Preview non disponibile", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
-                    if msg is not None:
-                        application.job_queue.scheduler.add_job(
-                            delete_message,
-                            trigger="date",
-                            run_date=(datetime.now() + timedelta(minutes=10)),
-                            args=[CHAT_ID, msg.message_id],
-                            timezone=get_localzone()
-                        )
+                        await Bot(TOKEN).sendMessage(text="Preview non disponibile", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+                    else:
+                        await Bot(TOKEN).sendMessage(text="Preview inviata correttamente", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
 
                 else:
                     await Bot(TOKEN).sendMessage(text=response.reason + " - Si é verificato un errore nella richiesta", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False) 
@@ -705,6 +710,7 @@ async def send_preview(context):
 
 async def delete_message(chat_id, msg_id):
     await Bot(TOKEN).deleteMessage(chat_id=chat_id, message_id=msg_id)
+
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
@@ -731,10 +737,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 else:
                     skipped_status = splitted_data[0]
                 await set_skipped_status(skipped_status, splitted_data[1])
-                if str(splitted_data[0]) == "3" or str(splitted_data[0]) == "4":
+                if str(splitted_data[0]) == "4":
                     await Bot(TOKEN).sendMessage(text="Interrompo la generazione e riavvio il generatore AI, si prega di attendere prima di inviare un altro comando", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
                     time.sleep(1)
                     restart_ai_app()
+                elif str(splitted_data[0]) == "3":
+                    await Bot(TOKEN).sendMessage(text="Interrompo la generazione, si prega di attendere la fine dell'esecuzione prima di inviare un altro comando", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)                    
             else:
                 await update.message.reply_text("Errore nell'esecuzione del comando", reply_to_message_id=update.message.message_id, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
     except Exception as e:
@@ -758,7 +766,7 @@ def main() -> None:
     application.add_handler(CommandHandler('genai', genai))
     application.add_handler(CommandHandler('genpr', genpr))
     application.add_handler(CommandHandler('genstop', genstop))
-    application.add_handler(CommandHandler('gencheck', gencheck))
+    application.add_handler(CommandHandler('check', check))
     application.add_handler(CommandHandler('speak', speak))
     application.add_handler(CommandHandler('restart', restart))
     application.add_handler(MessageHandler(filters.PHOTO, generate_from_image))
@@ -766,7 +774,7 @@ def main() -> None:
     application.add_handler(CommandHandler('genloop', genloop))
     application.add_handler(CommandHandler('genimg', genimg))
 
-    application.job_queue.scheduler.add_job(lambda: run(background_generation()), trigger='interval', minutes=2, id='background_generation')
+    application.job_queue.scheduler.add_job(lambda: run(background_generation()), trigger='interval', minutes=30, id='background_generation')
     application.job_queue.scheduler.add_job(lambda: run(remove_directory_tree(Path(os.environ.get("TMP_DIR")))), trigger='interval', minutes=120, id='clean_temp_dir')
     #application.job_queue.scheduler.pause_job('background_generation')
     application.job_queue.scheduler.resume_job('background_generation')
