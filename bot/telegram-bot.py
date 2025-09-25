@@ -296,8 +296,10 @@ async def ask_for_generation(message_id, url, image, video, from_scheduler=False
     await session.close()
 
 def get_params(init_message, message, split_size):
-    video_len = 7
-    mode = random.randint(0, 1)
+    video_len = 3
+#    mode = random.randint(0, 1)
+    mode = 0
+    use_top = 0
     if message is not None and message.strip() != "":
         init_message = message
     if init_message is not None and init_message.strip() != "":
@@ -312,8 +314,13 @@ def get_params(init_message, message, split_size):
             message = splitted_msg[0].strip()
             video_len = splitted_msg[1].strip()
             mode = splitted_msg[2].strip()
+        elif len(splitted_msg) == 4:
+            message = splitted_msg[0].strip()
+            video_len = splitted_msg[1].strip()
+            mode = splitted_msg[2].strip()
+            use_top = splitted_msg[3].strip()
 
-    return "" if message is None else message, int(video_len), int(mode)
+    return "" if message is None else message, int(video_len), int(mode), int(use_top)
 
 
 async def genai(update: Update, context: ContextTypes.DEFAULT_TYPE, image=None, video=None):
@@ -321,12 +328,12 @@ async def genai(update: Update, context: ContextTypes.DEFAULT_TYPE, image=None, 
         chatid = str(update.effective_chat.id)
         if(CHAT_ID == chatid):
             
-            message, video_len, mode = get_params(update.message.text, None, 7 if (image is None and video is None) else 0)
+            message, video_len, mode, use_top = get_params(update.message.text, None, 7 if (image is None and video is None) else 0)
 
             if (mode == 1 or mode == 0) and video_len > 1:
                 if(len(message) <= 500  and not message.endswith('bot')):
                     if await get_aivg_online_status(message_id=update.message.message_id):
-                        url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/enhance/"+str(mode)+"/"+str(video_len)+"/"
+                        url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/enhance/"+str(mode)+"/"+str(use_top)+"/"+str(video_len)+"/"
 
                         if message is not None and message != "":
                             url = url + urllib.parse.quote(str(message))+"/"
@@ -357,11 +364,11 @@ async def genpr(update: Update, context: ContextTypes.DEFAULT_TYPE, message=None
     try:
         chatid = str(update.effective_chat.id)
         if(CHAT_ID == chatid):
-            message, video_len, mode = get_params(update.message.text, message, 7 if (image is None and video is None) else 0)
+            message, video_len, mode, use_top = get_params(update.message.text, message, 7 if (image is None and video is None) else 0)
             if (mode == 1 or mode == 0) and video_len > 1:
                 if(message is not None and message != "" and len(message) <= 500  and not message.endswith('bot')):
                     if await get_aivg_online_status(message_id=update.message.message_id):
-                        url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/prompt/"+urllib.parse.quote(str(message))+"/"+str(mode)+"/"+str(video_len)+"/"
+                        url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/prompt/"+urllib.parse.quote(str(message))+"/"+str(mode)+"/"+str(use_top)+"/"+str(video_len)+"/"
                         await update.message.reply_text("Richiedo una nuova generazione in background", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
                         asyncio.create_task(ask_for_generation(update.message.message_id, url, image, video))
                 else:
@@ -560,9 +567,7 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE, is_from_cmd=
                                     if keyh == "X-FramePack-Generation-Id" and response.status == 200 or response.status == 201:
                                         generation_id = valueh
                                         keyboard = [
-                                            [InlineKeyboardButton("Preview", callback_data=("2")),InlineKeyboardButton("Interrompi", callback_data=("1"))],
-                                            [InlineKeyboardButton("Valida", callback_data=("3,"+str(valueh))),InlineKeyboardButton("Skippa", callback_data=("4,"+str(valueh)))],
-                                            [InlineKeyboardButton("Salva preferito", callback_data=("5,"+str(valueh))),InlineKeyboardButton("Rimuovi preferito", callback_data=("6,"+str(valueh)))]
+                                            [InlineKeyboardButton("Preview", callback_data=("2")),InlineKeyboardButton("Interrompi", callback_data=("1"))]
                                         ]
                                         reply_markup = InlineKeyboardMarkup(keyboard)
                                 #    elif keyh == "X-FramePack-Image-AI-Generated" and valueh == "True":
@@ -617,7 +622,7 @@ async def set_skipped_status(skipped, generation_id):
             async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.post(url,timeout=TIMEOUT) as response:
                     if (response.status == 200):
-                        await Bot(TOKEN).sendMessage(text="Generation-Id #" + str(generation_id) + " impostato a " + ("SKIPPED" if skipped == 2 else "VALID") + ", si prega di attendere prima di inviare un altro comando", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+                        await Bot(TOKEN).sendMessage(text="Generation-Id #" + str(generation_id) + " impostato a " + ("SKIPPED" if skipped == 2 else "VALID"), chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
                     else:
                         await Bot(TOKEN).sendMessage(text=response.reason + " - Si é verificato un errore nella richiesta", chat_id=CHAT_ID, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
             await session.close() 
@@ -670,8 +675,8 @@ async def background_generation():
     try:
         if await get_aivg_online_status(show_message=False):
                 
-            message, video_len, mode = get_params(None, None, 0)
-            url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/enhance/"+str(mode)+"/"+str(video_len)+"/"
+            message, video_len, mode, use_top = get_params(None, None, 0)
+            url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/enhance/"+str(mode)+"/"+str(use_top)+"/"+str(video_len)+"/"
             await ask_for_generation(None, url, None, None, from_scheduler=True)
         
     except Exception as e:
@@ -793,7 +798,7 @@ def main() -> None:
     application.add_handler(CommandHandler('genloop', genloop))
     application.add_handler(CommandHandler('genimg', genimg))
 
-    application.job_queue.scheduler.add_job(lambda: run(background_generation()), trigger='interval', minutes=60, id='background_generation')
+    application.job_queue.scheduler.add_job(lambda: run(background_generation()), trigger='interval', minutes=15, id='background_generation')
     application.job_queue.scheduler.add_job(lambda: run(remove_directory_tree(Path(os.environ.get("TMP_DIR")))), trigger='interval', minutes=120, id='clean_temp_dir')
     #application.job_queue.scheduler.add_job(lambda: run(background_check_preview()), trigger='interval', minutes=15, id='background_check')
     #application.job_queue.scheduler.pause_job('background_generation')
