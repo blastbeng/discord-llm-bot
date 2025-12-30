@@ -156,4 +156,6 @@ ollama/
 storage
 storage/
 bot/discord_bot_cache.sqlite
+bot/audios
 discord_bot_cache.sqlite
+.env.anyllm

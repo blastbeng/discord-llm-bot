@@ -6,6 +6,7 @@ services:
       dockerfile: Dockerfile.client
       network: host
     container_name: discord-bot
+    network_mode: host
     environment:
       - PUID=1000
       - PGID=1000
@@ -13,8 +14,13 @@ services:
     volumes:
       - ".env:/app/.env"
       - "./config:/app/config"
+      - "./audios:/app/audios"
       - "./models:/app/models"
       - "/tmp/discord-llm-bot:/tmp/discord-llm-bot"
+      - /dev/dri/card0:/dev/dri/card0
+      - /dev/dri/card1:/dev/dri/card1
+      - /dev/dri/card2:/dev/dri/card2
+      - /dev/dri/renderD128:/dev/dri/renderD128
     image: "blastbeng/discord-llm-bot:1.0.0"
     restart: unless-stopped
   telegram-llm-bot:
@@ -24,6 +30,7 @@ services:
       dockerfile: Dockerfile.telegram
       network: host
     container_name: telegram-bot
+    network_mode: host
     environment:
       - PUID=1000
       - PGID=1000
@@ -33,27 +40,35 @@ services:
       - "./config:/app/config"
       - "./models:/app/models"
       - "/tmp/discord-llm-bot:/tmp/discord-llm-bot"
+      - /dev/dri/card0:/dev/dri/card0
+      - /dev/dri/card1:/dev/dri/card1
+      - /dev/dri/card2:/dev/dri/card2
+      - /dev/dri/renderD128:/dev/dri/renderD128
     image: "blastbeng/telegram-llm-bot:1.0.0"
     restart: unless-stopped
   anythingllm:
     image: mintplexlabs/anythingllm
     container_name: anythingllm
-    #network_mode: host
     ports:
       - "3001:3001"
     cap_add:
       - SYS_ADMIN
     environment:
       # Adjust for your environment
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Rome
       - STORAGE_DIR=/app/server/storage
-      - JWT_SECRET="changeme"
-      - LLM_PROVIDER=ollama
-      - OLLAMA_BASE_PATH=http://192.168.1.1:11434
-      - OLLAMA_MODEL_PREF=hf.co/Triangle104/Meta-Llama-3.1-8B-Instruct-abliterated-Q5_K_M-GGUF:latest
-      - OLLAMA_MODEL_TOKEN_LIMIT=4096
+      - JWT_SECRET="x"
+      - LLM_PROVIDER='generic-openai'
+      - GENERIC_OPEN_AI_BASE_PATH=http:/x
+      - GENERIC_OPEN_AI_MODEL_PREF=Huihui-Qwen3-4B-Instruct-2507-abliterated.Q4_K_M.gguf
+      - GENERIC_OPEN_AI_MODEL_TOKEN_LIMIT=1024
+      - GENERIC_OPEN_AI_API_KEY=x
+      - INFERENCE_JOB_TIMEOUT_SEC=600
       - EMBEDDING_ENGINE=ollama
-      - EMBEDDING_BASE_PATH=http://192.168.1.1:11434
-      - EMBEDDING_MODEL_PREF=nomic-embed-text:latest
+      - EMBEDDING_BASE_PATH=http://x
+      - EMBEDDING_MODEL_PREF=bge-m3:latest
       - EMBEDDING_MODEL_MAX_CHUNK_LENGTH=8192
       - VECTOR_DB=lancedb
       - WHISPER_PROVIDER=local
@@ -62,17 +77,58 @@ services:
       # Add any other keys here for services or settings
       # you can find in the docker/.env.example file
     volumes:
-      - anythingllm_storage:/app/server/storage
+      - ./storage:/app/server/storage
+      - .env.anyllm:/app/server/.env
     extra_hosts:
-      - "X:192.168.1.1"
+      - "blastpi5:192.168.1.13"
     restart: unless-stopped
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
+  ollama:
+    image: docker.io/ollama/ollama:latest
+    ports:
+      - 11434:11434
+    volumes:
+      - ./ollama/ollama:/root/.ollama
+      - /dev/dri/card0:/dev/dri/card0
+      - /dev/dri/card1:/dev/dri/card1
+      - /dev/dri/card2:/dev/dri/card2
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    container_name: ollama
+    pull_policy: always
+    tty: true
+    restart: unless-stopped
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Rome
+      - OLLAMA_KEEP_ALIVE=1h
+      - OLLAMA_LOAD_TIMEOUT=10m
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_FLASH_ATTENTION=1
+      - OLLAMA_VULKAN=1
+      - OLLAMA_NOHISTORY=1
+      - OLLAMA_MAX_LOADED=1
+      - OLLAMA_NUM_THREADS=4
+  llama_cpp:
+    container_name: llama_cpp
+    pull_policy: build
+    build:
+      context: ./llama.cpp
+      dockerfile: Dockerfile
+      network: host
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - ./models:/models
+      - /dev/dri/card0:/dev/dri/card0
+      - /dev/dri/card1:/dev/dri/card1
+      - /dev/dri/card2:/dev/dri/card2
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    ports:
+      - 8080:8080
+    image: "blastbeng/llama_cpp:1.0.0"
+    command: -m /models/Huihui-Qwen3-4B-Instruct-2507-abliterated.Q4_K_M.gguf --port 8080 --host 0.0.0.0 --api-key x --ctx_size 1024 -n -1 -b 256 -fa on --top_k 10000 --temp 0.7 --repeat_penalty 1.1
+    restart: unless-stopped
 
-volumes:
-  anythingllm_storage:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./storage

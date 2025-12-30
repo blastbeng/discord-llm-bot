@@ -45,7 +45,7 @@ TOKEN = os.environ.get("TOKEN")
 CHAT_ID = os.environ.get("CHAT_ID")
 GROUP_CHAT_ID = os.environ.get("GROUP_CHAT_ID")
 BOT_NAME = os.environ.get("BOT_NAME")
-TIMEOUT = 21600
+TIMEOUT = 86400
 CLEANR = re.compile('<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});')
 
 application = ApplicationBuilder().token(TOKEN).connect_timeout(180).defaults(Defaults(block=False)).build()
@@ -65,7 +65,8 @@ class NoRunningFilter(logging.Filter):
             
 def reply_keyboard():
     return ReplyKeyboardMarkup(
-            [["/random", "/ask", "/speak"], ["/check", "/genai", "/genpr", "/genimg"],  ["/genloop", "/genstop", "/restart"]], 
+            [["/random", "/ask"], ["/speak", "/restart"]], 
+            #[["/random", "/ask", "/speak"], ["/story", "/genimg", "/restart"]], 
             one_time_keyboard=False
         )
 
@@ -111,27 +112,29 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             message = update.message.text.strip()
             if(message != ""):
-                if await get_aivg_online_status(message_id=update.message.message_id):
-                    data = {
-                            "message": message.rstrip(),
-                            "mode": "chat"
-                        }
-                    headers = {
-                        'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
-                    }
-                    anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
-                    connector = aiohttp.TCPConnector(force_close=True)
-                    async with aiohttp.ClientSession(connector=connector) as anything_llm_session:
-                        async with anything_llm_session.post(anything_llm_url, headers=headers, json=data) as anything_llm_response:
-                            if (anything_llm_response.status == 200):
-                                anything_llm_json = await anything_llm_response.json()
-                                anything_llm_text = anything_llm_json["textResponse"].rstrip()
-                                await update.message.reply_text(anything_llm_text, reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
-                            else:
-                                logging.error(anything_llm_response)
-                                await update.message.reply_text("si è verificato un errore stronzo", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
-                        await anything_llm_session.close()  
-                
+                data = {
+                        "message": message.rstrip(),
+                        "mode": "chat"
+          }
+                headers = {
+                    'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
+                }
+                anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
+                connector = aiohttp.TCPConnector(force_close=True)
+                session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=120,sock_read=120)
+                async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
+                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=120) as anything_llm_response:
+                        if (anything_llm_response.status == 200):
+                            anything_llm_json = await anything_llm_response.json()
+                            #anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
+                            anything_llm_text = anything_llm_json["textResponse"]
+                            
+                            await update.message.reply_text(anything_llm_text, reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+                        else:
+                            logging.error(anything_llm_response)
+                            await update.message.reply_text("si è verificato un errore stronzo", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+                    await anything_llm_session.close()  
+            
             else:
                 await update.message.reply_text("se vuoi dirmi o chiedermi qualcosa devi scrivere una frase dopo /ask (massimo 500 caratteri)", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
 
@@ -175,31 +178,72 @@ async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             message = update.message.text[5:].strip()
             if(message != "" and len(message) <= 500  and not message.endswith('bot')):
-                if await get_aivg_online_status(message_id=update.message.message_id):
-                    connector = aiohttp.TCPConnector(force_close=True)
-                    anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
-                    data = {
-                            "message": message.rstrip(),
-                            "mode": "chat"
-                        }
-                    headers = {
-                        'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
-                    }
-                    async with aiohttp.ClientSession(connector=connector) as anything_llm_session:
-                        async with anything_llm_session.post(anything_llm_url, headers=headers, json=data) as anything_llm_response:
-                            if (anything_llm_response.status == 200):
-                                anything_llm_json = await anything_llm_response.json()
-                                anything_llm_text = anything_llm_json["textResponse"].rstrip()
-                                await update.message.reply_audio(get_tts_google(anything_llm_text), reply_markup=reply_keyboard(), caption=anything_llm_text, disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=str(uuid.uuid4())+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
-            
-                            else:
-                                await update.message.reply_text(anything_llm_response.reason + " - Il server potrebbe essere sovraccarico o potrebbe esserci una generazione ancora in corso, riprovare in un secondo momento", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
-                        await anything_llm_session.close()  
+                connector = aiohttp.TCPConnector(force_close=True)
+                anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
+                data = {
+                        "message": message.rstrip(),
+                        "mode": "chat"
+              }
+                headers = {
+                    'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
+                }
+                session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=120,sock_read=120)
+                async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
+                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=120) as anything_llm_response:
+                        if (anything_llm_response.status == 200):
+                            anything_llm_json = await anything_llm_response.json()
+                            #anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
+                            anything_llm_text = anything_llm_json["textResponse"]
+                            
+                            await update.message.reply_audio(get_tts_google(anything_llm_text), reply_markup=reply_keyboard(), caption=anything_llm_text, disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=str(uuid.uuid4())+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
+                        else:
+                            await update.message.reply_text(anything_llm_response.reason + " - Il server potrebbe essere sovraccarico o potrebbe esserci una generazione ancora in corso, riprovare in un secondo momento", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+                    await anything_llm_session.close()  
 
 
                 
             else:
                 await update.message.reply_text("se vuoi dirmi o chiedermi qualcosa devi scrivere una frase dopo /ask (massimo 500 caratteri)", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+
+    except (requests.exceptions.RequestException, ValueError) as e:
+      exc_type, exc_obj, exc_tb = sys.exc_info()
+      fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+      logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
+      await update.message.reply_text("Il server potrebbe essere sovraccarico, riprovare in un secondo momento", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+    except Exception as e:
+      exc_type, exc_obj, exc_tb = sys.exc_info()
+      fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+      logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
+    
+      
+
+async def story(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        chatid = str(update.effective_chat.id)
+        if(CHAT_ID == chatid):
+            
+            message = update.message.text[7:].strip()
+            message = (str(random.choice(json.loads(os.environ.get('PROMPT_LIST'))) if message is None or message == "" else message))
+            if await get_aivg_online_status(message_id=update.message.message_id):
+                connector = aiohttp.TCPConnector(force_close=True)
+                anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE_STORY") + "/chat"
+                data = {
+                        "message": message.rstrip(),
+                        "mode": "chat"
+                    }
+                headers = {
+                    'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
+                }
+                async with aiohttp.ClientSession(connector=connector) as anything_llm_session:
+                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data) as anything_llm_response:
+                        if (anything_llm_response.status == 200):
+                            anything_llm_json = await anything_llm_response.json()
+                            anything_llm_text = anything_llm_json["textResponse"].rstrip().replace('\n',' ').replace('\r\n',' ').replace('\n\r',' ')
+                            await update.message.reply_text(anything_llm_text, reply_markup=reply_keyboard(), reply_to_message_id=update.message.message_id, disable_notification=True, protect_content=False)
+                        else:
+                            await update.message.reply_text(anything_llm_response.reason + " - Il server potrebbe essere sovraccarico o potrebbe esserci una generazione ancora in corso, riprovare in un secondo momento", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+                    await anything_llm_session.close()  
+
 
     except (requests.exceptions.RequestException, ValueError) as e:
       exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -259,20 +303,20 @@ async def ask_for_generation(message_id, url, image, video, from_scheduler=False
                     header_items = response.headers.items()
                     reply_markup = None
                     for keyh, valueh in header_items:
-                        if keyh.startswith("X-FramePack-") and keyh != "X-FramePack-Prompt" and keyh != "X-FramePack-Prompt-Image":
-                            caption = caption + keyh.replace("X-FramePack-","") + ": " + valueh + "\n"
-                            if keyh == "X-FramePack-Generation-Id":
+                        if keyh.startswith("X-AIVG-") and keyh != "X-AIVG-Prompt" and keyh != "X-AIVG-Prompt-Image":
+                            caption = caption + keyh.replace("X-AIVG-","") + ": " + valueh + "\n"
+                            if keyh == "X-AIVG-Generation-Id":
                                 keyboard = [
                                     [InlineKeyboardButton("Valida", callback_data=("3,"+str(valueh))),InlineKeyboardButton("Skippa", callback_data=("4,"+str(valueh)))],
                                     [InlineKeyboardButton("Salva preferito", callback_data=("5,"+str(valueh))),InlineKeyboardButton("Rimuovi preferito", callback_data=("6,"+str(valueh)))]
                                 ]
                                 reply_markup = InlineKeyboardMarkup(keyboard)
-                            #if keyh == "X-FramePack-Prompt":
+                            #if keyh == "X-AIVG-Prompt":
                             #    prompt = valueh.replace("&nbsp;","\n")
                             #    with open(f'{os.environ.get("TMP_DIR")}prompt.txt', "w") as text_file:
                             #        text_file.write(prompt)
                             #    await Bot(TOKEN).sendDocument(document=open(f'{os.environ.get("TMP_DIR")}prompt.txt', 'rb'), chat_id=CHAT_ID, filename=str(uuid.uuid4())+".mp4", disable_notification=True, protect_content=False, reply_to_message_id=message_id)
-                            #if keyh == "X-FramePack-Prompt-Image":
+                            #if keyh == "X-AIVG-Prompt-Image":
                             #    prompt_image = valueh.replace("&nbsp;","\n")
                             #    with open(f'{os.environ.get("TMP_DIR")}prompt_image.txt', "w") as text_file:
                             #        text_file.write(prompt_image)
@@ -296,9 +340,9 @@ async def ask_for_generation(message_id, url, image, video, from_scheduler=False
     await session.close()
 
 def get_params(init_message, message, split_size):
-    video_len = 3
-#    mode = random.randint(0, 1)
-    mode = 0
+    video_len = 5
+    #mode = random.randint(0, 1)
+    mode = 1
     use_top = 0
     if message is not None and message.strip() != "":
         init_message = message
@@ -330,7 +374,7 @@ async def genai(update: Update, context: ContextTypes.DEFAULT_TYPE, image=None, 
             
             message, video_len, mode, use_top = get_params(update.message.text, None, 7 if (image is None and video is None) else 0)
 
-            if (mode == 1 or mode == 0) and video_len > 1:
+            if (mode == 1 or mode == 0) and video_len >= 1:
                 if(len(message) <= 500  and not message.endswith('bot')):
                     if await get_aivg_online_status(message_id=update.message.message_id):
                         url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/enhance/"+str(mode)+"/"+str(use_top)+"/"+str(video_len)+"/"
@@ -365,7 +409,7 @@ async def genpr(update: Update, context: ContextTypes.DEFAULT_TYPE, message=None
         chatid = str(update.effective_chat.id)
         if(CHAT_ID == chatid):
             message, video_len, mode, use_top = get_params(update.message.text, message, 7 if (image is None and video is None) else 0)
-            if (mode == 1 or mode == 0) and video_len > 1:
+            if (mode == 1 or mode == 0) and video_len >= 1:
                 if(message is not None and message != "" and len(message) <= 500  and not message.endswith('bot')):
                     if await get_aivg_online_status(message_id=update.message.message_id):
                         url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/prompt/"+urllib.parse.quote(str(message))+"/"+str(mode)+"/"+str(use_top)+"/"+str(video_len)+"/"
@@ -562,15 +606,16 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE, is_from_cmd=
                             header_items = response.headers.items()                            
                             for keyh, valueh in header_items:
                                 
-                                if keyh.startswith("X-FramePack-") and keyh != "X-FramePack-Prompt" and keyh != "X-FramePack-Prompt-Image" and keyh != "X-FramePack-Execution-Time":
-                                    caption = caption + keyh.replace("X-FramePack-","") + ": " + valueh.replace("&nbsp;","\n") + "\n"
-                                    if keyh == "X-FramePack-Generation-Id" and response.status == 200 or response.status == 201:
+                                if keyh.startswith("X-AIVG-") and keyh != "X-AIVG-Prompt" and keyh != "X-AIVG-Prompt-Image" and keyh != "X-AIVG-Execution-Time":
+                                    caption = caption + keyh.replace("X-AIVG-","") + ": " + valueh.replace("&nbsp;","\n") + "\n"
+                                    if keyh == "X-AIVG-Generation-Id" and response.status == 200:
                                         generation_id = valueh
                                         keyboard = [
+                                        [InlineKeyboardButton("Valida", callback_data=("7,"+str(valueh))),InlineKeyboardButton("Skippa", callback_data=("8,"+str(valueh)))],
                                             [InlineKeyboardButton("Preview", callback_data=("2")),InlineKeyboardButton("Interrompi", callback_data=("1"))]
                                         ]
                                         reply_markup = InlineKeyboardMarkup(keyboard)
-                                #    elif keyh == "X-FramePack-Image-AI-Generated" and valueh == "True":
+                                #    elif keyh == "X-AIVG-Image-AI-Generated" and valueh == "True":
                                 #        is_ai_generated = True                                        
                                 #elif keyh.lower() == "Content-Type".lower():
                                 #    mimetype = valueh
@@ -614,10 +659,10 @@ async def check(update: Update, context: ContextTypes.DEFAULT_TYPE, is_from_cmd=
       logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
 
 
-async def set_skipped_status(skipped, generation_id):
+async def set_skipped_status(skipped, generation_id, stop=False):
     try:
         if await get_aivg_online_status(asking_for_ai=False):
-            url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/skipped/" + str(skipped) + "/" + str(generation_id) + "/"
+            url = os.environ.get("AIVG_ENDPOINT") + "/aivg/generate/skipped/" + str(skipped) + "/" + str(generation_id) + ("/1/" if stop else "/0/")
             connector = aiohttp.TCPConnector(force_close=True)
             async with aiohttp.ClientSession(connector=connector) as session:
                 async with session.post(url,timeout=TIMEOUT) as response:
@@ -703,7 +748,7 @@ async def send_preview():
                         is_ai_generated = False
                         header_items = response.headers.items()                            
                         for keyh, valueh in header_items:
-                            if keyh == "X-FramePack-Image-AI-Generated" and valueh == "True":
+                            if keyh == "X-AIVG-Image-AI-Generated" and valueh == "True":
                                 is_ai_generated = True    
                             elif keyh.lower() == "Content-Type".lower():
                                 mimetype = valueh
@@ -763,6 +808,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 await set_top_config(1, splitted_data[1])
             elif len(splitted_data) == 2 and str(splitted_data[0]) == "6":
                 await set_top_config(0, splitted_data[1])
+            elif len(splitted_data) == 2 and str(splitted_data[0]) == "7":
+                await set_skipped_status(1, splitted_data[1], stop=True)
+            elif len(splitted_data) == 2 and str(splitted_data[0]) == "8":
+                await set_skipped_status(2, splitted_data[1], stop=True)
             else:
                 await update.message.reply_text("Errore nell'esecuzione del comando", reply_to_message_id=update.message.message_id, reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
     except Exception as e:
@@ -787,22 +836,23 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
     application.add_handler(CommandHandler('random', random_cmd))
     application.add_handler(CommandHandler('ask', ask))
-    application.add_handler(CommandHandler('genai', genai))
-    application.add_handler(CommandHandler('genpr', genpr))
-    application.add_handler(CommandHandler('genstop', genstop))
-    application.add_handler(CommandHandler('check', check))
+    #application.add_handler(CommandHandler('genai', genai))
+    #application.add_handler(CommandHandler('genpr', genpr))
+    #application.add_handler(CommandHandler('genstop', genstop))
+    #application.add_handler(CommandHandler('check', check))
     application.add_handler(CommandHandler('speak', speak))
     application.add_handler(CommandHandler('restart', restart))
     application.add_handler(MessageHandler(filters.PHOTO, generate_from_image))
     application.add_handler(MessageHandler(filters.VIDEO, generate_from_video))
-    application.add_handler(CommandHandler('genloop', genloop))
-    application.add_handler(CommandHandler('genimg', genimg))
+    #application.add_handler(CommandHandler('genloop', genloop))
+    #application.add_handler(CommandHandler('genimg', genimg))
+    #application.add_handler(CommandHandler('story', story))
 
     application.job_queue.scheduler.add_job(lambda: run(background_generation()), trigger='interval', minutes=15, id='background_generation')
-    application.job_queue.scheduler.add_job(lambda: run(remove_directory_tree(Path(os.environ.get("TMP_DIR")))), trigger='interval', minutes=120, id='clean_temp_dir')
+    application.job_queue.scheduler.add_job(lambda: run(remove_directory_tree(Path(os.environ.get("TMP_DIR")))), trigger='interval', minutes=30, id='clean_temp_dir')
     #application.job_queue.scheduler.add_job(lambda: run(background_check_preview()), trigger='interval', minutes=15, id='background_check')
-    #application.job_queue.scheduler.pause_job('background_generation')
-    application.job_queue.scheduler.resume_job('background_generation')
+    application.job_queue.scheduler.pause_job('background_generation')
+    #application.job_queue.scheduler.resume_job('background_generation')
     application.job_queue.scheduler.resume_job('clean_temp_dir')
     application.job_queue.scheduler.start()
 

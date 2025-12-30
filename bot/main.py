@@ -35,10 +35,14 @@ from gtts import gTTS
 from utils import FFmpegPCMAudioBytesIO
 from datetime import timedelta
 import uuid
-from piper.voice import PiperVoice
+#from piper.voice import PiperVoice
 from pydub import AudioSegment
+from fakeyou import asynchronous_fakeyou
 import wave
 import copy
+import hashlib
+import eyed3
+from proxy_randomizer import RegisteredProviders
 
 dotenv_path = joinpy(dirname(__file__), '.env')
 load_dotenv(dotenv_path)
@@ -51,6 +55,10 @@ database.create_db_tables(dbms)
 
 GUILD_ID = discord.Object(id=os.environ.get("GUILD_ID"))
 
+def compute_md5_hash(my_string):
+    m = hashlib.md5()
+    m.update(my_string.encode('utf-8'))
+    return m.hexdigest()
 
 def get_anythingllm_online_status():
     try:
@@ -68,29 +76,141 @@ def get_anythingllm_online_status():
     else:
         return True
 
-def get_tts_google(text: str):
-    mp3_fp = BytesIO()
-    tts = gTTS(text=text, lang="it", slow=False)
-    tts.write_to_fp(mp3_fp)
-    mp3_fp.seek(0)
-    return mp3_fp 
+class FakeYouCustom(asynchronous_fakeyou.AsyncFakeYou):
+    
+    async def get_session(self) -> aiohttp.ClientSession:
+        session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=300,sock_read=300)
+        if bool(randompy.getrandbits(1)):
+            if self.session and not self.session.closed:
+                self.session.close()
+            random_proxy = None
+            #if bool(randompy.getrandbits(1)):
+            #    rp = RegisteredProviders()
+            #    rp.parse_providers()
+            #    random_proxy = (randompy.choice(["http", "https"])) + "://" + rp.get_random_proxy().get_proxy()
+            #    logging.info("FakeYou - Using proxy: " + random_proxy)
+            self.session = aiohttp.ClientSession(timeout=session_timeout, headers=self.headers, proxy=random_proxy)
+        elif not self.session or self.session.closed:
+            self.session = aiohttp.ClientSession(timeout=session_timeout, headers=self.headers)
+        return self.session
+
+
+class GeneratorLoop:
+
+    @tasks.loop(seconds=60)
+    async def generator_loop(self):
+        try:
+            sentences = database.select_all_sentence(dbms)
+            if sentences is not None and len(sentences) > 0:
+                #randompy.shuffle(sentences)
+                count = 0
+                for sentence in sentences:
+                    rnd_voice = randompy.choice(get_available_voices())
+                    #rnd_voice = "Google"
+                    if rnd_voice == "Google":
+                        found = get_tts_google(sentence, play=False)
+                    else:
+                        found = await get_tts_fakeyou(sentence, rnd_voice, play=False)
+                    if found or count == 1000:
+                        break
+                    count = count + 1
+        except Exception as e:
+            exc_type, exc_obj, exc_tb = sys.exc_info()
+            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+            logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
 
 
 
-def get_tts_piper(text: str, voice_str: str):
-    model = joinpy(dirname(__file__), "models/" + voice_str + '.onnx') 
-    if os.path.isfile(model):
-        voice = PiperVoice.load(model)
-        file_path = os.environ.get("TMP_DIR") + str(uuid.uuid4()) + ".wav"
-        with wave.open(file_path, "w") as wav_file:
-            voice.synthesize(text, wav_file)
-        audio = AudioSegment.from_wav(file_path)
-        out = BytesIO()
-        audio.export(out, format='mp3', bitrate="256k")
-        out.seek(0)
-        os.remove(file_path)
-        return out
-    return None
+def read_mp3_from_file(file_path):
+    audio = AudioSegment.from_mp3(file_path)
+    out = BytesIO()
+    audio.export(out, format='mp3', bitrate="256k")
+    out.seek(0)
+    return out
+
+def get_tts_google(text: str, play=True):
+    file_path = os.path.dirname(os.path.realpath(__file__)) + "/audios/Google_" + compute_md5_hash(text) + ".mp3"
+    if os.path.exists(file_path):
+        return read_mp3_from_file(file_path) if play else True
+    else:
+        logging.info("START - Google text: " + text)
+        mp3_fp = BytesIO()
+        tts = gTTS(text=text, lang="it", slow=False)
+        logging.info("REQUEST OK - Google text: " + text)
+        tts.write_to_fp(mp3_fp)
+        mp3_fp.seek(0)        
+        with open(file_path, "wb") as f:
+            f.write(mp3_fp.getbuffer())
+        audiofile = eyed3.load(file_path)
+        audiofile.initTag()
+        audiofile.tag.artist = "Google"
+        audiofile.tag.title = "Google"
+        audiofile.tag.lyrics.set(text)
+        audiofile.tag.save()
+        return mp3_fp 
+
+async def get_tts_fakeyou(text: str, voice: str, play=True):
+    try:
+        voice_token = None
+        if voice == "Papa Francesco (FakeYou.com)":
+            voice_token = "weight_gc8gsr41974q5ax35gvttr85v"
+        elif voice == "Silvio Berlusconi (FakeYou.com)":
+            voice_token = "weight_324nvat7xvaawe146na154gwh"
+        elif voice == "Goku (FakeYou.com)":
+            voice_token = "weight_wn689844yyr08jny6jyyvkwcp"
+        elif voice == "Gerry Scotti (FakeYou.com)":
+            voice_token = "weight_ms1kzt5m09cfw1yn666cxhy88"
+        elif voice == "Peter Griffin (FakeYou.com)":
+            voice_token = "weight_t0y9rpba3qjnq02da44ynfs45"
+        elif voice == "Homer Simpson (FakeYou.com)":
+            voice_token = "weight_zw97bw3hbtm07qwkd2exna15b"
+        else:
+            return None
+        file_path = os.path.dirname(os.path.realpath(__file__)) + "/audios/" + voice_token + "_" + compute_md5_hash(text) + ".mp3"
+        if os.path.exists(file_path):
+            return read_mp3_from_file(file_path) if play else True
+        else:
+            logging.info("START - FakeYou text: " + text + ", voice: " + voice)
+            fy = FakeYouCustom()
+            fakeyou_result = await fy.say(text, voice_token)
+            if fakeyou_result.content:
+                logging.info("REQUEST OK - FakeYou text: " + text + ", voice: " + voice)
+                audio = AudioSegment.from_file(BytesIO(fakeyou_result.content), format='wav')
+                out = BytesIO()
+                audio.export(out, format='mp3', bitrate="256k")
+                out.seek(0)
+                with open(file_path, "wb") as f:
+                    f.write(out.getbuffer())
+                audiofile = eyed3.load(file_path)
+                audiofile.initTag()
+                audiofile.tag.artist = voice
+                audiofile.tag.title = voice_token
+                audiofile.tag.lyrics.set(text)
+                audiofile.tag.save()
+                return out
+            logging.error("FAILED - FakeYou text:" + text + ", voice: " + voice)
+            return None
+    except Exception as e:
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
+        logging.error("FAILED - FakeYou text:" + text + ", voice: " + voice)
+        return None
+
+#def get_tts_piper(text: str, voice_str: str):
+#    model = joinpy(dirname(__file__), "models/" + voice_str + '.onnx') 
+#    if os.path.isfile(model):
+#        file_path = os.environ.get("TMP_DIR") + str(uuid.uuid4()) + ".wav"
+#        with wave.open(file_path, "w") as wav_file:
+#        voice = PiperVoice.load(model)
+#            voice.synthesize(text, wav_file)
+#        audio = AudioSegment.from_wav(file_path)
+#        out = BytesIO()
+#        audio.export(out, format='mp3', bitrate="256k")
+#        out.seek(0)
+#        os.remove(file_path)
+#        return out
+#    return None
 
 class MyClient(discord.Client):
     def __init__(self, *, intents: discord.Intents):
@@ -192,6 +312,12 @@ def get_available_voices():
         if name not in voices:
             voices.append(name)
     voices.append("Google")
+    voices.append("Goku (FakeYou.com)")
+    voices.append("Gerry Scotti (FakeYou.com)")
+    voices.append("Homer Simpson (FakeYou.com)")
+    voices.append("Peter Griffin (FakeYou.com)")
+    voices.append("Papa Francesco (FakeYou.com)")
+    voices.append("Silvio Berlusconi (FakeYou.com)")
     return voices
 
 available_voices = get_available_voices()
@@ -355,16 +481,19 @@ class PlayAudioWorker:
         currentguildid = get_current_guild_id(str(self.interaction.guild.id))
         try:
             content = None
+            used_fy = False
             if self.voice == "Google":
                 content = get_tts_google(self.text)
             elif self.voice == "random":
-                rnd_voice = randompy.choice(available_voices)
-                if rnd_voice == "Google":
+                self.voice = randompy.choice(available_voices)
+                if self.voice == "Google":
                     content = get_tts_google(self.text)
                 else:
-                    content = get_tts_piper(self.text, rnd_voice)
+                    content = await get_tts_fakeyou(self.text, self.voice)
+                    used_fy = True
             else:
-                content = get_tts_piper(self.text, self.voice)
+                content = await get_tts_fakeyou(self.text, self.voice)
+                used_fy = True
             voice_client = get_voice_client_by_guildid(client.voice_clients, self.interaction.guild.id)            
             if not voice_client:
                 raise ClientException("voice_client is None")
@@ -373,7 +502,13 @@ class PlayAudioWorker:
                             
             if not voice_client.is_connected():
                 await voice_client.channel.connect()
-                time.sleep(5)   
+                time.sleep(5)
+
+            fytext = ""
+
+            if content is None and used_fy:
+                content = get_tts_google(self.text)
+                fytext = "\n\nWARNING: FakeYou sta ricevendo troppe richieste, audio generato usando la voce di Google"
 
             if content is not None:                
 
@@ -382,9 +517,11 @@ class PlayAudioWorker:
                 view.add_item(StopButton())
                 logmessage = 'play_audio_worker - ' + self.text
                 voice_client.play(FFmpegPCMAudioBytesIO(copy.deepcopy(content).read(), pipe=True), after=lambda e: logging.info(logmessage))
-                await self.interaction.followup.edit_message(message_id=self.message.id,content=self.text if self.initial_text is None else self.initial_text + self.text, view = view)
+                await self.interaction.followup.edit_message(message_id=self.message.id,content="Testo: " + (self.text if self.initial_text is None else self.initial_text + self.text) + "\nVoce:  " + self.voice + fytext, view = view)
+            elif used_fy:
+                await self.interaction.followup.edit_message(message_id=self.message.id,content="Testo: " + (self.text if self.initial_text is None else self.initial_text + self.text) + "\nVoce:  " + self.voice + "\n\nERROR: FakeYou sta ricevendo troppe richieste, prova a selezionare una voce diversa.")
             else:
-                await self.interaction.followup.edit_message(message_id=self.message.id,content="Errore nella generazione dell'audio, prova a selezionare una voce diversa.")
+                await self.interaction.followup.edit_message(message_id=self.message.id,content="Testo: " + (self.text if self.initial_text is None else self.initial_text + self.text) + "\nVoce:  " + self.voice + "\n\nERROR: Errore nella generazione dell'audio, prova a selezionare una voce diversa.")
 
             if self.save:
                 database.insert_sentence(dbms, self.text)
@@ -394,7 +531,8 @@ class PlayAudioWorker:
             fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
             logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
             logging.error("[GUILDID : %s] play_audio_worker - Received bad response from APIs.", str(get_current_guild_id(self.interaction.guild.id)))
-            raise Exception("play_audio_worker - Error! - ")
+            await self.interaction.followup.edit_message(message_id=self.message.id,content="Testo: " + (self.text if self.initial_text is None else self.initial_text + self.text) + "\nVoce:  " + self.voice + "\n\nERROR: Errore nella generazione dell'audio, riprovare fra qualche istante.")
+            #raise Exception("play_audio_worker - Error! - ")
             
         if audio_count_queue > 0:
             audio_count_queue = audio_count_queue - 1
@@ -405,8 +543,8 @@ async def get_queue_message():
     message = message + "Se il server é sovraccarico, potrebbe volerci un po' di tempo"
     message = message + "\n"
     message = message + "*CPU: " + str(psutil.cpu_percent()) + "% - RAM: " + str(psutil.virtual_memory()[2]) + "%*"
-    message = message + "\n"
-    message = message + "**" + "TTS in coda:" + " " + str(0 if audio_count_queue == 0 else audio_count_queue - 1) + "**"
+    #message = message + "\n"
+    #message = message + "**" + "TTS in coda:" + " " + str(0 if audio_count_queue == 0 else audio_count_queue - 1) + "**"
     return message
 
 @tasks.loop(hours=6)
@@ -459,6 +597,8 @@ async def on_connect():
 async def on_guild_available(guild):
     try:
         currentguildid = get_current_guild_id(str(guild.id))
+
+        GeneratorLoop().generator_loop.start()
 
     except Exception as e:
         exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -577,53 +717,60 @@ async def audio(interaction: discord.Interaction, audio: discord.Attachment):
     except Exception as e:
         await send_error(e, interaction)
 
-#@client.tree.command()
-#@app_commands.rename(text='text')
-#@app_commands.describe(text="La frase da chiedere")
-#@app_commands.rename(voice='voice')
-#@app_commands.describe(voice="La voce da usare")
-#@app_commands.autocomplete(voice=rps_autocomplete)
-#@app_commands.checks.cooldown(1, 30.0, key=lambda i: (i.user.id))
-#async def ask(interaction: discord.Interaction, text: str, voice: str = "Google"):
-#    """Ask something."""
-#    is_deferred=True
-#    try:
-#        await interaction.response.defer(thinking=True, ephemeral=False)
-#        check_permissions(interaction)
-#        
-#        voice_client = get_voice_client_by_guildid(client.voice_clients, interaction.guild.id)
-#        await connect_bot_by_voice_client(voice_client, interaction.user.voice.channel, interaction.guild)
-#
-#        
-#        if voice_client and not hasattr(voice_client, 'play') and voice_client.is_connected():
-#            await interaction.followup.send("Per favore riprova piú tardi, Sto inizializzando la connessione...", ephemeral = True)
-#        else:
-#            currentguildid = get_current_guild_id(interaction.guild.id)
-#            if currentguildid == '000000' and get_anythingllm_online_status():
-#                data = {
-#                        "message": text.rstrip(),
-#                        "mode": "chat"
-#                    }
-#                headers = {
-#                    'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
-#                }
-#                connector = aiohttp.TCPConnector(force_close=True)
-#                anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
-#                message:discord.Message = await interaction.followup.send('**' + str(interaction.user.name) + "** ha chiesto al bot:" + " **" + text + "**" + await get_queue_message(), ephemeral = False)            
-#                async with aiohttp.ClientSession(connector=connector) as anything_llm_session:
-#                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data) as anything_llm_response:
-#                        if (anything_llm_response.status == 200):
-#                            anything_llm_json = await anything_llm_response.json()
-#                            anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
-#                            
-#                            worker = PlayAudioWorker(anything_llm_text, interaction, message, voice, initial_text="**"+str(interaction.user.name) + '**: '+ text + '\n**' + interaction.guild.me.nick + "**: ")
-#                            worker.play_audio_worker.start()
-#                    await anything_llm_session.close()
-#            else:
-#                await interaction.followup.send("Il Chatbot AI é offline, per favore riprova piú tardi", ephemeral = True) 
-#                   
-#    except Exception as e:
-#        await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
+@client.tree.command()
+@app_commands.rename(text='text')
+@app_commands.describe(text="La frase da chiedere")
+@app_commands.rename(voice='voice')
+@app_commands.describe(voice="La voce da usare")
+@app_commands.autocomplete(voice=rps_autocomplete)
+@app_commands.checks.cooldown(1, 60.0, key=lambda i: (i.user.id))
+async def ask(interaction: discord.Interaction, text: str, voice: str = "Google"):
+    """Ask something."""
+    is_deferred=True
+    try:
+        await interaction.response.defer(thinking=True, ephemeral = True)
+        check_permissions(interaction)
+        
+        voice_client = get_voice_client_by_guildid(client.voice_clients, interaction.guild.id)
+        await connect_bot_by_voice_client(voice_client, interaction.user.voice.channel, interaction.guild)
+
+        
+        if voice_client and not hasattr(voice_client, 'play') and voice_client.is_connected():
+            await interaction.followup.send("Per favore riprova piú tardi, Sto inizializzando la connessione...", ephemeral = True)
+        else:
+            currentguildid = get_current_guild_id(interaction.guild.id)
+            if currentguildid == '000000' and get_anythingllm_online_status():
+                data = {
+                        "message": text.rstrip(),
+                        "mode": "chat"
+              }
+                headers = {
+                    'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
+                }
+                connector = aiohttp.TCPConnector(force_close=True)
+                anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
+                message:discord.Message = await interaction.followup.send('**' + str(interaction.user.name) + "** ha chiesto al bot:" + " **" + text + "**" + await get_queue_message(), ephemeral = True)            
+                session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=120,sock_read=120)
+
+                async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
+                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=120) as anything_llm_response:
+                        if (anything_llm_response.status == 200):
+                            anything_llm_json = await anything_llm_response.json()
+                            #anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
+                            anything_llm_text = anything_llm_json["textResponse"]
+                            
+                            
+                            worker = PlayAudioWorker(anything_llm_text, interaction, message, voice, initial_text="**"+str(interaction.user.name) + '**: '+ text + '\n**' + interaction.guild.me.nick + "**: ")
+                            worker.play_audio_worker.start()
+                        else:
+                            
+                            await interaction.followup.send("Errore nella generazione della risposta, il server potrebbe essere occupato in questo momento, per favore riprova qualche istante", ephemeral = True) 
+                    await anything_llm_session.close()
+            else:
+                await interaction.followup.send("Il Chatbot AI é offline, per favore riprova piú tardi", ephemeral = True) 
+                   
+    except Exception as e:
+        await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
 
 @client.tree.command()
 @app_commands.rename(voice='voice')
@@ -632,7 +779,7 @@ async def audio(interaction: discord.Interaction, audio: discord.Attachment):
 @app_commands.rename(text='text')
 @app_commands.describe(text="Il testo da cercare")
 @app_commands.checks.cooldown(1, 5.0, key=lambda i: (i.user.id))
-async def random(interaction: discord.Interaction, voice: str = "Google", text: str = ""):
+async def random(interaction: discord.Interaction, voice: str = "random", text: str = ""):
     """Say a random sentence"""
     is_deferred=True
     try:
@@ -650,7 +797,9 @@ async def random(interaction: discord.Interaction, voice: str = "Google", text: 
                 
             sentences = None
 
-            if text is not None:
+            audios = os.listdir(os.path.dirname(os.path.realpath(__file__)) + "/audios/")
+
+            if text is not None and text.strip() !=  '':
                 sentences = database.select_like_sentence(dbms, text)
             else:
                 sentences = database.select_all_sentence(dbms)
@@ -758,6 +907,7 @@ async def avatar(interaction: discord.Interaction, image: discord.Attachment):
     except Exception as e:
         await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
 
+#@ask.error
 @audio.error
 @avatar.error
 @join.error

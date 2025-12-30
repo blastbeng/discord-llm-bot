@@ -1,7 +1,7 @@
 import os
 import sys
 import logging
-from sqlalchemy import create_engine, insert, select, update, delete, Table, Column, Integer, String, MetaData
+from sqlalchemy import create_engine, insert, select, update, delete, Table, Column, Integer, String, MetaData, func
 
 SQLITE          = 'sqlite'
 SENTENCES     = 'sentences'
@@ -48,7 +48,7 @@ def insert_sentence(self, sentence: str):
 def select_like_sentence(self, text: str):
   try:
     value = []
-    stmt = select(self.sentences.c.sentence).where(self.sentences.c.sentence.like('%'+text+'%'))
+    stmt = select(self.sentences.c.sentence).where(self.sentences.c.sentence.like('%'+text+'%')).order_by(func.random())
     compiled = stmt.compile()
     with self.db_engine.connect() as conn:
       cursor = conn.execute(stmt)
@@ -67,7 +67,7 @@ def select_like_sentence(self, text: str):
 def select_all_sentence(self):
   try:
     value = []
-    stmt = select(self.sentences.c.sentence)
+    stmt = select(self.sentences.c.sentence).order_by(func.random())
     compiled = stmt.compile()
     with self.db_engine.connect() as conn:
       cursor = conn.execute(stmt)
