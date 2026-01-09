@@ -86,14 +86,12 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
   ollama:
     image: docker.io/ollama/ollama:latest
+    cap_add:
+      - SYS_ADMIN
     ports:
       - 11434:11434
     volumes:
       - ./ollama/ollama:/root/.ollama
-      - /dev/dri/card0:/dev/dri/card0
-      - /dev/dri/card1:/dev/dri/card1
-      - /dev/dri/card2:/dev/dri/card2
-      - /dev/dri/renderD128:/dev/dri/renderD128
     container_name: ollama
     pull_policy: always
     tty: true

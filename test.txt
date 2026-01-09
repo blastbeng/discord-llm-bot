@@ -1,9 +1,0 @@
-curl -v http://192.168.1.13:8080/v1/chat/completions -d '{
-  "model": "Huihui-Qwen3-4B-Instruct-2507-abliterated.Q4_K_M.gguf",
-  "messages": [
-    {
-      "role": "user",
-      "content": "Chi sei tu?"
-    }
-  ]
-}'

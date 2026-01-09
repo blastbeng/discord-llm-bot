@@ -159,3 +159,9 @@ bot/discord_bot_cache.sqlite
 bot/audios
 discord_bot_cache.sqlite
 .env.anyllm
+llama.cpp.git
+models_bak/
+volumes
+nginx
+postAnyllm.sh
+koboldcpp/koboldcpp.git

@@ -1,0 +1,15 @@
+## Version 2025/05/31 - Changelog: https://github.com/linuxserver/docker-baseimage-alpine-nginx/commits/3.22/root/defaults/nginx/site-confs/default.conf.sample
+upstream llama {
+    server srv1.example.com;
+    server srv2.example.com;
+}
+server {
+    listen 11435 default_server;
+    listen [::]:11435 default_server;
+
+    server_name _;
+
+        location / {
+            proxy_pass http://llama;
+        }
+}

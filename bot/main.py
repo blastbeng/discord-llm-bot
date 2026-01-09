@@ -76,6 +76,41 @@ def get_anythingllm_online_status():
     else:
         return True
 
+async def embed_message(text):
+    try:
+        data = {
+            "textContent": text,
+            "addToWorkspaces": os.environ.get("ANYTHING_LLM_WORKSPACE"),
+            "metadata": {
+                "title": compute_md5_hash(text)
+            }
+        }
+        headers = {
+            'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
+        }
+        anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/document/raw-text"
+        connector = aiohttp.TCPConnector(force_close=True)
+        session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
+        async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
+            async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
+                if (anything_llm_response.status == 200):
+                    anything_llm_json = await anything_llm_response.json()
+                    anything_llm_document = anything_llm_json["documents"][0]["location"]
+                    data_embed = {
+                        "adds": [ anything_llm_document ]
+                    }
+                    anything_llm_url_embed = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/update-embeddings"
+                    async with anything_llm_session.post(anything_llm_url_embed, headers=headers, json=data_embed, timeout=900) as anything_llm_response_embed:
+                        if (anything_llm_response_embed.status != 200):
+                            logging.error(anything_llm_response_embed)
+                else:
+                    logging.error(anything_llm_response)
+            await anything_llm_session.close()  
+    except Exception as e:
+      exc_type, exc_obj, exc_tb = sys.exc_info()
+      fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+      logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1) 
+
 class FakeYouCustom(asynchronous_fakeyou.AsyncFakeYou):
     
     async def get_session(self) -> aiohttp.ClientSession:
@@ -107,6 +142,7 @@ class GeneratorLoop:
                 for sentence in sentences:
                     rnd_voice = randompy.choice(get_available_voices())
                     #rnd_voice = "Google"
+                    #await ask_bot_background(sentence)
                     if rnd_voice == "Google":
                         found = get_tts_google(sentence, play=False)
                     else:
@@ -306,11 +342,11 @@ discord.utils.setup_logging(level=int(os.environ.get("LOG_LEVEL")), root=False)
 
 def get_available_voices():
     voices = []
-    filenames = next(os.walk(joinpy(dirname(__file__), "models")), (None, None, []))[2]
-    for filename in filenames:
-        name = filename.split(".")[0]
-        if name not in voices:
-            voices.append(name)
+    #filenames = next(os.walk(joinpy(dirname(__file__), "models")), (None, None, []))[2]
+    #for filename in filenames:
+    #    name = filename.split(".")[0]
+    #    if name not in voices:
+    #        voices.append(name)
     voices.append("Google")
     voices.append("Goku (FakeYou.com)")
     voices.append("Gerry Scotti (FakeYou.com)")
@@ -685,6 +721,8 @@ async def speak(interaction: discord.Interaction, text: str, voice: str = "Googl
             message:discord.Message = await interaction.followup.send("Inizio a generare l'audio per la frase:" + " **" + text + "**" + await get_queue_message(), ephemeral = True)
             worker = PlayAudioWorker(text, interaction, message, voice, save=True)
             worker.play_audio_worker.start()
+
+            await embed_message(text)
                  
     except Exception as e:
         await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
@@ -723,7 +761,7 @@ async def audio(interaction: discord.Interaction, audio: discord.Attachment):
 @app_commands.rename(voice='voice')
 @app_commands.describe(voice="La voce da usare")
 @app_commands.autocomplete(voice=rps_autocomplete)
-@app_commands.checks.cooldown(1, 60.0, key=lambda i: (i.user.id))
+@app_commands.checks.cooldown(1, 30.0, key=lambda i: (i.user.id))
 async def ask(interaction: discord.Interaction, text: str, voice: str = "Google"):
     """Ask something."""
     is_deferred=True
@@ -739,7 +777,14 @@ async def ask(interaction: discord.Interaction, text: str, voice: str = "Google"
             await interaction.followup.send("Per favore riprova piú tardi, Sto inizializzando la connessione...", ephemeral = True)
         else:
             currentguildid = get_current_guild_id(interaction.guild.id)
-            if currentguildid == '000000' and get_anythingllm_online_status():
+            #cpu_percent = psutil.cpu_percent()
+            #if int(cpu_percent) > 70:                
+            #    cpu_message = "Il server é sovraccarico, riprovare fra qualche istante"
+            #    cpu_message = cpu_message + "\n"
+            #    cpu_message = cpu_message + "*CPU: " + str(cpu_percent) + "% - RAM: " + str(psutil.virtual_memory()[2]) + "%*"
+            #    await interaction.followup.send(cpu_message, ephemeral = True)
+            #el
+            if currentguildid == '000000':
                 data = {
                         "message": text.rstrip(),
                         "mode": "chat"
@@ -750,27 +795,46 @@ async def ask(interaction: discord.Interaction, text: str, voice: str = "Google"
                 connector = aiohttp.TCPConnector(force_close=True)
                 anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
                 message:discord.Message = await interaction.followup.send('**' + str(interaction.user.name) + "** ha chiesto al bot:" + " **" + text + "**" + await get_queue_message(), ephemeral = True)            
-                session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=120,sock_read=120)
+                session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
 
                 async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
-                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=120) as anything_llm_response:
+                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
                         if (anything_llm_response.status == 200):
                             anything_llm_json = await anything_llm_response.json()
-                            #anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
-                            anything_llm_text = anything_llm_json["textResponse"]
+                            anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
                             
                             
                             worker = PlayAudioWorker(anything_llm_text, interaction, message, voice, initial_text="**"+str(interaction.user.name) + '**: '+ text + '\n**' + interaction.guild.me.nick + "**: ")
                             worker.play_audio_worker.start()
+                        elif (anything_llm_response.status >= 500):
+                            await interaction.followup.send("Un'altra richiesta é gia in esecuzione, per favore riprova fra qualche istante" + await get_queue_message(), ephemeral = True) 
+
                         else:
                             
-                            await interaction.followup.send("Errore nella generazione della risposta, il server potrebbe essere occupato in questo momento, per favore riprova qualche istante", ephemeral = True) 
+                            await interaction.followup.send("Errore nella generazione della risposta, il server potrebbe essere occupato in questo momento, per favore riprova qualche istante" + await get_queue_message(), ephemeral = True) 
                     await anything_llm_session.close()
             else:
                 await interaction.followup.send("Il Chatbot AI é offline, per favore riprova piú tardi", ephemeral = True) 
                    
     except Exception as e:
         await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
+
+async def ask_bot_background(text: str):
+    data = {
+              "message": text.rstrip(),
+              "mode": "chat"
+    }
+    headers = {
+        'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
+    }
+    connector = aiohttp.TCPConnector(force_close=True)
+    anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
+    session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
+
+    async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
+        async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
+            time.sleep(5)
+        await anything_llm_session.close()
 
 @client.tree.command()
 @app_commands.rename(voice='voice')
@@ -810,7 +874,7 @@ async def random(interaction: discord.Interaction, voice: str = "random", text: 
                 worker = PlayAudioWorker(randompy.choice(sentences), interaction, message, voice)
                 worker.play_audio_worker.start()
             else:
-                await interaction.followup.send((('Nessuna frase trovata contenente il testo "'+text+'"') if text is not None else "") + "Nothing found", ephemeral = True)
+                await interaction.followup.send((('Nessuna frase trovata contenente il testo "'+text+'"') if text is not None else "Nessuna frase trovata"), ephemeral = True)
 
         else:
             await interaction.followup.send("Il bot non é ancora pronto opppure un altro user sta usando qualche altro comando.\nPer favore riprova piú tardi o utilizza il comando /stop", ephemeral = True)
@@ -907,7 +971,7 @@ async def avatar(interaction: discord.Interaction, image: discord.Attachment):
     except Exception as e:
         await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
 
-#@ask.error
+@ask.error
 @audio.error
 @avatar.error
 @join.error

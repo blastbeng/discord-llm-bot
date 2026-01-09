@@ -19,6 +19,7 @@ import re
 import moviepy
 import time
 import pytz
+import psutil
 from tzlocal import get_localzone
 from typing import Union, Optional
 from pathlib import Path
@@ -65,7 +66,7 @@ class NoRunningFilter(logging.Filter):
             
 def reply_keyboard():
     return ReplyKeyboardMarkup(
-            [["/random", "/ask"], ["/speak", "/restart"]], 
+            [["/random", "/randomai"], ["/speak", "/restart"]], 
             #[["/random", "/ask", "/speak"], ["/story", "/genimg", "/restart"]], 
             one_time_keyboard=False
         )
@@ -111,25 +112,36 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if(CHAT_ID == chatid):
             
             message = update.message.text.strip()
+            #cpu_percent = psutil.cpu_percent()
+            #if int(cpu_percent) > 70:                
+            #    cpu_message = "Il server é sovraccarico, riprovare fra qualche istante"
+            #    cpu_message = cpu_message + "\n"
+            #    cpu_message = cpu_message + "*CPU: " + str(cpu_percent) + "% - RAM: " + str(psutil.virtual_memory()[2]) + "%*"
+            #    await update.message.reply_text(cpu_message, reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+            #el
             if(message != ""):
                 data = {
                         "message": message.rstrip(),
                         "mode": "chat"
-          }
+                }
                 headers = {
                     'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
                 }
                 anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
                 connector = aiohttp.TCPConnector(force_close=True)
-                session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=120,sock_read=120)
+                session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=1800,sock_read=1800)
                 async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
-                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=120) as anything_llm_response:
+                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=1800) as anything_llm_response:
                         if (anything_llm_response.status == 200):
                             anything_llm_json = await anything_llm_response.json()
                             #anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
-                            anything_llm_text = anything_llm_json["textResponse"]
-                            
+                            anything_llm_text = anything_llm_json["textResponse"].replace("\n", " ").replace("\r", " ")
+          #                  await update.message.reply_audio(get_tts_google(anything_llm_text), reply_markup=reply_keyboard(), caption=anything_llm_text, disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=str(uuid.uuid4())+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
+                        
                             await update.message.reply_text(anything_llm_text, reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+                        elif (anything_llm_response.status >= 500):
+                            await update.message.reply_text("Un'altra richiesta é gia in esecuzione, per favore riprova fra qualche istante", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+
                         else:
                             logging.error(anything_llm_response)
                             await update.message.reply_text("si è verificato un errore stronzo", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
@@ -142,7 +154,49 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
       exc_type, exc_obj, exc_tb = sys.exc_info()
       fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
       logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
-    
+
+
+
+def compute_md5_hash(my_string):
+    m = hashlib.md5()
+    m.update(my_string.encode('utf-8'))
+    return m.hexdigest()
+
+
+async def embed_message(text):
+    try:
+        data = {
+            "textContent": text,
+            "addToWorkspaces": os.environ.get("ANYTHING_LLM_WORKSPACE"),
+            "metadata": {
+                "title": compute_md5_hash(text)
+            }
+        }
+        headers = {
+            'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
+        }
+        anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/document/raw-text"
+        connector = aiohttp.TCPConnector(force_close=True)
+        session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=1800,sock_read=1800)
+        async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
+            async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=1800) as anything_llm_response:
+                if (anything_llm_response.status == 200):
+                    anything_llm_json = await anything_llm_response.json()
+                    anything_llm_document = anything_llm_json["documents"][0]["location"]
+                    data_embed = {
+                        "adds": [ anything_llm_document ]
+                    }
+                    anything_llm_url_embed = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/update-embeddings"
+                    async with anything_llm_session.post(anything_llm_url_embed, headers=headers, json=data_embed, timeout=1800) as anything_llm_response_embed:
+                        if (anything_llm_response_embed.status != 200):
+                            logging.error(anything_llm_response_embed)
+                else:
+                    logging.error(anything_llm_response)
+            await anything_llm_session.close()  
+    except Exception as e:
+      exc_type, exc_obj, exc_tb = sys.exc_info()
+      fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+      logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1) 
 
 async def random_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -170,40 +224,38 @@ async def random_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
       logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
     
       
-
-async def ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def random_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         chatid = str(update.effective_chat.id)
-        if(CHAT_ID == chatid):
+        if(CHAT_ID == chatid):#
+            message = random.choice(database.select_all_sentence(dbms))
+            init_message = await update.message.reply_text(message, reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+                        
             
-            message = update.message.text[5:].strip()
-            if(message != "" and len(message) <= 500  and not message.endswith('bot')):
-                connector = aiohttp.TCPConnector(force_close=True)
-                anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
-                data = {
-                        "message": message.rstrip(),
-                        "mode": "chat"
-              }
-                headers = {
-                    'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
-                }
-                session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=120,sock_read=120)
-                async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
-                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=120) as anything_llm_response:
-                        if (anything_llm_response.status == 200):
-                            anything_llm_json = await anything_llm_response.json()
-                            #anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
-                            anything_llm_text = anything_llm_json["textResponse"]
-                            
-                            await update.message.reply_audio(get_tts_google(anything_llm_text), reply_markup=reply_keyboard(), caption=anything_llm_text, disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=str(uuid.uuid4())+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
-                        else:
-                            await update.message.reply_text(anything_llm_response.reason + " - Il server potrebbe essere sovraccarico o potrebbe esserci una generazione ancora in corso, riprovare in un secondo momento", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
-                    await anything_llm_session.close()  
+            connector = aiohttp.TCPConnector(force_close=True)
+            anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
+            data = {
+                    "message": message.rstrip(),
+                    "mode": "chat"
+            }
+            headers = {
+                'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
+            }
+            session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=1800,sock_read=1800)
+            async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
+                async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=1800) as anything_llm_response:
+                    if (anything_llm_response.status == 200):
+                        anything_llm_json = await anything_llm_response.json()
+                        #anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
+                        anything_llm_text = anything_llm_json["textResponse"].replace("\n", " ").replace("\r", " ")
+                        await update.message.reply_text(anything_llm_text, reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=init_message.message_id, protect_content=False)
 
-
-                
-            else:
-                await update.message.reply_text("se vuoi dirmi o chiedermi qualcosa devi scrivere una frase dopo /ask (massimo 500 caratteri)", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+#                        await update.message.reply_audio(get_tts_google(anything_llm_text), reply_markup=reply_keyboard(), caption=anything_llm_text, disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=str(uuid.uuid4())+ "audio.mp3", reply_to_message_id=init_message.message_id, protect_content=False)
+                    elif (anything_llm_response.status >= 500):
+                        await update.message.reply_text("Un'altra richiesta é gia in esecuzione, per favore riprova fra qualche istante", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=init_message.message_id, protect_content=False)
+                    else:
+                        await update.message.reply_text(anything_llm_response.reason + " - Il server potrebbe essere sovraccarico o potrebbe esserci una generazione ancora in corso, riprovare in un secondo momento", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+                await anything_llm_session.close()  
 
     except (requests.exceptions.RequestException, ValueError) as e:
       exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -458,25 +510,8 @@ async def speak(update: Update, context: ContextTypes.DEFAULT_TYPE):
             splitted = userinput.split("-")
             message = splitted[0].strip()
             if(message != "" and len(message) <= 500  and not message.endswith('bot')):
-                if len(splitted) > 1 and splitted[1] is not None and lower(splitted[1].strip() != 'google'):
-                    voice_str = splitted[1].strip()
-                    model = join(dirname(__file__), "models/" + voice_str + '.onnx') 
-                    if os.path.isfile(model):
-                        voice = PiperVoice.load(model)
-                        file_path = os.environ.get("TMP_DIR") + str(uuid.uuid4()) + ".wav"
-                        with wave.open(file_path, "w") as wav_file:
-                            voice.synthesize(message, wav_file)
-                        audio = AudioSegment.from_wav(file_path)
-                        out = BytesIO()
-                        audio.export(out, format='mp3', bitrate="256k")
-                        out.seek(0)
-                        os.remove(file_path)
-                        await update.message.reply_audio(out, reply_markup=reply_keyboard(), disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=str(uuid.uuid4())+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
-                    else:
-                        await update.message.reply_text("Voce " + voice_str + " non trovata!", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
-                else:
-                    await update.message.reply_audio(get_tts_google(message), reply_markup=reply_keyboard(), disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=str(uuid.uuid4())+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
-                #await embed_message(message)
+                await update.message.reply_audio(get_tts_google(message), reply_markup=reply_keyboard(), disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=str(uuid.uuid4())+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
+                await embed_message(message)
             else:
 
                 text = "se vuoi che ripeto qualcosa devi scrivere una frase dopo /speak (massimo 500 caratteri)."
@@ -835,7 +870,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(button))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
     application.add_handler(CommandHandler('random', random_cmd))
-    application.add_handler(CommandHandler('ask', ask))
+    application.add_handler(CommandHandler('randomai', random_ai))
     #application.add_handler(CommandHandler('genai', genai))
     #application.add_handler(CommandHandler('genpr', genpr))
     #application.add_handler(CommandHandler('genstop', genstop))

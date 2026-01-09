@@ -24,6 +24,8 @@ COPY main.py .
 COPY utils.py .
 COPY database.py .
 COPY populate_db.py .
+COPY populate_anyllm.py .
+COPY embed_file_anyllm.py .
 COPY entrypoint.sh .
 RUN chmod +x entrypoint.sh
 
