@@ -90,9 +90,9 @@ async def embed_message(text):
         }
         anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/document/raw-text"
         connector = aiohttp.TCPConnector(force_close=True)
-        session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
+        session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=1800,sock_read=1800)
         async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
-            async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
+            async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=1800) as anything_llm_response:
                 if (anything_llm_response.status == 200):
                     anything_llm_json = await anything_llm_response.json()
                     anything_llm_document = anything_llm_json["documents"][0]["location"]
@@ -100,7 +100,7 @@ async def embed_message(text):
                         "adds": [ anything_llm_document ]
                     }
                     anything_llm_url_embed = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/update-embeddings"
-                    async with anything_llm_session.post(anything_llm_url_embed, headers=headers, json=data_embed, timeout=900) as anything_llm_response_embed:
+                    async with anything_llm_session.post(anything_llm_url_embed, headers=headers, json=data_embed, timeout=1800) as anything_llm_response_embed:
                         if (anything_llm_response_embed.status != 200):
                             logging.error(anything_llm_response_embed)
                 else:
@@ -795,10 +795,10 @@ async def ask(interaction: discord.Interaction, text: str, voice: str = "Google"
                 connector = aiohttp.TCPConnector(force_close=True)
                 anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
                 message:discord.Message = await interaction.followup.send('**' + str(interaction.user.name) + "** ha chiesto al bot:" + " **" + text + "**" + await get_queue_message(), ephemeral = True)            
-                session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
+                session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=1800,sock_read=1800)
 
                 async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
-                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
+                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=1800) as anything_llm_response:
                         if (anything_llm_response.status == 200):
                             anything_llm_json = await anything_llm_response.json()
                             anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
@@ -829,10 +829,10 @@ async def ask_bot_background(text: str):
     }
     connector = aiohttp.TCPConnector(force_close=True)
     anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
-    session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
+    session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=1800,sock_read=1800)
 
     async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
-        async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
+        async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=1800) as anything_llm_response:
             time.sleep(5)
         await anything_llm_session.close()
 
