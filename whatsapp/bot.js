@@ -54,6 +54,7 @@ client.on('ready', () => {
 client.on('message', async msg => {
     try {
         let chat = await msg.getChat();
+        log.info("CHATID: [ "+ chat.id.user + " ], COMMAND: [ "+ msg.body + " ], ");
         if (msg.body.toLowerCase().startsWith('/help') 
             || msg.body.toLowerCase().startsWith('/random')
             || msg.body.toLowerCase().startsWith('/ask')
@@ -62,7 +63,8 @@ client.on('message', async msg => {
 
             let canReply = false;
 
-            if (chat.isGroup) {
+            if (chat.isGroup && (chat.id.user === config.GROUP_ID_1 || chat.id.user === config.GROUP_ID_2)) {
+            //if (chat.isGroup) {
                 for (let i = 0; i < chat.participants.length; i++) {
                     if (chat.participants[i].id.user === config.TEL_NUMBER){
                         canReply = true;
@@ -74,7 +76,6 @@ client.on('message', async msg => {
 
             if (canReply) { 
                 await chat.sendSeen();
-                log.info("CHATID: [ "+ chat.id.user + " ], COMMAND: [ "+ msg.body + " ], ");
                 if (msg.body.toLowerCase() == '/help' || msg.body.toLowerCase().startsWith('/help')) {
                     await chat.sendStateTyping();
                     let message = msg.body.slice(5);
@@ -109,10 +110,10 @@ client.on('message', async msg => {
                         await msg.reply(ERROR_MSG);
                     } finally {
                         db.close();
-                        await chat.clearState();
                     }
                 }
                 else if (msg.body.toLowerCase().startsWith('/ask')) {
+                    await chat.sendStateTyping();
                     let message = msg.body.slice(4);
                     if ( message.length !== 0 ) {                     
                         const {data} = await axios.post(config.ANYTHING_LLM_ENDPOINT + "/api/v1/workspace/" + config.ANYTHING_LLM_WORKSPACE + "/chat", {
@@ -120,18 +121,15 @@ client.on('message', async msg => {
                                     "mode": "chat"
                                 }, {
                                 headers: {
-                                    'Authorization': 'Bearer ' +config.ANYTHING_LLM_API_KEY
+                                    'Authorization': 'Bearer ' + config.ANYTHING_LLM_API_KEY
                                 }
                             }).catch(async function(error) {
                                 if (error.status >= 500) {
                                     await msg.reply("Un'altra richiesta é gia in esecuzione, per favore riprova fra qualche istante");
                                 } else {
-                                    log.error("ERRORE!", "["+ error + "]");
-                                    await msg.reply(ERROR_MSG);
+                                    throw new Error(ex.toString());
                                 }
-                                await chat.clearState();
                             });
-                        log.info(data)
                         await msg.reply(data["textResponse"]);
                     } else {
                         await msg.reply("Sei stronzo?\nMangi le pietre o sei scemo?\nSe devi chiedermi qualcosa devi scrivere un testo dopo /ask.");
@@ -144,6 +142,7 @@ client.on('message', async msg => {
     } catch (error) {
         log.error("ERRORE!", "["+ error + "]");
         await msg.reply(ERROR_MSG);
+    } finally {
         await chat.clearState();
     }
 }); 
@@ -175,25 +174,5 @@ async function replyMedia(text, msg, chat){
         await chat.clearState();
     }
 }   
-
-async function replyMsg(url, msg, chat){
-    await chat.sendStateTyping();
-    await axios.get(url).then(async function(response) {
-        if(response.status === 204) {
-            await msg.reply("Non ho trovato nessun testo contenente queste parole.");
-        } else if(response.status === 200) {
-            await msg.reply(response.data);
-        } else if(response.status === 406) {
-            await msg.reply("Questo testo contiene parole bloccate dai filtri.");
-        } else {
-            await msg.reply(ERROR_MSG);
-        }
-        await chat.clearState();
-    }).catch(async function(error) {
-        log.error("ERRORE!", "["+ error + "]");
-        await msg.reply(ERROR_MSG);
-        await chat.clearState();
-    });
-}
 
 client.initialize();
