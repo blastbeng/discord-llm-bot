@@ -5,7 +5,7 @@ const axios = require('axios');
 const log = require('loglevel');
 const gTTS = require('gtts');
 const sqlite3 = require('sqlite3').verbose();
-const ERROR_MSG = "Schifo, bestemmia e disagio.\nSi é verificato un errore stronzo.\API Error? Bug Brutti? Chi lo sa!\nChiedere al dev di controllare.\nSe ha voglia lo farà."
+const ERROR_MSG = "Schifo, bestemmia e disagio.\nSi é verificato un errore stronzo."
 
 console.log("Logging - Setting log level to: " + config.LOG_LEVEL)
 log.setLevel(config.LOG_LEVEL);
