@@ -4,7 +4,7 @@ RUN apt update && apt-get install -y ffmpeg git wget
 
 WORKDIR /app
 
-RUN git glone https://github.com/rupeshs/fastsdcpu.git fastsdcpu
+RUN git clone https://github.com/rupeshs/fastsdcpu.git fastsdcpu
 
 WORKDIR /app/fastsdcpu
 

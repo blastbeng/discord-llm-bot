@@ -174,3 +174,6 @@ fastsdcpu/lora_models
 fastsdcpu/controlnet_models
 fastsdcpu/huggingface
 fastsdcpu/configs
+
+.wwebjs_cache
+.wwebjs_auth

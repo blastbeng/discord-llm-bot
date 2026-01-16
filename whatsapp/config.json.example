@@ -1,0 +1,8 @@
+{
+    "LOG_LEVEL"                    : "info",
+    "TMP_DIR"                      : "xxxxxxxxxxxxxxxxxxxxx",
+    "TEL_NUMBER"                   : "xxxxxxxxxxxxxxxxxxxxx",
+    "ANYTHING_LLM_ENDPOINT"        : "xxxxxxxxxxxxxxxxxxxxx",
+    "ANYTHING_LLM_API_KEY"         : "xxxxxxxxxxxxxxxxxxxxx",
+    "ANYTHING_LLM_WORKSPACE"       : "xxxxxxxxxxxxxxxxxxxxx"
+}
