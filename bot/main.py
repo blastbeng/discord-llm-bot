@@ -10,6 +10,7 @@ import urllib
 import logging
 import pathlib
 import urllib.request
+import gc
 from PIL import Image
 from typing import Optional
 from os.path import join as joinpy
@@ -82,25 +83,25 @@ async def embed_message(text):
             "textContent": text,
             "addToWorkspaces": os.environ.get("ANYTHING_LLM_WORKSPACE"),
             "metadata": {
-                "title": compute_md5_hash(text)
+                "title": "sentences_" + str(compute_md5_hash(text))
             }
         }
         headers = {
             'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
         }
-        anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/document/raw-text"
+        anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT_NO_LIMIT") + "/api/v1/document/raw-text"
         connector = aiohttp.TCPConnector(force_close=True)
-        session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=1800,sock_read=1800)
+        session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
         async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
-            async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=1800) as anything_llm_response:
+            async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
                 if (anything_llm_response.status == 200):
                     anything_llm_json = await anything_llm_response.json()
                     anything_llm_document = anything_llm_json["documents"][0]["location"]
                     data_embed = {
                         "adds": [ anything_llm_document ]
                     }
-                    anything_llm_url_embed = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/update-embeddings"
-                    async with anything_llm_session.post(anything_llm_url_embed, headers=headers, json=data_embed, timeout=1800) as anything_llm_response_embed:
+                    anything_llm_url_embed = os.environ.get("ANYTHING_LLM_ENDPOINT_NO_LIMIT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/update-embeddings"
+                    async with anything_llm_session.post(anything_llm_url_embed, headers=headers, json=data_embed, timeout=900) as anything_llm_response_embed:
                         if (anything_llm_response_embed.status != 200):
                             logging.error(anything_llm_response_embed)
                 else:
@@ -114,7 +115,7 @@ async def embed_message(text):
 class FakeYouCustom(asynchronous_fakeyou.AsyncFakeYou):
     
     async def get_session(self) -> aiohttp.ClientSession:
-        session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=300,sock_read=300)
+        session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
         if bool(randompy.getrandbits(1)):
             if self.session and not self.session.closed:
                 self.session.close()
@@ -132,9 +133,10 @@ class FakeYouCustom(asynchronous_fakeyou.AsyncFakeYou):
 
 class GeneratorLoop:
 
-    @tasks.loop(seconds=60)
+    @tasks.loop(minutes=60)
     async def generator_loop(self):
         try:
+            gc.collect()
             sentences = database.select_all_sentence(dbms)
             if sentences is not None and len(sentences) > 0:
                 #randompy.shuffle(sentences)
@@ -147,7 +149,7 @@ class GeneratorLoop:
                         found = get_tts_google(sentence, play=False)
                     else:
                         found = await get_tts_fakeyou(sentence, rnd_voice, play=False)
-                    if found or count == 1000:
+                    if found or count == 100:
                         break
                     count = count + 1
         except Exception as e:
@@ -164,17 +166,23 @@ def read_mp3_from_file(file_path):
     out.seek(0)
     return out
 
-def get_tts_google(text: str, play=True):
+def get_tts_google(text: str, play=True, save=True):
     file_path = os.path.dirname(os.path.realpath(__file__)) + "/audios/Google_" + compute_md5_hash(text) + ".mp3"
     if os.path.exists(file_path):
-        return read_mp3_from_file(file_path) if play else True
-    else:
-        logging.info("START - Google text: " + text)
-        mp3_fp = BytesIO()
-        tts = gTTS(text=text, lang="it", slow=False)
-        logging.info("REQUEST OK - Google text: " + text)
-        tts.write_to_fp(mp3_fp)
-        mp3_fp.seek(0)        
+        try:
+            return read_mp3_from_file(file_path) if play else True
+        except:
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+    logging.info("START - Google text: " + text)
+    mp3_fp = BytesIO()
+    tts = gTTS(text=text, lang="it", slow=False)
+    logging.info("REQUEST OK - Google text: " + text)
+    tts.write_to_fp(mp3_fp)
+    mp3_fp.seek(0)
+    if save: 
         with open(file_path, "wb") as f:
             f.write(mp3_fp.getbuffer())
         audiofile = eyed3.load(file_path)
@@ -183,9 +191,9 @@ def get_tts_google(text: str, play=True):
         audiofile.tag.title = "Google"
         audiofile.tag.lyrics.set(text)
         audiofile.tag.save()
-        return mp3_fp 
+    return mp3_fp 
 
-async def get_tts_fakeyou(text: str, voice: str, play=True):
+async def get_tts_fakeyou(text: str, voice: str, play=True, save=True):
     try:
         voice_token = None
         if voice == "Papa Francesco (FakeYou.com)":
@@ -204,17 +212,23 @@ async def get_tts_fakeyou(text: str, voice: str, play=True):
             return None
         file_path = os.path.dirname(os.path.realpath(__file__)) + "/audios/" + voice_token + "_" + compute_md5_hash(text) + ".mp3"
         if os.path.exists(file_path):
-            return read_mp3_from_file(file_path) if play else True
-        else:
-            logging.info("START - FakeYou text: " + text + ", voice: " + voice)
-            fy = FakeYouCustom()
-            fakeyou_result = await fy.say(text, voice_token)
-            if fakeyou_result.content:
-                logging.info("REQUEST OK - FakeYou text: " + text + ", voice: " + voice)
-                audio = AudioSegment.from_file(BytesIO(fakeyou_result.content), format='wav')
-                out = BytesIO()
-                audio.export(out, format='mp3', bitrate="256k")
-                out.seek(0)
+            try:
+                return read_mp3_from_file(file_path) if play else True
+            except:
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
+        logging.info("START - FakeYou text: " + text + ", voice: " + voice)
+        fy = FakeYouCustom()
+        fakeyou_result = await fy.say(text, voice_token)
+        if fakeyou_result.content:
+            logging.info("REQUEST OK - FakeYou text: " + text + ", voice: " + voice)
+            audio = AudioSegment.from_file(BytesIO(fakeyou_result.content), format='wav')
+            out = BytesIO()
+            audio.export(out, format='mp3', bitrate="256k")
+            out.seek(0)
+            if save:
                 with open(file_path, "wb") as f:
                     f.write(out.getbuffer())
                 audiofile = eyed3.load(file_path)
@@ -223,9 +237,9 @@ async def get_tts_fakeyou(text: str, voice: str, play=True):
                 audiofile.tag.title = voice_token
                 audiofile.tag.lyrics.set(text)
                 audiofile.tag.save()
-                return out
-            logging.error("FAILED - FakeYou text:" + text + ", voice: " + voice)
-            return None
+            return out
+        logging.error("FAILED - FakeYou text:" + text + ", voice: " + voice)
+        return None
     except Exception as e:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
@@ -269,36 +283,25 @@ class CustomTextInput(discord.ui.TextInput):
         
     def __init__(self, style, name):
         super().__init__(style=style, label=name, value="")
-
         
 class PlayButton(discord.ui.Button["InteractionRoles"]):
 
-    def __init__(self, message, content):
+    def __init__(self, message=None, interaction_from=None, text=None, voice=None, save=False, initial_text=None):
         super().__init__(style=discord.ButtonStyle.green, label="Play")
         self.message = message
-        self.content = content
+        self.interaction_from = interaction_from
+        self.text = text
+        self.voice = voice
+        self.save = save
+        self.initial_text = initial_text
     
     async def callback(self, interaction: discord.Interaction):
         is_deferred=True
         try:
             await interaction.response.defer(thinking=True, ephemeral=True)
-                    
-            check_permissions(interaction)
-
-            voice_client = get_voice_client_by_guildid(client.voice_clients, interaction.guild.id)
-            await connect_bot_by_voice_client(voice_client, interaction.user.voice.channel, interaction.guild)
-            if voice_client:
-                if not voice_client.is_connected():
-                    await voice_client.channel.connect()
-                    time.sleep(5)
-
-                if voice_client is not None and voice_client.is_playing():
-                    await voice_client.stop()
-
-            if voice_client is not None:
-                voice_client.play(FFmpegPCMAudioBytesIO(copy.deepcopy(self.content).read(), pipe=True), after=lambda e: logging.info("play_button - " + self.message))
-                await interaction.followup.send(self.message, ephemeral = True)
-                
+            worker = PlayAudioWorker(self.text, self.interaction_from, self.message, self.voice, save=self.save, initial_text=self.initial_text)
+            worker.play_audio_worker.start()
+            await interaction.followup.send(self.text, ephemeral = True)
         except Exception as e:
             await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
             
@@ -367,8 +370,6 @@ async def rps_autocomplete(interaction: discord.Interaction, current: str) -> Li
     choices ["random"] = "random"
     choices = [app_commands.Choice(name=choice, value=choice) for choice in choices if current.lower() in choice.lower()][:25]
     return choices
-
-audio_count_queue = 0
 
 async def send_error(e, interaction, from_generic=False, is_deferred=False):
     logging.error(e)
@@ -499,11 +500,71 @@ def get_current_guild_id(guildid):
     else:
         return str(guildid)
 
+async def get_tts(text, voice, save=False):
+    used_fy = False
+    if voice == "Google":
+        content = get_tts_google(text, save=save)
+    elif voice == "random":
+        voice = randompy.choice(available_voices)
+        if voice == "Google":
+            content = get_tts_google(text, save=save)
+        else:
+            content = await get_tts_fakeyou(text, voice, save=save)
+            used_fy = True
+    else:
+        content = await get_tts_fakeyou(text, voice, save=save)
+        used_fy = True
+    return content, used_fy, voice
+
+
+async def play_audio_process(text, interaction, message, voice, save=False, initial_text=None):
+    
+    try:
+        content, used_fy, voice = await get_tts(text, voice, save=save)
+        
+        voice_client = get_voice_client_by_guildid(client.voice_clients, interaction.guild.id)            
+        if not voice_client:
+            raise ClientException("voice_client is None")
+        if voice_client.is_playing():
+            voice_client.stop()               
+                        
+        if not voice_client.is_connected():
+            await voice_client.channel.connect()
+            time.sleep(5)
+
+        fytext = ""
+
+        if content is None and used_fy:
+            content = get_tts_google(text)
+            fytext = "\n\nWARNING: FakeYou sta ricevendo troppe richieste, audio generato usando la voce di Google"
+
+        if content is not None:                
+
+            view = discord.ui.View()
+            view.add_item(PlayButton(text=text, interaction_from=interaction, message=message, voice=voice, save=False, initial_text=initial_text))
+            view.add_item(StopButton())
+            logmessage = 'play_audio_worker - ' + text
+            voice_client.play(FFmpegPCMAudioBytesIO(copy.deepcopy(content).read(), pipe=True), after=lambda e: logging.info(logmessage))
+            await interaction.followup.edit_message(message_id=message.id,content=(text if initial_text is None else initial_text + text) + "\nVoce:  " + voice + fytext, view = view)
+        elif used_fy:
+            await interaction.followup.edit_message(message_id=message.id,content=(text if initial_text is None else initial_text + text) + "\nVoce:  " + voice + "\n\nERROR: FakeYou sta ricevendo troppe richieste, prova a selezionare una voce diversa.")
+        else:
+            await interaction.followup.edit_message(message_id=message.id,content=(text if initial_text is None else initial_text + text) + "\nVoce:  " + voice + "\n\nERROR: Errore nella generazione dell'audio, prova a selezionare una voce diversa.")
+
+        if save:
+            database.insert_sentence(dbms, text)
+
+    except Exception as e:
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
+        logging.error("[GUILDID : %s] play_audio_worker - Received bad response from APIs.", str(get_current_guild_id(interaction.guild.id)))
+        await interaction.followup.edit_message(message_id=message.id,content=(text if initial_text is None else initial_text + text) + "\nVoce:  " + voice + "\n\nERROR: Errore nella generazione dell'audio, riprovare fra qualche istante.")
+        #raise Exception("play_audio_worker - Error! - ")
+
 class PlayAudioWorker:
     
     def __init__(self, text, interaction, message, voice, save=False, initial_text=None):
-        global audio_count_queue
-        audio_count_queue = audio_count_queue + 1
         self.interaction = interaction
         self.text = text
         self.message = message
@@ -511,76 +572,15 @@ class PlayAudioWorker:
         self.save = save
         self.initial_text = initial_text
 
-    @tasks.loop(seconds=0.1, count=1)
+    @tasks.loop(seconds=1, count=1)
     async def play_audio_worker(self):
-        global audio_count_queue
-        currentguildid = get_current_guild_id(str(self.interaction.guild.id))
-        try:
-            content = None
-            used_fy = False
-            if self.voice == "Google":
-                content = get_tts_google(self.text)
-            elif self.voice == "random":
-                self.voice = randompy.choice(available_voices)
-                if self.voice == "Google":
-                    content = get_tts_google(self.text)
-                else:
-                    content = await get_tts_fakeyou(self.text, self.voice)
-                    used_fy = True
-            else:
-                content = await get_tts_fakeyou(self.text, self.voice)
-                used_fy = True
-            voice_client = get_voice_client_by_guildid(client.voice_clients, self.interaction.guild.id)            
-            if not voice_client:
-                raise ClientException("voice_client is None")
-            if voice_client.is_playing():
-                voice_client.stop()               
-                            
-            if not voice_client.is_connected():
-                await voice_client.channel.connect()
-                time.sleep(5)
-
-            fytext = ""
-
-            if content is None and used_fy:
-                content = get_tts_google(self.text)
-                fytext = "\n\nWARNING: FakeYou sta ricevendo troppe richieste, audio generato usando la voce di Google"
-
-            if content is not None:                
-
-                view = discord.ui.View()
-                view.add_item(PlayButton(self.text, copy.deepcopy(content)))
-                view.add_item(StopButton())
-                logmessage = 'play_audio_worker - ' + self.text
-                voice_client.play(FFmpegPCMAudioBytesIO(copy.deepcopy(content).read(), pipe=True), after=lambda e: logging.info(logmessage))
-                await self.interaction.followup.edit_message(message_id=self.message.id,content="Testo: " + (self.text if self.initial_text is None else self.initial_text + self.text) + "\nVoce:  " + self.voice + fytext, view = view)
-            elif used_fy:
-                await self.interaction.followup.edit_message(message_id=self.message.id,content="Testo: " + (self.text if self.initial_text is None else self.initial_text + self.text) + "\nVoce:  " + self.voice + "\n\nERROR: FakeYou sta ricevendo troppe richieste, prova a selezionare una voce diversa.")
-            else:
-                await self.interaction.followup.edit_message(message_id=self.message.id,content="Testo: " + (self.text if self.initial_text is None else self.initial_text + self.text) + "\nVoce:  " + self.voice + "\n\nERROR: Errore nella generazione dell'audio, prova a selezionare una voce diversa.")
-
-            if self.save:
-                database.insert_sentence(dbms, self.text)
-
-        except Exception as e:
-            exc_type, exc_obj, exc_tb = sys.exc_info()
-            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-            logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
-            logging.error("[GUILDID : %s] play_audio_worker - Received bad response from APIs.", str(get_current_guild_id(self.interaction.guild.id)))
-            await self.interaction.followup.edit_message(message_id=self.message.id,content="Testo: " + (self.text if self.initial_text is None else self.initial_text + self.text) + "\nVoce:  " + self.voice + "\n\nERROR: Errore nella generazione dell'audio, riprovare fra qualche istante.")
-            #raise Exception("play_audio_worker - Error! - ")
-            
-        if audio_count_queue > 0:
-            audio_count_queue = audio_count_queue - 1
+        await play_audio_process(self.text, self.interaction, self.message, self.voice, save=self.save, initial_text=self.initial_text)
 
 async def get_queue_message():
-    global audio_count_queue
     message = "\n\n"
     message = message + "Se il server é sovraccarico, potrebbe volerci un po' di tempo"
     message = message + "\n"
-    message = message + "*CPU: " + str(psutil.cpu_percent()) + "% - RAM: " + str(psutil.virtual_memory()[2]) + "%*"
-    #message = message + "\n"
-    #message = message + "**" + "TTS in coda:" + " " + str(0 if audio_count_queue == 0 else audio_count_queue - 1) + "**"
+    message = message + "*CPU: " + str(psutil.cpu_percent()) + "% - RAM: " + str(round((psutil.virtual_memory()[2] + psutil.swap_memory().percent)/2, 2)) + "%*"
     return message
 
 @tasks.loop(hours=6)
@@ -795,17 +795,27 @@ async def ask(interaction: discord.Interaction, text: str, voice: str = "Google"
                 connector = aiohttp.TCPConnector(force_close=True)
                 anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
                 message:discord.Message = await interaction.followup.send('**' + str(interaction.user.name) + "** ha chiesto al bot:" + " **" + text + "**" + await get_queue_message(), ephemeral = True)            
-                session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=1800,sock_read=1800)
+                session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
 
                 async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
-                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=1800) as anything_llm_response:
+                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
                         if (anything_llm_response.status == 200):
                             anything_llm_json = await anything_llm_response.json()
                             anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
-                            
-                            
+
+                            initial_text = "**"+str(interaction.user.name) + '**: '+ text + '\n**' + interaction.guild.me.nick + "**: "
+                                            
                             worker = PlayAudioWorker(anything_llm_text, interaction, message, voice, initial_text="**"+str(interaction.user.name) + '**: '+ text + '\n**' + interaction.guild.me.nick + "**: ")
-                            worker.play_audio_worker.start()
+
+                            description = "\n\nUtilizza il bottone Play se vuoi riprodurre la risposta del bot."
+
+                            view = discord.ui.View()
+                            view.add_item(PlayButton(text=anything_llm_text, interaction_from=interaction, message=message, voice=voice, save=False, initial_text=initial_text))
+                            view.add_item(StopButton())
+                            await interaction.followup.edit_message(message_id=message.id,content=initial_text + anything_llm_text + description, view = view)  
+
+
+
                         elif (anything_llm_response.status >= 500):
                             await interaction.followup.send("Un'altra richiesta é gia in esecuzione, per favore riprova fra qualche istante" + await get_queue_message(), ephemeral = True) 
 
@@ -829,10 +839,10 @@ async def ask_bot_background(text: str):
     }
     connector = aiohttp.TCPConnector(force_close=True)
     anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
-    session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=1800,sock_read=1800)
+    session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
 
     async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
-        async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=1800) as anything_llm_response:
+        async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
             time.sleep(5)
         await anything_llm_session.close()
 

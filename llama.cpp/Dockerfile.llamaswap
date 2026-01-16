@@ -1,0 +1,113 @@
+ARG UBUNTU_VERSION=26.04
+
+FROM ubuntu:$UBUNTU_VERSION AS build
+
+# Install build tools
+RUN apt update && apt install -y git \
+    build-essential cmake wget xz-utils \
+    libcurl4-openssl-dev curl \
+    libxcb-xinput0 libxcb-xinerama0 libxcb-cursor-dev glslc \
+    perl python3 pkg-config python3-dev gfortran clang libomp-dev libcurl4-openssl-dev \
+    golang nodejs npm    
+
+# Build it
+WORKDIR /app
+
+RUN git clone https://github.com/flame/blis
+WORKDIR /app/blis
+RUN ./configure --enable-cblas -t openmp,pthreads auto
+RUN make -j$(nproc)
+RUN make install
+
+
+WORKDIR /app
+
+
+RUN git clone https://github.com/ggml-org/llama.cpp.git llama.cpp
+
+WORKDIR /app/llama.cpp
+
+RUN cmake -B build -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=FLAME -DGGML_NATIVE=OFF -DLLAMA_BUILD_TESTS=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON  && \
+    cmake --build build --config Release -j$(nproc)
+
+RUN mkdir -p /app/lib && \
+    find build -name "*.so*" -exec cp -P {} /app/lib \;
+
+RUN mkdir -p /app/full \
+    && cp build/bin/* /app/full \
+    && cp *.py /app/full \
+    && cp -r gguf-py /app/full \
+    && cp -r requirements /app/full \
+    && cp requirements.txt /app/full \
+    && cp .devops/tools.sh /app/full/tools.sh
+
+WORKDIR /app
+
+RUN git clone https://github.com/mostlygeek/llama-swap.git llama-swap
+
+WORKDIR /app/llama-swap
+
+RUN make clean all
+
+RUN cp build/llama-swap* /app/full
+
+## Base image
+FROM ubuntu:$UBUNTU_VERSION AS base
+
+RUN apt-get update \
+    && apt-get install -y libgomp1 curl \
+    libglvnd0 libgl1 libglx0 libegl1 libgles2 \
+    && apt autoremove -y \
+    && apt clean -y \
+    && rm -rf /tmp/* /var/tmp/* \
+    && find /var/cache/apt/archives /var/lib/apt/lists -not -name lock -type f -delete \
+    && find /var/cache -type f -delete
+
+COPY --from=build /app/lib/ /app
+
+### Full
+FROM base AS full
+
+COPY --from=build /app/full /app
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y \
+    build-essential \
+    git \
+    python3 \
+    python3-pip \
+    python3-wheel \
+    && pip install --break-system-packages --upgrade setuptools \
+    && pip install --break-system-packages -r requirements.txt \
+    && apt autoremove -y \
+    && apt clean -y \
+    && rm -rf /tmp/* /var/tmp/* \
+    && find /var/cache/apt/archives /var/lib/apt/lists -not -name lock -type f -delete \
+    && find /var/cache -type f -delete
+
+ENTRYPOINT ["/app/tools.sh"]
+
+### Light, CLI only
+FROM base AS light
+
+COPY --from=build /app/full/llama-cli /app/full/llama-completion /app
+
+WORKDIR /app
+
+ENTRYPOINT [ "/app/llama-cli" ]
+
+### Server, Server only
+FROM base AS server
+
+ENV LLAMA_ARG_HOST=0.0.0.0
+
+COPY --from=build /app/full/llama-server /app
+COPY --from=build /app/full/llama-swap-linux-arm64 /app
+
+WORKDIR /app
+
+HEALTHCHECK CMD [ "curl", "-f", "http://localhost:8081/health" ]
+
+CMD [ "/app/llama-swap-linux-arm64", "--config",  "/app/config/config.yaml"]

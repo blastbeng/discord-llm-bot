@@ -129,16 +129,16 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 }
                 anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
                 connector = aiohttp.TCPConnector(force_close=True)
-                session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=1800,sock_read=1800)
+                session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
                 async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
-                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=1800) as anything_llm_response:
+                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
                         if (anything_llm_response.status == 200):
                             anything_llm_json = await anything_llm_response.json()
                             #anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
                             anything_llm_text = anything_llm_json["textResponse"].replace("\n", " ").replace("\r", " ")
           #                  await update.message.reply_audio(get_tts_google(anything_llm_text), reply_markup=reply_keyboard(), caption=anything_llm_text, disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=str(uuid.uuid4())+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
-                        
                             await update.message.reply_text(anything_llm_text, reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+
                         elif (anything_llm_response.status >= 500):
                             await update.message.reply_text("Un'altra richiesta é gia in esecuzione, per favore riprova fra qualche istante", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
 
@@ -169,25 +169,25 @@ async def embed_message(text):
             "textContent": text,
             "addToWorkspaces": os.environ.get("ANYTHING_LLM_WORKSPACE"),
             "metadata": {
-                "title": compute_md5_hash(text)
+                "title": "sentences_" + str(compute_md5_hash(text))
             }
         }
         headers = {
             'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
         }
-        anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/document/raw-text"
+        anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT_NO_LIMIT") + "/api/v1/document/raw-text"
         connector = aiohttp.TCPConnector(force_close=True)
-        session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=1800,sock_read=1800)
+        session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
         async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
-            async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=1800) as anything_llm_response:
+            async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
                 if (anything_llm_response.status == 200):
                     anything_llm_json = await anything_llm_response.json()
                     anything_llm_document = anything_llm_json["documents"][0]["location"]
                     data_embed = {
                         "adds": [ anything_llm_document ]
                     }
-                    anything_llm_url_embed = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/update-embeddings"
-                    async with anything_llm_session.post(anything_llm_url_embed, headers=headers, json=data_embed, timeout=1800) as anything_llm_response_embed:
+                    anything_llm_url_embed = os.environ.get("ANYTHING_LLM_ENDPOINT_NO_LIMIT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/update-embeddings"
+                    async with anything_llm_session.post(anything_llm_url_embed, headers=headers, json=data_embed, timeout=900) as anything_llm_response_embed:
                         if (anything_llm_response_embed.status != 200):
                             logging.error(anything_llm_response_embed)
                 else:
@@ -241,9 +241,9 @@ async def random_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
             headers = {
                 'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
             }
-            session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=1800,sock_read=1800)
+            session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
             async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
-                async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=1800) as anything_llm_response:
+                async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
                     if (anything_llm_response.status == 200):
                         anything_llm_json = await anything_llm_response.json()
                         #anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()

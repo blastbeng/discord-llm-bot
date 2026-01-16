@@ -25,7 +25,7 @@ async def upload_message(text, title):
     headers = {
         'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
     }
-    anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/document/raw-text"
+    anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT_NO_LIMIT") + "/api/v1/document/raw-text"
     connector = aiohttp.TCPConnector(force_close=True)
     session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
     async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
@@ -35,7 +35,7 @@ async def upload_message(text, title):
                 document = anything_llm_json["documents"][0]["location"]
             else:
                 logging.error(anything_llm_response)
-                with open(join(dirname(__file__), 'config/' + title), 'w') as text_file:
+                with open(join(dirname(__file__), 'config/' + title + ".txt"), 'w') as text_file:
                     text_file.write(text)
         await anything_llm_session.close()  
     return document
@@ -47,11 +47,10 @@ async def embed_message(anything_llm_document):
     headers = {
         'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
     }
-    anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/document/raw-text"
     connector = aiohttp.TCPConnector()
     session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
     async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
-        anything_llm_url_embed = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/update-embeddings"
+        anything_llm_url_embed = os.environ.get("ANYTHING_LLM_ENDPOINT_NO_LIMIT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/update-embeddings"
         async with anything_llm_session.post(anything_llm_url_embed, headers=headers, json=data_embed, timeout=900) as anything_llm_response_embed:
             if (anything_llm_response_embed.status != 200):
                 logging.error(anything_llm_response_embed)
@@ -127,4 +126,4 @@ async def start_single():
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
 
-asyncio.run(start())
+asyncio.run(start_no_split())
