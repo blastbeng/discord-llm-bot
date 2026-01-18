@@ -12,18 +12,21 @@ RUN apt install -y libcurl4-openssl-dev curl \
 RUN apt install -y build-essential git perl python3 pkg-config python3-dev gfortran clang cmake libomp-dev libcurl4-openssl-dev clang
 
 # Build it
-WORKDIR /app
+WORKDIR /build
 
 RUN git clone https://github.com/flame/blis
-WORKDIR /app/blis
+WORKDIR /build/blis
 RUN ./configure --enable-cblas -t openmp,pthreads auto
 RUN make -j$(nproc)
 RUN make install
 
 
-WORKDIR /app
+WORKDIR /
 
-RUN git clone https://github.com/ggml-org/llama.cpp.git llama.cpp
+RUN git clone https://github.com/ggml-org/llama.cpp.git app
+
+
+WORKDIR /app
 
 RUN cmake -B build -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=FLAME -DGGML_NATIVE=OFF -DLLAMA_BUILD_TESTS=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON  && \
     cmake --build build --config Release -j$(nproc)

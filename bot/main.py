@@ -94,17 +94,7 @@ async def embed_message(text):
         session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
         async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
             async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
-                if (anything_llm_response.status == 200):
-                    anything_llm_json = await anything_llm_response.json()
-                    anything_llm_document = anything_llm_json["documents"][0]["location"]
-                    data_embed = {
-                        "adds": [ anything_llm_document ]
-                    }
-                    anything_llm_url_embed = os.environ.get("ANYTHING_LLM_ENDPOINT_NO_LIMIT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/update-embeddings"
-                    async with anything_llm_session.post(anything_llm_url_embed, headers=headers, json=data_embed, timeout=900) as anything_llm_response_embed:
-                        if (anything_llm_response_embed.status != 200):
-                            logging.error(anything_llm_response_embed)
-                else:
+                if (anything_llm_response.status != 200):
                     logging.error(anything_llm_response)
             await anything_llm_session.close()  
     except Exception as e:
@@ -133,13 +123,13 @@ class FakeYouCustom(asynchronous_fakeyou.AsyncFakeYou):
 
 class GeneratorLoop:
 
-    @tasks.loop(minutes=60)
+    @tasks.loop(seconds=1800)
     async def generator_loop(self):
         try:
             gc.collect()
             sentences = database.select_all_sentence(dbms)
             if sentences is not None and len(sentences) > 0:
-                #randompy.shuffle(sentences)
+                randompy.shuffle(sentences)
                 count = 0
                 for sentence in sentences:
                     rnd_voice = randompy.choice(get_available_voices())
@@ -149,7 +139,7 @@ class GeneratorLoop:
                         found = get_tts_google(sentence, play=False)
                     else:
                         found = await get_tts_fakeyou(sentence, rnd_voice, play=False)
-                    if found or count == 100:
+                    if found or count == 1000:
                         break
                     count = count + 1
         except Exception as e:
@@ -630,11 +620,18 @@ async def on_connect():
         logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
 
 @client.event
+async def on_message(message):
+
+    if str(message.channel.id) == str(os.environ.get("CHANNEL_ID_EMBED")):
+        if message.content is not None and message.content != "" :
+            await embed_message(message.content)
+
+@client.event
 async def on_guild_available(guild):
     try:
         currentguildid = get_current_guild_id(str(guild.id))
 
-        GeneratorLoop().generator_loop.start()
+        #GeneratorLoop().generator_loop.start()
 
     except Exception as e:
         exc_type, exc_obj, exc_tb = sys.exc_info()
@@ -816,12 +813,12 @@ async def ask(interaction: discord.Interaction, text: str, voice: str = "Google"
 
 
 
-                        elif (anything_llm_response.status >= 500):
-                            await interaction.followup.send("Un'altra richiesta é gia in esecuzione, per favore riprova fra qualche istante" + await get_queue_message(), ephemeral = True) 
+                        #elif (anything_llm_response.status >= 500):
+                        #    await interaction.followup.send("Un'altra richiesta é gia in esecuzione, per favore riprova fra qualche istante" + await get_queue_message(), ephemeral = True) 
 
                         else:
                             
-                            await interaction.followup.send("Errore nella generazione della risposta, il server potrebbe essere occupato in questo momento, per favore riprova qualche istante" + await get_queue_message(), ephemeral = True) 
+                            await interaction.followup.send("Il server IA potrebbe essere offline oppure potrebbero esserci altre richieste ancora in corso. Riprovare in un secondo momento.", ephemeral = True) 
                     await anything_llm_session.close()
             else:
                 await interaction.followup.send("Il Chatbot AI é offline, per favore riprova piú tardi", ephemeral = True) 
@@ -853,7 +850,7 @@ async def ask_bot_background(text: str):
 @app_commands.rename(text='text')
 @app_commands.describe(text="Il testo da cercare")
 @app_commands.checks.cooldown(1, 5.0, key=lambda i: (i.user.id))
-async def random(interaction: discord.Interaction, voice: str = "random", text: str = ""):
+async def random(interaction: discord.Interaction, voice: str = "Google", text: str = ""):
     """Say a random sentence"""
     is_deferred=True
     try:

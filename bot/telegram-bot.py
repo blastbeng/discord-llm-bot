@@ -140,12 +140,10 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
           #                  await update.message.reply_audio(get_tts_google(anything_llm_text), reply_markup=reply_keyboard(), caption=anything_llm_text, disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=str(uuid.uuid4())+ "audio.mp3", reply_to_message_id=update.message.message_id, protect_content=False)
                             await update.message.reply_text(anything_llm_text, reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
 
-                        elif (anything_llm_response.status >= 500):
-                            await update.message.reply_text("Un'altra richiesta é gia in esecuzione, per favore riprova fra qualche istante", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
-
                         else:
-                            logging.error(anything_llm_response)
-                            await update.message.reply_text("si è verificato un errore stronzo", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
+                            logging.error(anything_llm_response.reason)
+                            await update.message.reply_text(anything_llm_response.reason + "\n\n Il server IA potrebbe essere offline oppure potrebbero esserci altre richieste ancora in corso. Riprovare in un secondo momento.", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+                
                     await anything_llm_session.close()  
             
             else:
@@ -181,17 +179,7 @@ async def embed_message(text):
         session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
         async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
             async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
-                if (anything_llm_response.status == 200):
-                    anything_llm_json = await anything_llm_response.json()
-                    anything_llm_document = anything_llm_json["documents"][0]["location"]
-                    data_embed = {
-                        "adds": [ anything_llm_document ]
-                    }
-                    anything_llm_url_embed = os.environ.get("ANYTHING_LLM_ENDPOINT_NO_LIMIT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/update-embeddings"
-                    async with anything_llm_session.post(anything_llm_url_embed, headers=headers, json=data_embed, timeout=900) as anything_llm_response_embed:
-                        if (anything_llm_response_embed.status != 200):
-                            logging.error(anything_llm_response_embed)
-                else:
+                if (anything_llm_response.status != 200):
                     logging.error(anything_llm_response)
             await anything_llm_session.close()  
     except Exception as e:
@@ -253,11 +241,12 @@ async def random_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         await update.message.reply_text(anything_llm_text, reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=init_message.message_id, protect_content=False)
 
 #                        await update.message.reply_audio(get_tts_google(anything_llm_text), reply_markup=reply_keyboard(), caption=anything_llm_text, disable_notification=True, title="Messaggio vocale", performer="Pezzente",  filename=str(uuid.uuid4())+ "audio.mp3", reply_to_message_id=init_message.message_id, protect_content=False)
-                    elif (anything_llm_response.status >= 500):
-                        await update.message.reply_text("Un'altra richiesta é gia in esecuzione, per favore riprova fra qualche istante", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=init_message.message_id, protect_content=False)
+                  
                     else:
-                        await update.message.reply_text(anything_llm_response.reason + " - Il server potrebbe essere sovraccarico o potrebbe esserci una generazione ancora in corso, riprovare in un secondo momento", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
-                await anything_llm_session.close()  
+                        logging.error(anything_llm_response.reason)
+                        await update.message.reply_text(anything_llm_response.reason + "\n\n Il server IA potrebbe essere offline oppure potrebbero esserci altre richieste ancora in corso. Riprovare in un secondo momento.", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+                 
+            await anything_llm_session.close()  
 
     except (requests.exceptions.RequestException, ValueError) as e:
       exc_type, exc_obj, exc_tb = sys.exc_info()

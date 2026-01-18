@@ -125,4 +125,4 @@ async def start_single(filepath):
 if not sys.argv[1].endswith(".txt"):
     raise Exception("only txt file is supported")
 else:
-    asyncio.run(start_no_split(sys.argv[1]))
+    asyncio.run(start(sys.argv[1]))

@@ -5,6 +5,7 @@ const axios = require('axios');
 const log = require('loglevel');
 const gTTS = require('gtts');
 const sqlite3 = require('sqlite3').verbose();
+const crypto = require('crypto');
 const ERROR_MSG = "Schifo, bestemmia e disagio.\nSi é verificato un errore stronzo."
 
 console.log("Logging - Setting log level to: " + config.LOG_LEVEL)
@@ -51,97 +52,118 @@ client.on('ready', () => {
     console.log('READY');
 });
 
-client.on('message', async msg => {
-    try {
-        let chat = await msg.getChat();
-        log.info("CHATID: [ "+ chat.id.user + " ], COMMAND: [ "+ msg.body + " ], ");
-        if (msg.body.toLowerCase().startsWith('/help') 
-            || msg.body.toLowerCase().startsWith('/random')
-            || msg.body.toLowerCase().startsWith('/ask')
-            || msg.body.toLowerCase().startsWith('/speak')
-            ){
-
-            let canReply = false;
-
-            if (chat.isGroup && (chat.id.user === config.GROUP_ID_1 || chat.id.user === config.GROUP_ID_2)) {
-            //if (chat.isGroup) {
-                for (let i = 0; i < chat.participants.length; i++) {
-                    if (chat.participants[i].id.user === config.TEL_NUMBER){
-                        canReply = true;
-                        break;
-                    }
-                }
+function canReply(chat) {
+    if (chat.isGroup && (chat.id.user === config.GROUP_ID_1 || chat.id.user === config.GROUP_ID_2)) {
+        for (let i = 0; i < chat.participants.length; i++) {
+            if (chat.participants[i].id.user === config.TEL_NUMBER){
+                return true;
             }
+        }
+    }
+     return false;
+}
+
+client.on('message', async msg => {
+    let chat = await msg.getChat();
+    try {
+        if (msg.body !== undefined && msg.body != null && msg.body !== '' && msg.body.trim() !== '') {
+            log.info("CHATID: [ "+ chat.id.user + " ], USER: [ "+ msg.author + " ], COMMAND: [ "+ msg.body + " ]");
+
+            if (msg.body.toLowerCase().startsWith('/help') 
+                || msg.body.toLowerCase().startsWith('/random')
+                || msg.body.toLowerCase().startsWith('/ask')
+                || msg.body.toLowerCase().startsWith('/speak')
+                ){
 
 
-            if (canReply) { 
-                await chat.sendSeen();
-                if (msg.body.toLowerCase() == '/help' || msg.body.toLowerCase().startsWith('/help')) {
-                    await chat.sendStateTyping();
-                    let message = msg.body.slice(5);
-                    helpmsg = "Lista Comandi: \n- /ask <testo>: chiedimi qualcosa\n- /speak: parla con la voce di google\n- /random: frase casuale\n- /random <testo>: frase casuale dato un testo"
-                    if ( message.length === 0 ) {
-                        await msg.reply(helpmsg);
-                    } else {
-                        await msg.reply("Sei stronzo?\nMangi le pietre o sei scemo?\nNon é necessario scrivere niente dopo /help per visualizzare i comandi disponibili.\n\n" + helpmsg);
-                    }
-
-                } else if (msg.body.toLowerCase() == '/random' || msg.body.toLowerCase().startsWith('/random')) {
-                    await chat.sendStateTyping();
-                    let message = msg.body.slice(7).toLowerCase();
-                    var sql = "SELECT sentence FROM sentences WHERE id IN (SELECT id FROM sentences ORDER BY RANDOM() LIMIT 1)"
-                    if ( message.length !== 0 ) {
-                        sql = "SELECT sentence FROM sentences WHERE id IN (SELECT id FROM sentences WHERE LOWER(sentence) LIKE '%" + message + "%' OR LOWER(sentence) LIKE '" + message + "%' OR LOWER(sentence) LIKE '%" + message + "' ORDER BY RANDOM() LIMIT 1)"
-                    }
-                    const db = new sqlite3.Database(`${process.cwd()}/config/discord-bot.sqlite3`);
-                    try {
-                        db.each(sql, async (error, row) => {
-                            if (error) {
-                                log.error("ERRORE!", "["+ error + "]");
-                                await msg.reply(ERROR_MSG);
-                            } else if (row != null && 'sentence' in row && row['sentence'] != undefined && row['sentence'] != null && row['sentence'] !== ''){
-                                await msg.reply(row['sentence']);
+                if (canReply(chat)) { 
+                    await chat.sendSeen();
+                    if (msg.body.toLowerCase() == '/help' || msg.body.toLowerCase().startsWith('/help')) {
+                        await chat.sendStateTyping();
+                        let message = msg.body.slice(5);
+                        try {
+                            helpmsg = "Lista Comandi: \n- /ask <testo>: chiedimi qualcosa\n- /speak: parla con la voce di google\n- /random: frase casuale\n- /random <testo>: frase casuale dato un testo"
+                            if ( message.length === 0 ) {
+                                await msg.reply(helpmsg);
                             } else {
-                                await msg.reply("Non ho trovato nessun testo contenente queste parole.");
+                                await msg.reply("Sei stronzo?\nMangi le pietre o sei scemo?\nNon é necessario scrivere niente dopo /help per visualizzare i comandi disponibili.\n\n" + helpmsg);
                             }
-                        });
-                    } catch (error) {
-                        log.error("ERRORE!", "["+ error + "]");
-                        await msg.reply(ERROR_MSG);
-                    } finally {
-                        db.close();
-                    }
-                }
-                else if (msg.body.toLowerCase().startsWith('/ask')) {
-                    await chat.sendStateTyping();
-                    let message = msg.body.slice(4);
-                    if ( message.length !== 0 ) {                     
-                        const {data} = await axios.post(config.ANYTHING_LLM_ENDPOINT + "/api/v1/workspace/" + config.ANYTHING_LLM_WORKSPACE + "/chat", {
-                                    "message": message.trim(),
-                                    "mode": "chat"
-                                }, {
-                                headers: {
-                                    'Authorization': 'Bearer ' + config.ANYTHING_LLM_API_KEY
-                                }
-                            }).catch(async function(error) {
-                                if (error.status >= 500) {
-                                    await msg.reply("Un'altra richiesta é gia in esecuzione, per favore riprova fra qualche istante");
+                        } catch (error) {
+                            log.error("ERRORE!", "["+ error + "]");
+                            await msg.reply(ERROR_MSG);
+                        }
+                    } else if (msg.body.toLowerCase() == '/random' || msg.body.toLowerCase().startsWith('/random')) {
+                        await chat.sendStateTyping();
+                        let message = msg.body.slice(7).toLowerCase();
+                        var sql = "SELECT sentence FROM sentences WHERE id IN (SELECT id FROM sentences ORDER BY RANDOM() LIMIT 1)"
+                        if ( message.length !== 0 ) {
+                            sql = "SELECT sentence FROM sentences WHERE id IN (SELECT id FROM sentences WHERE LOWER(sentence) LIKE '%" + message + "%' OR LOWER(sentence) LIKE '" + message + "%' OR LOWER(sentence) LIKE '%" + message + "' ORDER BY RANDOM() LIMIT 1)"
+                        }
+                        const db = new sqlite3.Database(`${process.cwd()}/config/discord-bot.sqlite3`);
+                        try {
+                            db.each(sql, async (error, row) => {
+                                if (error) {
+                                    log.error("ERRORE!", "["+ error + "]");
+                                    await msg.reply(ERROR_MSG);
+                                } else if (row != null && 'sentence' in row && row['sentence'] != undefined && row['sentence'] != null && row['sentence'] !== ''){
+                                    await msg.reply(row['sentence']);
                                 } else {
-                                    throw new Error(ex.toString());
+                                    await msg.reply("Non ho trovato nessun testo contenente queste parole.");
                                 }
                             });
-                        await msg.reply(data["textResponse"]);
-                    } else {
-                        await msg.reply("Sei stronzo?\nMangi le pietre o sei scemo?\nSe devi chiedermi qualcosa devi scrivere un testo dopo /ask.");
+                        } catch (error) {
+                            log.error("ERRORE!", "["+ error + "]");
+                            await msg.reply(ERROR_MSG);
+                        } finally {
+                            db.close();
+                        }
                     }
-                } else if (msg.body.toLowerCase().startsWith('/speak')) {
-                    await repeat(msg.body.slice(0, 6).toLowerCase(), msg.body.slice(6), msg, chat)
+                    else if (msg.body.toLowerCase().startsWith('/ask')) {
+                        await chat.sendStateTyping();
+                        let message = msg.body.slice(4);
+                        if ( message.length !== 0 ) {                     
+                            const {data} = await axios.post(config.ANYTHING_LLM_ENDPOINT + "/api/v1/workspace/" + config.ANYTHING_LLM_WORKSPACE + "/chat", {
+                                        "message": message.trim(),
+                                        "mode": "chat"
+                                    }, {
+                                    headers: {
+                                        'Authorization': 'Bearer ' + config.ANYTHING_LLM_API_KEY
+                                    }
+                                }).catch(async function(error) {
+                                    if (error.status >= 500) {
+                                        await msg.reply("Il server IA potrebbe essere offline oppure potrebbero esserci altre richieste ancora in corso. Riprovare in un secondo momento.");
+                                    } else {
+                                        throw new Error(ex.toString());
+                                    }
+                                });
+                            await msg.reply(data["textResponse"]);
+                        } else {
+                            await msg.reply("Sei stronzo?\nMangi le pietre o sei scemo?\nSe devi chiedermi qualcosa devi scrivere un testo dopo /ask.");
+                        }
+                    } else if (msg.body.toLowerCase().startsWith('/speak')) {
+                        await repeat(msg.body.slice(0, 6).toLowerCase(), msg.body.slice(6), msg, chat)
+                    }
                 }
+            } else if (canReply(chat)) {
+                const data = msg.body;
+                const md5 = crypto.createHash('md5').update(data).digest("hex")
+                await axios.post(config.ANYTHING_LLM_ENDPOINT + "/api/v1/document/raw-text", {
+                        "textContent": msg.body,
+                        "addToWorkspaces": config.ANYTHING_LLM_WORKSPACE,
+                        "metadata": {
+                            "title": "whatsapp_" + chat.id.user + "_" + md5
+                        }
+                    }, {
+                    headers: {
+                        'Authorization': 'Bearer ' + config.ANYTHING_LLM_API_KEY
+                    }
+                }).catch(async function(error) {
+                    log.error("ERRORE!", "["+ error + "]");
+                });
             }
         }
     } catch (error) {
         log.error("ERRORE!", "["+ error + "]");
-        await msg.reply(ERROR_MSG);
     } finally {
         await chat.clearState();
     }

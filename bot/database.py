@@ -48,7 +48,7 @@ def insert_sentence(self, sentence: str):
 def select_like_sentence(self, text: str):
   try:
     value = []
-    stmt = select(self.sentences.c.sentence).where(func.lower(self.sentences.c.sentence).like('%'+lower(text)+'%')).order_by(func.random())
+    stmt = select(self.sentences.c.sentence).where(self.sentences.c.sentence.like('%'+text+'%')).order_by(func.random())
     compiled = stmt.compile()
     with self.db_engine.connect() as conn:
       cursor = conn.execute(stmt)
