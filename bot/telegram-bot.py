@@ -349,7 +349,7 @@ async def restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if((CHAT_ID == chatid or GROUP_CHAT_ID == chatid)):
                 
             await update.message.reply_text("Riavvio in corso...", reply_markup=reply_keyboard(), disable_notification=True, reply_to_message_id=update.message.message_id, protect_content=False)
-            restart_ai_app()
+            #restart_ai_app()
             os.system("pkill -f python -9")
     except Exception as e:
         exc_type, exc_obj, exc_tb = sys.exc_info()
