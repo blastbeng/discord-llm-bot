@@ -121,31 +121,31 @@ class FakeYouCustom(asynchronous_fakeyou.AsyncFakeYou):
         return self.session
 
 
-class GeneratorLoop:
-
-    @tasks.loop(seconds=1800)
-    async def generator_loop(self):
-        try:
-            gc.collect()
-            sentences = database.select_all_sentence(dbms)
-            if sentences is not None and len(sentences) > 0:
-                randompy.shuffle(sentences)
-                count = 0
-                for sentence in sentences:
-                    rnd_voice = randompy.choice(get_available_voices())
-                    #rnd_voice = "Google"
-                    #await ask_bot_background(sentence)
-                    if rnd_voice == "Google":
-                        found = get_tts_google(sentence, play=False)
-                    else:
-                        found = await get_tts_fakeyou(sentence, rnd_voice, play=False)
-                    if found or count == 1000:
-                        break
-                    count = count + 1
-        except Exception as e:
-            exc_type, exc_obj, exc_tb = sys.exc_info()
-            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-            logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
+#class GeneratorLoop:
+#
+#    @tasks.loop(seconds=1800)
+#    async def generator_loop(self):
+#        try:
+#            gc.collect()
+#            sentences = database.select_all_sentence(dbms)
+#            if sentences is not None and len(sentences) > 0:
+#                randompy.shuffle(sentences)
+#                count = 0
+#                for sentence in sentences:
+#                    rnd_voice = randompy.choice(get_available_voices())
+#                    #rnd_voice = "Google"
+#                    #await ask_bot_background(sentence)
+#                    if rnd_voice == "Google":
+#                        found = get_tts_google(sentence, play=False)
+#                    else:
+#                        found = await get_tts_fakeyou(sentence, rnd_voice, play=False)
+#                    if found or count == 1000:
+#                        break
+#                    count = count + 1
+#        except Exception as e:
+#            exc_type, exc_obj, exc_tb = sys.exc_info()
+#            fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+#            logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
 
 
 
@@ -156,16 +156,17 @@ def read_mp3_from_file(file_path):
     out.seek(0)
     return out
 
-def get_tts_google(text: str, play=True, save=True):
-    file_path = os.path.dirname(os.path.realpath(__file__)) + "/audios/Google_" + compute_md5_hash(text) + ".mp3"
-    if os.path.exists(file_path):
-        try:
-            return read_mp3_from_file(file_path) if play else True
-        except:
+def get_tts_google(text: str, play=True, save=False):
+    if save:
+        file_path = os.path.dirname(os.path.realpath(__file__)) + "/audios/Google_" + compute_md5_hash(text) + ".mp3"
+        if os.path.exists(file_path):
             try:
-                os.remove(file_path)
-            except OSError:
-                pass
+                return read_mp3_from_file(file_path) if play else True
+            except:
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
     logging.info("START - Google text: " + text)
     mp3_fp = BytesIO()
     tts = gTTS(text=text, lang="it", slow=False)
@@ -183,7 +184,7 @@ def get_tts_google(text: str, play=True, save=True):
         audiofile.tag.save()
     return mp3_fp 
 
-async def get_tts_fakeyou(text: str, voice: str, play=True, save=True):
+async def get_tts_fakeyou(text: str, voice: str, play=True, save=False):
     try:
         voice_token = None
         if voice == "Papa Francesco (FakeYou.com)":
@@ -200,15 +201,16 @@ async def get_tts_fakeyou(text: str, voice: str, play=True, save=True):
             voice_token = "weight_zw97bw3hbtm07qwkd2exna15b"
         else:
             return None
-        file_path = os.path.dirname(os.path.realpath(__file__)) + "/audios/" + voice_token + "_" + compute_md5_hash(text) + ".mp3"
-        if os.path.exists(file_path):
-            try:
-                return read_mp3_from_file(file_path) if play else True
-            except:
+        if save:
+            file_path = os.path.dirname(os.path.realpath(__file__)) + "/audios/" + voice_token + "_" + compute_md5_hash(text) + ".mp3"
+            if os.path.exists(file_path):
                 try:
-                    os.remove(file_path)
-                except OSError:
-                    pass
+                    return read_mp3_from_file(file_path) if play else True
+                except:
+                    try:
+                        os.remove(file_path)
+                    except OSError:
+                        pass
         logging.info("START - FakeYou text: " + text + ", voice: " + voice)
         fy = FakeYouCustom()
         fakeyou_result = await fy.say(text, voice_token)
@@ -621,10 +623,10 @@ async def on_connect():
 
 @client.event
 async def on_message(message):
-
     if str(message.channel.id) == str(os.environ.get("CHANNEL_ID_EMBED")):
-        if message.content is not None and message.content != "" :
-            await embed_message(message.content)
+        if not message.author.bot and message.content is not None and message.content != "":
+            logging.debug(f'Message received; {message})')
+            await embed_message(message.author.name + ": " + message.content)
 
 @client.event
 async def on_guild_available(guild):
@@ -716,7 +718,7 @@ async def speak(interaction: discord.Interaction, text: str, voice: str = "Googl
 
             currentguildid = get_current_guild_id(interaction.guild.id)
             message:discord.Message = await interaction.followup.send("Inizio a generare l'audio per la frase:" + " **" + text + "**" + await get_queue_message(), ephemeral = True)
-            worker = PlayAudioWorker(text, interaction, message, voice, save=True)
+            worker = PlayAudioWorker(text, interaction, message, voice, save=False)
             worker.play_audio_worker.start()
 
             await embed_message(text)
@@ -784,7 +786,8 @@ async def ask(interaction: discord.Interaction, text: str, voice: str = "Google"
             if currentguildid == '000000':
                 data = {
                         "message": text.rstrip(),
-                        "mode": "chat"
+                        "mode": "chat",
+                        "reset": "true"
               }
                 headers = {
                     'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
@@ -798,11 +801,12 @@ async def ask(interaction: discord.Interaction, text: str, voice: str = "Google"
                     async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
                         if (anything_llm_response.status == 200):
                             anything_llm_json = await anything_llm_response.json()
-                            anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
+                            #anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
+                            anything_llm_text = anything_llm_json["textResponse"]
 
                             initial_text = "**"+str(interaction.user.name) + '**: '+ text + '\n**' + interaction.guild.me.nick + "**: "
                                             
-                            worker = PlayAudioWorker(anything_llm_text, interaction, message, voice, initial_text="**"+str(interaction.user.name) + '**: '+ text + '\n**' + interaction.guild.me.nick + "**: ")
+                            worker = PlayAudioWorker(anything_llm_text, interaction, message, voice, save=False, initial_text="**"+str(interaction.user.name) + '**: '+ text + '\n**' + interaction.guild.me.nick + "**: ")
 
                             description = "\n\nUtilizza il bottone Play se vuoi riprodurre la risposta del bot."
 
@@ -868,7 +872,7 @@ async def random(interaction: discord.Interaction, voice: str = "Google", text: 
                 
             sentences = None
 
-            audios = os.listdir(os.path.dirname(os.path.realpath(__file__)) + "/audios/")
+            #audios = os.listdir(os.path.dirname(os.path.realpath(__file__)) + "/audios/")
 
             if text is not None and text.strip() !=  '':
                 sentences = database.select_like_sentence(dbms, text)
@@ -878,7 +882,7 @@ async def random(interaction: discord.Interaction, voice: str = "Google", text: 
             if sentences is not None and len(sentences) > 0:
                 message:discord.Message = await interaction.followup.send("Sto cercando una frase casuale"  + await get_queue_message(), ephemeral = True)
                 
-                worker = PlayAudioWorker(randompy.choice(sentences), interaction, message, voice)
+                worker = PlayAudioWorker(randompy.choice(sentences), interaction, message, voice, save=False)
                 worker.play_audio_worker.start()
             else:
                 await interaction.followup.send((('Nessuna frase trovata contenente il testo "'+text+'"') if text is not None else "Nessuna frase trovata"), ephemeral = True)

@@ -177,3 +177,5 @@ fastsdcpu/configs
 
 .wwebjs_cache
 .wwebjs_auth
+chroma/data
+chroma/chromadb

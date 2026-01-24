@@ -6,6 +6,7 @@ const log = require('loglevel');
 const gTTS = require('gtts');
 const sqlite3 = require('sqlite3').verbose();
 const crypto = require('crypto');
+const moment = require("moment");
 const ERROR_MSG = "Schifo, bestemmia e disagio.\nSi é verificato un errore stronzo."
 
 console.log("Logging - Setting log level to: " + config.LOG_LEVEL)
@@ -68,6 +69,8 @@ client.on('message', async msg => {
     try {
         if (msg.body !== undefined && msg.body != null && msg.body !== '' && msg.body.trim() !== '') {
             log.info("CHATID: [ "+ chat.id.user + " ], USER: [ "+ msg.author + " ], COMMAND: [ "+ msg.body + " ]");
+            log.debug("CHAT: [ "+ JSON.stringify(chat) + " ]");
+            log.debug("MESSAGE: [ "+ JSON.stringify(msg) + " ]");
 
             if (msg.body.toLowerCase().startsWith('/help') 
                 || msg.body.toLowerCase().startsWith('/random')
@@ -90,6 +93,7 @@ client.on('message', async msg => {
                             }
                         } catch (error) {
                             log.error("ERRORE!", "["+ error + "]");
+                            console.error(error);
                             await msg.reply(ERROR_MSG);
                         }
                     } else if (msg.body.toLowerCase() == '/random' || msg.body.toLowerCase().startsWith('/random')) {
@@ -104,6 +108,7 @@ client.on('message', async msg => {
                             db.each(sql, async (error, row) => {
                                 if (error) {
                                     log.error("ERRORE!", "["+ error + "]");
+                                    console.error(error);
                                     await msg.reply(ERROR_MSG);
                                 } else if (row != null && 'sentence' in row && row['sentence'] != undefined && row['sentence'] != null && row['sentence'] !== ''){
                                     await msg.reply(row['sentence']);
@@ -124,7 +129,8 @@ client.on('message', async msg => {
                         if ( message.length !== 0 ) {                     
                             const {data} = await axios.post(config.ANYTHING_LLM_ENDPOINT + "/api/v1/workspace/" + config.ANYTHING_LLM_WORKSPACE + "/chat", {
                                         "message": message.trim(),
-                                        "mode": "chat"
+                                        "mode": "chat",
+                                        "reset": "true"
                                     }, {
                                     headers: {
                                         'Authorization': 'Bearer ' + config.ANYTHING_LLM_API_KEY
@@ -147,8 +153,19 @@ client.on('message', async msg => {
             } else if (canReply(chat)) {
                 const data = msg.body;
                 const md5 = crypto.createHash('md5').update(data).digest("hex")
+
+                var content = msg.body;
+                if (msg._data !== undefined && msg._data !== null && msg._data.notifyName !== undefined && msg._data.notifyName !== null && msg._data.notifyName !== ''){
+                    content = msg._data.notifyName + ": " + content;
+                } else {
+                    content = msg.author + ": " + content;
+                }
+                content = moment().format("DD/MM/YY, HH:mm") + " - " + content;
+
+                log.debug("EMBEDDING MESSAGE: [ "+ content + " ]");
+
                 await axios.post(config.ANYTHING_LLM_ENDPOINT + "/api/v1/document/raw-text", {
-                        "textContent": msg.body,
+                        "textContent": content,
                         "addToWorkspaces": config.ANYTHING_LLM_WORKSPACE,
                         "metadata": {
                             "title": "whatsapp_" + chat.id.user + "_" + md5
@@ -159,11 +176,13 @@ client.on('message', async msg => {
                     }
                 }).catch(async function(error) {
                     log.error("ERRORE!", "["+ error + "]");
+                    console.error(error);
                 });
             }
         }
     } catch (error) {
         log.error("ERRORE!", "["+ error + "]");
+        console.error(error);
     } finally {
         await chat.clearState();
     }

@@ -10,10 +10,11 @@
 		"helmet": "^8.1.0",
 		"loglevel": "^1.9.2",
 		"mongoose": "^9.1.4",
+		"moment": "^2.30.1",
 		"pg": "^8.17.1",
 		"qrcode-terminal": "^0.12.0",
 		"sqlite3": "^5.1.7",
 		"uuid": "^13.0.0",
-		"whatsapp-web.js": "github:pedroslopez/whatsapp-web.js#pull/5719/head"
+		"whatsapp-web.js": "github:pedroslopez/whatsapp-web.js#pull/5729/head"
 	}
 }

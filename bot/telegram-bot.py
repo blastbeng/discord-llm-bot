@@ -122,7 +122,8 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if(message != ""):
                 data = {
                         "message": message.rstrip(),
-                        "mode": "chat"
+                        "mode": "chat",
+                        "reset": "true"
                 }
                 headers = {
                     'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
@@ -142,7 +143,7 @@ async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                         else:
                             logging.error(anything_llm_response.reason)
-                            await update.message.reply_text(anything_llm_response.reason + "\n\n Il server IA potrebbe essere offline oppure potrebbero esserci altre richieste ancora in corso. Riprovare in un secondo momento.", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+                            await update.message.reply_text(anything_llm_response.reason + "\n\nIl server IA potrebbe essere offline oppure potrebbero esserci altre richieste ancora in corso. Riprovare in un secondo momento.", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
                 
                     await anything_llm_session.close()  
             
@@ -225,7 +226,8 @@ async def random_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
             anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
             data = {
                     "message": message.rstrip(),
-                    "mode": "chat"
+                    "mode": "chat",
+                    "reset": "true"
             }
             headers = {
                 'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
@@ -244,7 +246,7 @@ async def random_ai(update: Update, context: ContextTypes.DEFAULT_TYPE):
                   
                     else:
                         logging.error(anything_llm_response.reason)
-                        await update.message.reply_text(anything_llm_response.reason + "\n\n Il server IA potrebbe essere offline oppure potrebbero esserci altre richieste ancora in corso. Riprovare in un secondo momento.", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
+                        await update.message.reply_text(anything_llm_response.reason + "\n\nIl server IA potrebbe essere offline oppure potrebbero esserci altre richieste ancora in corso. Riprovare in un secondo momento.", reply_markup=reply_keyboard(), disable_notification=True, protect_content=False)
                  
             await anything_llm_session.close()  
 
