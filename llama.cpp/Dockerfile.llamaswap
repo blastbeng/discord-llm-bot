@@ -24,11 +24,12 @@ WORKDIR /app
 
 
 RUN git clone https://github.com/ggml-org/llama.cpp.git llama.cpp
+#RUN git clone https://github.com/ikawrakow/ik_llama.cpp llama.cpp
 
 WORKDIR /app/llama.cpp
 
 RUN cmake -B build -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=FLAME -DGGML_NATIVE=OFF -DLLAMA_BUILD_TESTS=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON  && \
-    cmake --build build --config Release -j$(nproc)
+    cmake --build build --config Release -j$(nproc) --target llama-server
 
 RUN mkdir -p /app/lib && \
     find build -name "*.so*" -exec cp -P {} /app/lib \;
@@ -43,7 +44,8 @@ RUN mkdir -p /app/full \
 
 WORKDIR /app
 
-RUN git clone https://github.com/mostlygeek/llama-swap.git llama-swap
+#RUN git clone https://github.com/mostlygeek/llama-swap.git llama-swap
+RUN git clone https://github.com/kooshi/llama-swappo llama-swap
 
 WORKDIR /app/llama-swap
 

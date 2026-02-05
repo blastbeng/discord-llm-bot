@@ -179,3 +179,11 @@ fastsdcpu/configs
 .wwebjs_auth
 chroma/data
 chroma/chromadb
+
+.env.waha
+waha_sessions
+waha_sessions/
+waha_sessions/*
+waha_media
+waha_media/
+waha_media/*

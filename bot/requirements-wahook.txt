@@ -1,0 +1,10 @@
+
+python-dotenv==1.0.0
+werkzeug==2.2.2
+Flask~=2.2.2
+requests
+gtts
+sqlalchemy==2.0.7
+tzlocal
+gunicorn==23.0.0
+eventlet

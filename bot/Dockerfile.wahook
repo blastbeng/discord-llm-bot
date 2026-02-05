@@ -1,0 +1,24 @@
+FROM python:3.11-slim-trixie
+
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        ffmpeg \
+        procps \
+        gcc
+
+RUN pip3 install -U pip
+RUN pip3 install --no-cache --upgrade pip setuptools
+
+COPY requirements-wahook.txt .
+
+RUN pip3 install --default-timeout=900 -r requirements-wahook.txt
+
+WORKDIR /app
+
+COPY wahook-bot.py .
+COPY config_gunicorn.py .
+COPY database.py .
+COPY entrypoint-wahook.sh .
+RUN chmod +x entrypoint-wahook.sh
+
+CMD ["./entrypoint-wahook.sh"]

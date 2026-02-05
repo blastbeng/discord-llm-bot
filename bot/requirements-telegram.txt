@@ -7,8 +7,5 @@ aiohttp
 aiofiles
 gtts
 sqlalchemy==2.0.7
-piper-tts
 pydub
 pillow
-MoviePy
-tzlocal

@@ -24,12 +24,12 @@ RUN make install
 WORKDIR /
 
 RUN git clone https://github.com/ggml-org/llama.cpp.git app
-
+#RUN git clone https://github.com/ikawrakow/ik_llama.cpp app
 
 WORKDIR /app
 
 RUN cmake -B build -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=FLAME -DGGML_NATIVE=OFF -DLLAMA_BUILD_TESTS=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON  && \
-    cmake --build build --config Release -j$(nproc)
+    cmake --build build --config Release -j$(nproc) --target llama-server
 
 RUN mkdir -p /app/lib && \
     find build -name "*.so*" -exec cp -P {} /app/lib \;

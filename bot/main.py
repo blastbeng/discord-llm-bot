@@ -4,7 +4,6 @@ import json
 import time
 import utils
 import database
-import socket
 import random as randompy
 import urllib
 import logging
@@ -12,7 +11,6 @@ import pathlib
 import urllib.request
 import gc
 from PIL import Image
-from typing import Optional
 from os.path import join as joinpy
 from os.path import dirname
 from dotenv import load_dotenv, set_key
@@ -20,26 +18,19 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from discord.errors import ClientException
-from datetime import datetime
 from typing import List
-import asyncio
 import requests
 import requests_cache
 import aiohttp
-import io
-from random import randint
 import requests.exceptions
 import psutil
 import json
 from io import BytesIO
 from gtts import gTTS
 from utils import FFmpegPCMAudioBytesIO
-from datetime import timedelta
-import uuid
 #from piper.voice import PiperVoice
 from pydub import AudioSegment
 from fakeyou import asynchronous_fakeyou
-import wave
 import copy
 import hashlib
 import eyed3
@@ -97,7 +88,7 @@ async def embed_message(text):
                 if (anything_llm_response.status != 200):
                     logging.error(anything_llm_response)
             await anything_llm_session.close()  
-    except Exception as e:
+    except Exception:
       exc_type, exc_obj, exc_tb = sys.exc_info()
       fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
       logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1) 
@@ -232,7 +223,7 @@ async def get_tts_fakeyou(text: str, voice: str, play=True, save=False):
             return out
         logging.error("FAILED - FakeYou text:" + text + ", voice: " + voice)
         return None
-    except Exception as e:
+    except Exception:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
@@ -386,7 +377,7 @@ async def send_error(e, interaction, from_generic=False, is_deferred=False):
                 await interaction.followup.send(spaminteractionmsg, ephemeral = True)
             else:
                 await interaction.response.send_message(spaminteractionmsg, ephemeral = True)
-        except Exception as e:
+        except Exception:
             exc_type, exc_obj, exc_tb = sys.exc_info()
             fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
             logging.error("[GUILDID : %s] %s %s %s", currentguildid, exc_type, fname, exc_tb.tb_lineno, exc_info=1)
@@ -473,15 +464,15 @@ async def connect_bot_by_voice_client(voice_client, channel, guild, member=None)
                     await voice_client.disconnect()
                     time.sleep(5)
                 await channel.connect()
-    except TimeoutError as e:
+    except TimeoutError:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
-    except ClientException as e:
+    except ClientException:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
-    except Exception as e:
+    except Exception:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
@@ -546,7 +537,7 @@ async def play_audio_process(text, interaction, message, voice, save=False, init
         if save:
             database.insert_sentence(dbms, text)
 
-    except Exception as e:
+    except Exception:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
@@ -594,7 +585,7 @@ async def change_presence_loop():
                 else:
                     logging.error("change_presence_loop - steamspy API ERROR - status_code: " + str(response.status))
             await session.close()  
-    except Exception as e:
+    except Exception:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
@@ -604,7 +595,7 @@ async def change_presence_loop():
 async def on_ready():
     try:
         logging.info(f'Logged in as {client.user} (ID: {client.user.id})')
-    except Exception as e:
+    except Exception:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
@@ -616,7 +607,7 @@ async def on_connect():
         if not change_presence_loop.is_running():
             change_presence_loop.start()
 
-    except Exception as e:
+    except Exception:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
@@ -631,11 +622,11 @@ async def on_message(message):
 @client.event
 async def on_guild_available(guild):
     try:
-        currentguildid = get_current_guild_id(str(guild.id))
+        get_current_guild_id(str(guild.id))
 
         #GeneratorLoop().generator_loop.start()
 
-    except Exception as e:
+    except Exception:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
@@ -644,7 +635,7 @@ async def on_guild_available(guild):
         client.tree.copy_global_to(guild=guild)
         await client.tree.sync(guild=guild)
         logging.info(f'Syncing commands to Guild (ID: {guild.id}) (NAME: {guild.name})')
-    except Exception as e:
+    except Exception:
         exc_type, exc_obj, exc_tb = sys.exc_info()
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
@@ -716,7 +707,7 @@ async def speak(interaction: discord.Interaction, text: str, voice: str = "Googl
             await interaction.followup.send("Per favore riprova piú tardi, Sto inizializzando la connessione...", ephemeral = True)
         else:
 
-            currentguildid = get_current_guild_id(interaction.guild.id)
+            get_current_guild_id(interaction.guild.id)
             message:discord.Message = await interaction.followup.send("Inizio a generare l'audio per la frase:" + " **" + text + "**" + await get_queue_message(), ephemeral = True)
             worker = PlayAudioWorker(text, interaction, message, voice, save=False)
             worker.play_audio_worker.start()
@@ -817,12 +808,10 @@ async def ask(interaction: discord.Interaction, text: str, voice: str = "Google"
 
 
 
-                        #elif (anything_llm_response.status >= 500):
-                        #    await interaction.followup.send("Un'altra richiesta é gia in esecuzione, per favore riprova fra qualche istante" + await get_queue_message(), ephemeral = True) 
-
+                        elif (anything_llm_response.status == 503):
+                            await interaction.followup.send("Un'altra richiesta é ancora in esecuzione.\nRiprovare in un secondo momento.\nNOTA: Questo server gestisce una richiesta per volta.", ephemeral = True) 
                         else:
-                            
-                            await interaction.followup.send("Il server IA potrebbe essere offline oppure potrebbero esserci altre richieste ancora in corso. Riprovare in un secondo momento.", ephemeral = True) 
+                            await interaction.followup.send("Il server IA é spento. Riprovare in un secondo momento.", ephemeral = True) 
                     await anything_llm_session.close()
             else:
                 await interaction.followup.send("Il Chatbot AI é offline, per favore riprova piú tardi", ephemeral = True) 
@@ -868,7 +857,7 @@ async def random(interaction: discord.Interaction, voice: str = "Google", text: 
             await interaction.followup.send("Per favore riprova piú tardi, sto initializzando la connessione...", ephemeral = True)
         elif voice_client:
             
-            currentguildid = get_current_guild_id(interaction.guild.id)  
+            get_current_guild_id(interaction.guild.id)  
                 
             sentences = None
 
@@ -943,7 +932,7 @@ async def rename(interaction: discord.Interaction, name: str):
         #check_permissions(interaction)
         
         if len(name) < 32:
-            currentguildid = get_current_guild_id(interaction.guild.id)
+            get_current_guild_id(interaction.guild.id)
             
             message = "Mi hai rinominato in" + ' "'+name+'"'
             await interaction.guild.me.edit(nick=name)
