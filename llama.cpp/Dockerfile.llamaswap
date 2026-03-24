@@ -8,7 +8,7 @@ RUN apt update && apt install -y git \
     libcurl4-openssl-dev curl \
     libxcb-xinput0 libxcb-xinerama0 libxcb-cursor-dev glslc \
     perl python3 pkg-config python3-dev gfortran clang libomp-dev libcurl4-openssl-dev \
-    golang nodejs npm    
+    golang nodejs npm
 
 # Build it
 WORKDIR /app
