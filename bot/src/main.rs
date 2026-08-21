@@ -6,7 +6,7 @@ use poise::serenity_prelude as serenity;
 use base64::{engine::general_purpose, Engine as _};
 use rand::seq::SliceRandom;
 use std::env;
-use sysinfo::{System, SystemExt};
+use sysinfo::{System, SystemExt, CpuExt};
 
 // Data stored in the bot's context
 pub struct Data {
@@ -461,8 +461,8 @@ async fn audio(
     
     // Download the attachment
     let bytes = reqwest::get(&audio.url).await?.bytes().await?.to_vec();
-    std::fs::create_dir_all(&temp_dir)?;
-    std::fs::write(&file_path, &bytes)?;
+    tokio::fs::create_dir_all(&temp_dir).await?;
+    tokio::fs::write(&file_path, &bytes).await?;
 
     let source = songbird::input::File::new(&file_path);
     handler.play_only(source.into());
@@ -625,6 +625,10 @@ async fn main() {
                                 )).await?;
                             } else if let Some(file_path) = component.data.custom_id.strip_prefix("play:") {
                                 if let Some(guild_id) = component.guild_id {
+                                    // Defer first to avoid timeout during rejoin
+                                    let _ = component.create_response(ctx, serenity::CreateInteractionResponse::Defer(
+                                        serenity::CreateInteractionResponseMessage::new().ephemeral(true)
+                                    )).await;
                                     // Check if user is in a voice channel
                                     let user_in_voice = ctx.cache().guild(guild_id)
                                         .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id))
@@ -666,9 +670,7 @@ async fn main() {
                                         }
                                     }
                                 }
-                                component.create_response(ctx, serenity::CreateInteractionResponse::Message(
-                                    serenity::CreateInteractionResponseMessage::new().content(&data.lang.replaying_audio).ephemeral(true)
-                                )).await?;
+                                component.edit_response(ctx, serenity::EditInteractionResponse::new().content(&data.lang.replaying_audio)).await?;
                             }
                         }
                     }
