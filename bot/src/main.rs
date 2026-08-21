@@ -112,7 +112,7 @@ async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::Cha
 async fn voice_autocomplete(
     _ctx: Context<'_>,
     current: &str,
-) -> Vec<serenity::AutocompleteChoice<String>> {
+) -> Vec<serenity::AutocompleteChoice> {
     let voices = vec![
         "Google",
         "Goku (FakeYou.com)",
