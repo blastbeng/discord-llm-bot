@@ -120,3 +120,19 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
         }
     }
 }
+
+pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let file_path = get_file_path(voice, text);
+    if Path::new(&file_path).exists() {
+        return Ok(file_path);
+    }
+
+    let bytes = if voice == "Google" {
+        get_tts_google(text).await?
+    } else {
+        get_tts_fakeyou(text, voice).await?
+    };
+
+    compress_and_save_mp3(bytes, &file_path).await?;
+    Ok(file_path)
+}
