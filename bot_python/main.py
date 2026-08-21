@@ -67,31 +67,6 @@ def get_anythingllm_online_status():
     else:
         return True
 
-async def embed_message(text):
-    try:
-        data = {
-            "textContent": text,
-            "addToWorkspaces": os.environ.get("ANYTHING_LLM_WORKSPACE"),
-            "metadata": {
-                "title": "sentences_" + str(compute_md5_hash(text))
-            }
-        }
-        headers = {
-            'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
-        }
-        anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT_NO_LIMIT") + "/api/v1/document/raw-text"
-        connector = aiohttp.TCPConnector(force_close=True)
-        session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
-        async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
-            async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
-                if (anything_llm_response.status != 200):
-                    logging.error(anything_llm_response)
-            await anything_llm_session.close()  
-    except Exception:
-      exc_type, exc_obj, exc_tb = sys.exc_info()
-      fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
-      logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1) 
-
 class FakeYouCustom(asynchronous_fakeyou.AsyncFakeYou):
     
     async def get_session(self) -> aiohttp.ClientSession:
@@ -649,8 +624,6 @@ async def speak(interaction: discord.Interaction, text: str, voice: str = "Googl
             message:discord.Message = await interaction.followup.send("Inizio a generare l'audio per la frase:" + " **" + text + "**" + await get_queue_message(), ephemeral = True)
             worker = PlayAudioWorker(text, interaction, message, voice, save=False)
             worker.play_audio_worker.start()
-
-            await embed_message(text)
                  
     except Exception as e:
         await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
