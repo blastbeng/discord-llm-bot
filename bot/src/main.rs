@@ -1,4 +1,5 @@
 mod database;
+mod tts;
 use poise::serenity_prelude as serenity;
 use std::env;
 
