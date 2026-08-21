@@ -1,3 +1,4 @@
+mod database;
 use poise::serenity_prelude as serenity;
 use std::env;
 
@@ -28,6 +29,7 @@ async fn main() {
     // Initialize database pool (we will create the schema in the next step)
     let db_url = "sqlite:config/discord-bot.sqlite3";
     let db_pool = sqlx::SqlitePool::connect(db_url).await.expect("Failed to connect to DB");
+    database::init_db(&db_pool).await.expect("Failed to initialize database");
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {

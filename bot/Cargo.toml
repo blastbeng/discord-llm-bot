@@ -6,8 +6,8 @@ edition = "2021"
 [dependencies]
 serenity = { version = "0.12", features = ["client", "gateway", "rustls_backend", "voice", "model", "cache"] }
 poise = "0.6"
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "signal"] }
-sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-rustls", "macros"] }
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "signal", "process"] }
+sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-rustls", "macros", "chrono"] }
 reqwest = { version = "0.12", features = ["json", "rustls"] }
 dotenv = "0.15"
 log = "0.4"
@@ -16,3 +16,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 uuid = { version = "1.8", features = ["v4"] }
 md5 = "0.7"
+songbird = { version = "0.4", features = ["builtin-queue"] }
+chrono = "0.4"
+regex = "1.10"
