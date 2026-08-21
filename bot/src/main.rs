@@ -46,22 +46,26 @@ fn get_current_guild_id(guild_id: serenity::GuildId) -> String {
     }
 }
 
-async fn get_queue_message() -> String {
+async fn get_queue_message(lang: &lang::Lang) -> String {
     let mut sys = System::new_all();
     sys.refresh_all();
     let cpu_usage = sys.global_cpu_info().cpu_usage();
     let total_memory = sys.total_memory();
     let used_memory = sys.used_memory();
     let ram_usage = (used_memory as f64 / total_memory as f64) * 100.0;
-    format!("\n\nSe il server é sovraccarico, potrebbe volerci un po' di tempo\n*CPU: {:.1}% - RAM: {:.2}%*", cpu_usage, ram_usage)
+    format!(&lang.queue_overload, cpu_usage, ram_usage)
 }
 
 async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
     let guild = ctx.guild().ok_or("Guild not found")?;
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
-    let perms = channel_id.to_channel(ctx.http()).await?.permissions_for_user(ctx.http(), ctx.cache().current_user_id())?;
-    if !perms.speak() {
-        return Err("I don't have permission to speak in this channel".into());
+    
+    let channel = channel_id.to_channel(ctx.http()).await?;
+    if let serenity::Channel::Guild(guild_channel) = channel {
+        let perms = guild_channel.permissions_for_user(ctx.cache(), ctx.cache().current_user_id())?;
+        if !perms.speak() || !perms.connect() {
+            return Err("I don't have permission to speak or connect in this channel".into());
+        }
     }
     Ok(())
 }
@@ -184,8 +188,8 @@ async fn speak(
     let mut handler = handler_lock.lock().await;
 
     ctx.defer_ephemeral().await?;
-    let queue_msg = get_queue_message().await;
-    let initial_msg = format!("Inizio a generare l'audio per la frase: **{}**{}", text, queue_msg);
+    let queue_msg = get_queue_message(&ctx.data().lang).await;
+    let initial_msg = format!(&ctx.data().lang.generating_audio, text, queue_msg);
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
     let message_id = reply.message().await?.id;
 
@@ -193,7 +197,11 @@ async fn speak(
         Ok(path) => path,
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
-            ctx.say(&ctx.data().lang.tts_error).await?;
+            ctx.http().edit_message(
+                ctx.channel_id(),
+                message_id,
+                serenity::EditMessage::new().content(&ctx.data().lang.tts_error)
+            ).await?;
             return Ok(());
         }
     };
@@ -279,8 +287,8 @@ async fn random(
     let random_sentence = sentences.choose(&mut rng).unwrap().to_string();
 
     ctx.defer_ephemeral().await?;
-    let queue_msg = get_queue_message().await;
-    let initial_msg = format!("Sto cercando una frase casuale{}", queue_msg);
+    let queue_msg = get_queue_message(&ctx.data().lang).await;
+    let initial_msg = format!(&ctx.data().lang.searching_random, queue_msg);
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
     let message_id = reply.message().await?.id;
 
@@ -288,7 +296,11 @@ async fn random(
         Ok(path) => path,
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
-            ctx.say(&ctx.data().lang.tts_error).await?;
+            ctx.http().edit_message(
+                ctx.channel_id(),
+                message_id,
+                serenity::EditMessage::new().content(&ctx.data().lang.tts_error)
+            ).await?;
             return Ok(());
         }
     };
@@ -349,6 +361,7 @@ async fn audio(
     
     // Download the attachment
     let bytes = reqwest::get(&audio.url).await?.bytes().await?.to_vec();
+    std::fs::create_dir_all(&temp_dir)?;
     std::fs::write(&file_path, &bytes)?;
 
     let source = songbird::input::File::new(&file_path);
@@ -412,7 +425,7 @@ async fn avatar(
 
     let bytes = reqwest::get(&image.url).await?.bytes().await?.to_vec();
     let b64 = general_purpose::STANDARD.encode(&bytes);
-    let data_url = format!("data:image/png;base64,{}", b64);
+    let data_url = format!("data:{};base64,{}", image.content_type.as_deref().unwrap_or("image/png"), b64);
 
     ctx.http().edit_user(serenity::EditUser::new().avatar(&data_url)).await?;
     ctx.say(&ctx.data().lang.avatar_changed).await?;
@@ -451,7 +464,7 @@ async fn main() {
                         log::error!("Error: {:?}", error);
                         if let poise::FrameworkError::Command { ctx, error, .. } = error {
                             log::error!("Command error: {}", error);
-                            let _ = ctx.send(poise::CreateReply::default().content("Discord API Error, per favore riprova piú tardi").ephemeral(true)).await;
+                            let _ = ctx.send(poise::CreateReply::default().content(&ctx.data().lang.discord_api_error).ephemeral(true)).await;
                         }
                     }
                 })

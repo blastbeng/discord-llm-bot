@@ -19,6 +19,10 @@ pub struct Lang {
     pub unsupported_file: String,
     pub avatar_changed: String,
     pub spam_detected: String,
+    pub generating_audio: String,
+    pub searching_random: String,
+    pub discord_api_error: String,
+    pub queue_overload: String,
 }
 
 impl Lang {
@@ -44,6 +48,10 @@ impl Lang {
                 unsupported_file: "This file type is not supported".to_string(),
                 avatar_changed: "The image has been changed".to_string(),
                 spam_detected: "Spam detected. <@{}> I'm watching you.\nCooldown: {}s".to_string(),
+                generating_audio: "I'm starting to generate audio for the sentence: **{}**{}".to_string(),
+                searching_random: "I'm looking for a random sentence{}".to_string(),
+                discord_api_error: "Discord API Error, please try again later".to_string(),
+                queue_overload: "\n\nIf the server is overloaded, it might take a while\n*CPU: {:.1}% - RAM: {:.2}%*".to_string(),
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
@@ -64,6 +72,10 @@ impl Lang {
                 unsupported_file: "Questo tipo di file non é supportato".to_string(),
                 avatar_changed: "L'immagine é stata modificata".to_string(),
                 spam_detected: "Spam detected. <@{}> Ti sto guardando.\nCooldown: {}s".to_string(),
+                generating_audio: "Inizio a generare l'audio per la frase: **{}**{}".to_string(),
+                searching_random: "Sto cercando una frase casuale{}".to_string(),
+                discord_api_error: "Discord API Error, per favore riprova piú tardi".to_string(),
+                queue_overload: "\n\nSe il server é sovraccarico, potrebbe volerci un po' di tempo\n*CPU: {:.1}% - RAM: {:.2}%*".to_string(),
             }
         }
     }
