@@ -104,8 +104,8 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
         }
 
         if let Some(status) = status_resp.status {
-            if let Some(status_str) = status.get("status").and_then(|s| s.as_str()) {
-                if status_str == "completed" {
+            if let Some(status_str) = status.as_str() {
+                if status_str == "complete" {
                     if let Some(media_url) = status_resp.media_url {
                         let media_resp = client.get(&media_url).send().await?;
                         let bytes = media_resp.bytes().await?.to_vec();

@@ -161,6 +161,7 @@ async fn speak(
         poise::CreateReply::default()
             .content(format!("Sto riproducendo: **{}** con voce: {}", text, actual_voice))
             .components(components)
+            .ephemeral(true)
     ).await?;
     Ok(())
 }
@@ -242,6 +243,7 @@ async fn random(
         poise::CreateReply::default()
             .content(format!("Sto riproducendo: **{}** con voce: {}", random_sentence, actual_voice))
             .components(components)
+            .ephemeral(true)
     ).await?;
     Ok(())
 }
@@ -278,7 +280,7 @@ async fn audio(
     let source = songbird::input::File::new(&file_path);
     handler.play_only(source.into());
 
-    ctx.say("Done! I'm starting the audio playback!").await?;
+    ctx.send(poise::CreateReply::default().content("Done! I'm starting the audio playback!").ephemeral(true)).await?;
     Ok(())
 }
 
@@ -369,7 +371,7 @@ async fn main() {
                 Box::pin(async move {
                     if let poise::FrameworkError::CooldownHit { remaining_cooldown, ctx, .. } = error {
                         let msg = format!("Spam detected. <@{}> Ti sto guardando.\nCooldown: {}s", ctx.author().id, remaining_cooldown.as_secs());
-                        let _ = ctx.say(msg).await;
+                        let _ = ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await;
                     } else {
                         log::error!("Error: {:?}", error);
                     }
