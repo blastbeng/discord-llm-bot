@@ -112,7 +112,7 @@ async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::Cha
 async fn voice_autocomplete(
     _ctx: Context<'_>,
     current: &str,
-) -> Vec<poise::AutocompleteChoice<String>> {
+) -> Vec<serenity::AutocompleteChoice<String>> {
     let voices = vec![
         "Google",
         "Goku (FakeYou.com)",
@@ -126,7 +126,7 @@ async fn voice_autocomplete(
 
     voices.into_iter()
         .filter(|v| v.to_lowercase().contains(&current.to_lowercase()))
-        .map(|v| poise::AutocompleteChoice { name: v.to_string(), value: v.to_string() })
+        .map(|v| serenity::AutocompleteChoice { name: v.to_string(), value: v.to_string() })
         .collect()
 }
 
