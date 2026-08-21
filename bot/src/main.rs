@@ -56,7 +56,7 @@ async fn voice_autocomplete(
 }
 
 /// Join channel.
-#[poise::command(slash_command)]
+#[poise::command(slash_command, cooldown = 5)]
 async fn join(ctx: Context<'_>) -> Result<(), Error> {
     let guild = ctx.guild().ok_or("Guild not found")?;
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
@@ -72,7 +72,7 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// Leave channel
-#[poise::command(slash_command)]
+#[poise::command(slash_command, cooldown = 5)]
 async fn leave(ctx: Context<'_>) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap();
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
@@ -86,7 +86,7 @@ async fn leave(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// Stop playback.
-#[poise::command(slash_command)]
+#[poise::command(slash_command, cooldown = 5)]
 async fn stop(ctx: Context<'_>) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap();
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
@@ -101,7 +101,7 @@ async fn stop(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// Repeat a sentence
-#[poise::command(slash_command)]
+#[poise::command(slash_command, cooldown = 5)]
 async fn speak(
     ctx: Context<'_>,
     #[description = "La frase da ripetere"] text: String,
@@ -142,12 +142,24 @@ async fn speak(
     let source = songbird::input::File::new(&file_path);
     handler.play_only(source.into());
 
-    ctx.say(format!("Sto riproducendo: **{}** con voce: {}", text, actual_voice)).await?;
+    let components = vec![
+        serenity::CreateActionRow::Buttons(vec![
+            serenity::CreateButton::new("stop")
+                .label("Stop")
+                .style(serenity::ButtonStyle::Danger)
+        ])
+    ];
+
+    ctx.send(
+        poise::CreateReply::default()
+            .content(format!("Sto riproducendo: **{}** con voce: {}", text, actual_voice))
+            .components(components)
+    ).await?;
     Ok(())
 }
 
 /// Say a random sentence
-#[poise::command(slash_command)]
+#[poise::command(slash_command, cooldown = 5)]
 async fn random(
     ctx: Context<'_>,
     #[description = "La voce da usare"]
@@ -204,12 +216,24 @@ async fn random(
     let source = songbird::input::File::new(&file_path);
     handler.play_only(source.into());
 
-    ctx.say(format!("Sto riproducendo: **{}** con voce: {}", random_sentence, actual_voice)).await?;
+    let components = vec![
+        serenity::CreateActionRow::Buttons(vec![
+            serenity::CreateButton::new("stop")
+                .label("Stop")
+                .style(serenity::ButtonStyle::Danger)
+        ])
+    ];
+
+    ctx.send(
+        poise::CreateReply::default()
+            .content(format!("Sto riproducendo: **{}** con voce: {}", random_sentence, actual_voice))
+            .components(components)
+    ).await?;
     Ok(())
 }
 
 /// Audio playback from the input audio
-#[poise::command(slash_command)]
+#[poise::command(slash_command, cooldown = 5)]
 async fn audio(
     ctx: Context<'_>,
     #[description = "Il file audio (mp3 or wav)"] audio: serenity::Attachment,
@@ -238,7 +262,7 @@ async fn audio(
 }
 
 /// Restart bot.
-#[poise::command(slash_command)]
+#[poise::command(slash_command, cooldown = 5)]
 async fn restart(ctx: Context<'_>) -> Result<(), Error> {
     let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
     let guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
@@ -251,7 +275,7 @@ async fn restart(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// Rename bot.
-#[poise::command(slash_command)]
+#[poise::command(slash_command, cooldown = 5)]
 async fn rename(
     ctx: Context<'_>,
     #[description = "Nuovo nickname del bot (limite di 32 caratteri)"] name: String,
@@ -267,7 +291,7 @@ async fn rename(
 }
 
 /// Change bot avatar.
-#[poise::command(slash_command)]
+#[poise::command(slash_command, cooldown = 5)]
 async fn avatar(
     ctx: Context<'_>,
     #[description = "Nuovo avatar del bot"] image: serenity::Attachment,
@@ -310,6 +334,37 @@ async fn main() {
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![join(), leave(), stop(), speak(), random(), audio(), restart(), rename(), avatar()],
+            on_error: |error| {
+                Box::pin(async move {
+                    if let poise::FrameworkError::CooldownHit { remaining_cooldown, ctx, .. } = error {
+                        let msg = format!("Spam detected. <@{}> Ti sto guardando.\nCooldown: {}s", ctx.author().id, remaining_cooldown.as_secs());
+                        let _ = ctx.say(msg).await;
+                    } else {
+                        log::error!("Error: {:?}", error);
+                    }
+                })
+            },
+            event_handler: |ctx, event, _framework, _data| {
+                Box::pin(async move {
+                    if let serenity::FullEvent::InteractionCreate { interaction } = event {
+                        if let serenity::Interaction::Component(component) = interaction {
+                            if component.data.custom_id == "stop" {
+                                if let Some(guild_id) = component.guild_id {
+                                    let manager = songbird::get(ctx).await.unwrap();
+                                    if let Some(handler) = manager.get(guild_id) {
+                                        let handler = handler.lock().await;
+                                        handler.stop();
+                                    }
+                                }
+                                component.create_response(ctx, serenity::CreateInteractionResponse::Message(
+                                    serenity::CreateInteractionResponseMessage::new().content("Interrompo il bot").ephemeral(true)
+                                )).await?;
+                            }
+                        }
+                    }
+                    Ok(())
+                })
+            },
             ..Default::default()
         })
         .setup(move |ctx, _ready, framework| {
