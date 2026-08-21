@@ -1,4 +1,5 @@
 use sqlx::SqlitePool;
+use std::path::Path;
 
 pub async fn init_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query(
@@ -35,4 +36,25 @@ pub async fn select_like_sentence(pool: &SqlitePool, text: &str) -> Result<Vec<S
         .fetch_all(pool)
         .await?;
     Ok(rows)
+}
+
+pub async fn populate_db_if_empty(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sentences")
+        .fetch_one(pool)
+        .await?;
+
+    if count == 0 {
+        if Path::new("config/sentences.txt").exists() {
+            log::info!("Populating database from config/sentences.txt...");
+            let contents = std::fs::read_to_string("config/sentences.txt").unwrap_or_default();
+            for line in contents.lines() {
+                let sentence = line.trim();
+                if !sentence.is_empty() {
+                    insert_sentence(pool, sentence).await?;
+                }
+            }
+            log::info!("Database populated.");
+        }
+    }
+    Ok(())
 }

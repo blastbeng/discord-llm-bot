@@ -37,6 +37,15 @@ async fn change_presence_loop(ctx: serenity::Context) {
     }
 }
 
+fn get_current_guild_id(guild_id: serenity::GuildId) -> String {
+    let parent_guild_id = env::var("GUILD_ID").unwrap_or_default();
+    if guild_id.to_string() == parent_guild_id {
+        "000000".to_string()
+    } else {
+        guild_id.to_string()
+    }
+}
+
 async fn get_queue_message() -> String {
     let mut sys = System::new_all();
     sys.refresh_all();
@@ -90,10 +99,15 @@ async fn voice_autocomplete(
 /// Join channel.
 #[poise::command(slash_command, cooldown = 5)]
 async fn join(ctx: Context<'_>) -> Result<(), Error> {
+    check_permissions(ctx).await?;
     let guild = ctx.guild().ok_or("Guild not found")?;
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
     
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
+    if let Some(_) = manager.get(guild.id) {
+        manager.remove(guild.id).await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
     let handler = manager.join(guild.id, channel_id).await;
     if handler.is_ok() {
         ctx.say(&ctx.data().lang.join_success).await?;
@@ -106,6 +120,7 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
 /// Leave channel
 #[poise::command(slash_command, cooldown = 5)]
 async fn leave(ctx: Context<'_>) -> Result<(), Error> {
+    check_permissions(ctx).await?;
     let guild_id = ctx.guild_id().unwrap();
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
     if manager.get(guild_id).is_some() {
@@ -120,6 +135,7 @@ async fn leave(ctx: Context<'_>) -> Result<(), Error> {
 /// Stop playback.
 #[poise::command(slash_command, cooldown = 5)]
 async fn stop(ctx: Context<'_>) -> Result<(), Error> {
+    check_permissions(ctx).await?;
     let guild_id = ctx.guild_id().unwrap();
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
     if let Some(handler) = manager.get(guild_id) {
@@ -360,7 +376,7 @@ async fn rename(
     ctx: Context<'_>,
     #[description = "Nuovo nickname del bot (limite di 32 caratteri)"] name: String,
 ) -> Result<(), Error> {
-    if name.len() > 32 {
+    if name.chars().count() > 32 {
         ctx.say(&ctx.data().lang.nickname_too_long).await?;
         return Ok(());
     }
@@ -410,6 +426,7 @@ async fn main() {
     let db_url = "sqlite:config/discord-bot.sqlite3";
     let db_pool = sqlx::SqlitePool::connect(db_url).await.expect("Failed to connect to DB");
     database::init_db(&db_pool).await.expect("Failed to initialize database");
+    database::populate_db_if_empty(&db_pool).await.expect("Failed to populate database");
 
     let pool_clone = db_pool.clone();
     tokio::spawn(async move {
