@@ -108,10 +108,6 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
     
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
-    if let Some(_) = manager.get(guild.id) {
-        manager.remove(guild.id).await;
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
     let handler = manager.join(guild.id, channel_id).await;
     if handler.is_ok() {
         ctx.say(&ctx.data().lang.join_success).await?;
