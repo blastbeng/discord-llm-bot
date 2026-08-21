@@ -14,12 +14,15 @@ pub fn get_file_path(voice: &str, text: &str) -> String {
         "Homer Simpson (FakeYou.com)" => "weight_zw97bw3hbtm07qwkd2exna15b",
         _ => "Google",
     };
-    format!("audios/{}_{}.mp3", voice_token, hash)
+    let file_path = format!("audios/{}_{}.mp3", voice_token, hash);
+    log::debug!("get_file_path: voice={}, text={}, path={}", voice, text, file_path);
+    file_path
 }
 
 pub async fn compress_and_save_mp3(input_bytes: Vec<u8>, file_path: &str) -> std::io::Result<()> {
     // Compress to 64k bitrate, mono channel to save disk space
     std::fs::create_dir_all("audios")?;
+    log::debug!("compress_and_save_mp3: saving to {}", file_path);
     let mut cmd = Command::new("ffmpeg");
     cmd.args(&["-i", "pipe:0", "-b:a", "64k", "-ac", "1", "-y", file_path])
         .stdin(std::process::Stdio::piped())
@@ -35,6 +38,7 @@ pub async fn compress_and_save_mp3(input_bytes: Vec<u8>, file_path: &str) -> std
 }
 
 pub async fn get_tts_google(text: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    log::debug!("get_tts_google: requesting TTS for text length {}", text.len());
     let lang = std::env::var("LANG").unwrap_or_else(|_| "ita".to_string());
     let tts_lang = match lang.as_str() {
         "eng" => "en",
@@ -62,6 +66,7 @@ pub async fn get_tts_google(text: &str) -> Result<Vec<u8>, Box<dyn std::error::E
         return Err("Google TTS returned too few bytes, possibly an error page".into());
     }
 
+    log::debug!("get_tts_google: received {} bytes", bytes.len());
     Ok(bytes)
 }
 
@@ -79,6 +84,7 @@ struct FakeYouStatusResponse {
 }
 
 pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    log::debug!("get_tts_fakeyou: starting job for voice {}", voice);
     let voice_token = match voice {
         "Papa Francesco (FakeYou.com)" => "weight_gc8gsr41974q5ax35gvttr85v",
         "Silvio Berlusconi (FakeYou.com)" => "weight_324nvat7xvaawe146na154gwh",
@@ -107,6 +113,7 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
     }
 
     let job_token = resp.job_token.ok_or("No job token received")?;
+    log::debug!("get_tts_fakeyou: job token {}", job_token);
 
     let max_retries = 30; // 60 seconds max (2s per retry)
     let mut retries = 0;
@@ -118,6 +125,7 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
         retries += 1;
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        log::debug!("get_tts_fakeyou: polling status (attempt {})", retries);
         let status_resp = client.get(format!("https://api.fakeyou.com/tts/job/{}", job_token))
             .send()
             .await?
@@ -132,6 +140,7 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
             if let Some(status_str) = status.as_str() {
                 if status_str == "complete" {
                     if let Some(media_url) = status_resp.media_url {
+                        log::debug!("get_tts_fakeyou: job completed, downloading media");
                         let media_resp = client.get(&media_url).send().await?;
                         let bytes = media_resp.bytes().await?.to_vec();
                         return Ok(bytes);
@@ -154,16 +163,20 @@ pub struct TtsResult {
 
 pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<TtsResult, Box<dyn std::error::Error + Send + Sync>> {
     let file_path = get_file_path(voice, text);
+    log::debug!("get_or_generate_tts: checking cache for {}", file_path);
     if Path::new(&file_path).exists() {
+        log::debug!("get_or_generate_tts: cache hit for {}", file_path);
         return Ok(TtsResult { file_path, actual_voice: voice.to_string(), fallback: false });
     }
 
+    log::info!("get_or_generate_tts: generating TTS for voice {}", voice);
     let (bytes, actual_voice, fallback) = if voice == "Google" {
         (get_tts_google(text).await?, "Google".to_string(), false)
     } else {
         match get_tts_fakeyou(text, voice).await {
             Ok(b) => (b, voice.to_string(), false),
             Err(e) => {
+                log::warn!("get_or_generate_tts: falling back to Google for voice {}", voice);
                 log::error!("FakeYou failed, falling back to Google: {}", e);
                 (get_tts_google(text).await?, "Google".to_string(), true)
             }

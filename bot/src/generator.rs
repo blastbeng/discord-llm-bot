@@ -16,6 +16,7 @@ pub async fn run_background_generator(pool: SqlitePool) {
 
     log::info!("Background generator started");
     loop {
+        log::info!("Background generator: starting new cycle");
         let mut generated_count = 0;
         let mut fakeyou_count = 0;
         let max_fakeyou_per_cycle = 1; // Limit FakeYou to avoid rate limiting
@@ -29,6 +30,7 @@ pub async fn run_background_generator(pool: SqlitePool) {
                     
                     // Skip FakeYou if we've hit the limit for this cycle
                     if *voice != "Google" && fakeyou_count >= max_fakeyou_per_cycle {
+                        log::debug!("Background generator: skipping FakeYou voice {} due to limit", voice);
                         continue;
                     }
                     
@@ -52,6 +54,7 @@ pub async fn run_background_generator(pool: SqlitePool) {
                 }
             }
         }
+        log::info!("Background generator: cycle complete, generated {} audio files ({} FakeYou)", generated_count, fakeyou_count);
         // Wait 5 minutes before checking the database again
         tokio::time::sleep(std::time::Duration::from_secs(300)).await;
     }

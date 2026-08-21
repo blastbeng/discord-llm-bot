@@ -62,6 +62,7 @@ async fn get_queue_message(lang: &lang::Lang) -> String {
     let total_memory = sys.total_memory();
     let used_memory = sys.used_memory();
     let ram_usage = (used_memory as f64 / total_memory as f64) * 100.0;
+    log::debug!("get_queue_message: CPU {:.1}%, RAM {:.2}%", cpu_usage, ram_usage);
     format!(&lang.queue_overload, cpu_usage, ram_usage)
 }
 
@@ -69,11 +70,13 @@ async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
     let lang = &ctx.data().lang;
     let guild = ctx.guild().ok_or(lang.guild_not_found.as_str())?;
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(lang.must_be_in_voice.as_str())?;
+    log::debug!("check_permissions: user {} in channel {}", ctx.author().id, channel_id);
     
     let channel = channel_id.to_channel(ctx.http()).await?;
     if let serenity::Channel::Guild(guild_channel) = channel {
         let perms = guild_channel.permissions_for_user(ctx.cache(), ctx.cache().current_user_id())?;
         if !perms.speak() || !perms.connect() {
+            log::warn!("check_permissions: user {} lacks speak/connect permission in channel {}", ctx.author().id, channel_id);
             return Err(lang.no_speak_permission.as_str().into());
         }
     }
@@ -90,15 +93,18 @@ async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::Cha
         if let Some(current_channel) = handler.current_channel() {
             if current_channel.0 == channel_id.get() {
                 // Already in the right channel, no need to reconnect
+                log::info!("connect_bot_by_voice_client: bot already in channel {}", channel_id);
                 return Ok(());
             }
         }
         // Bot is in a different channel, leave first
+        log::info!("connect_bot_by_voice_client: leaving current channel to join {}", channel_id);
         handler.leave().await;
         drop(handler);
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     }
     
+    log::info!("connect_bot_by_voice_client: joining channel {}", channel_id);
     let _handler_lock = manager.join(guild.id, channel_id).await?;
     Ok(())
 }
@@ -128,6 +134,7 @@ async fn voice_autocomplete(
 #[poise::command(slash_command, cooldown = 5)]
 async fn join(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
+    log::info!("[GUILDID : {}] join command invoked by user {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id);
     check_permissions(ctx).await?;
     let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?;
@@ -155,6 +162,7 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
 #[poise::command(slash_command, cooldown = 5)]
 async fn leave(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
+    log::info!("[GUILDID : {}] leave command invoked by user {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id);
     check_permissions(ctx).await?;
     let guild_id = ctx.guild_id().unwrap();
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
@@ -193,6 +201,7 @@ async fn speak(
     #[autocomplete = "voice_autocomplete"]
     voice: Option<String>,
 ) -> Result<(), Error> {
+    log::info!("[GUILDID : {}] speak command invoked by user {} with text: {:?}, voice: {:?}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id, text, voice);
     let voice = voice.unwrap_or_else(|| "Google".to_string());
     let voices = [
         "Google",
@@ -308,6 +317,7 @@ async fn random(
     voice: Option<String>,
     #[description = "Il testo da cercare"] text: Option<String>,
 ) -> Result<(), Error> {
+    log::info!("[GUILDID : {}] random command invoked by user {} with voice: {:?}, text: {:?}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id, voice, text);
     let voice = voice.unwrap_or_else(|| "Google".to_string());
     let voices = [
         "Google",
@@ -511,6 +521,7 @@ async fn audio(
 #[poise::command(slash_command, cooldown = 5)]
 async fn restart(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
+    log::info!("[GUILDID : {}] restart command invoked by user {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id);
     let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
     let guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
     if ctx.guild_id().unwrap().to_string() != guild_id || ctx.author().id.to_string() != admin_id {
@@ -584,7 +595,9 @@ async fn main() {
     let db_url = "sqlite:config/discord-bot.sqlite3";
     let db_pool = sqlx::SqlitePool::connect(db_url).await.expect("Failed to connect to DB");
     database::init_db(&db_pool).await.expect("Failed to initialize database");
+    log::info!("Database initialized successfully");
     database::populate_db_if_empty(&db_pool).await.expect("Failed to populate database");
+    log::info!("Database population check completed");
 
     let pool_clone = db_pool.clone();
     tokio::spawn(async move {
@@ -599,7 +612,9 @@ async fn main() {
                     if let poise::FrameworkError::CooldownHit { remaining_cooldown, ctx, .. } = error {
                         let spam_msgs = &ctx.data().lang.spam_messages;
                         let random_msg = spam_msgs.choose(&mut rand::thread_rng()).unwrap();
-                        let msg = format!("{}\nCooldown: {:.2}s", format!(random_msg, ctx.author().id), remaining_cooldown.as_secs_f32());
+                        let user_id = ctx.author().id.to_string();
+                        let random_msg_filled = random_msg.replace("{}", &user_id);
+                        let msg = format!("{}\nCooldown: {:.2}s", random_msg_filled, remaining_cooldown.as_secs_f32());
                         let _ = ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await;
                     } else {
                         log::error!("Error: {:?}", error);
@@ -618,6 +633,7 @@ async fn main() {
                             if component.data.custom_id == "stop" {
                                 // Check if user is in a voice channel
                                 if let Some(guild_id) = component.guild_id {
+                                    log::info!("Component interaction: stop button pressed by user {} in guild {}", component.user.id, guild_id);
                                     let user_in_voice = ctx.cache().guild(guild_id)
                                         .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id))
                                         .is_some();
@@ -654,6 +670,7 @@ async fn main() {
                                 )).await?;
                             } else if let Some(file_path) = component.data.custom_id.strip_prefix("play:") {
                                 if let Some(guild_id) = component.guild_id {
+                                    log::info!("Component interaction: play button pressed by user {} for file {}", component.user.id, file_path);
                                     // Defer first to avoid timeout during rejoin
                                     let _ = component.create_response(ctx, serenity::CreateInteractionResponse::Defer(
                                         serenity::CreateInteractionResponseMessage::new().ephemeral(true)
@@ -716,6 +733,7 @@ async fn main() {
                     change_presence_loop(ctx_clone).await;
                 });
                 let lang = lang::Lang::new();
+                log::info!("Framework setup complete");
                 Ok(Data { db_pool, lang })
             })
         })
@@ -729,5 +747,6 @@ async fn main() {
         .await
         .expect("Error creating client");
 
+    log::info!("Starting Discord client...");
     client.start().await.unwrap();
 }

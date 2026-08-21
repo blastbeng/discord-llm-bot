@@ -2,6 +2,7 @@ use sqlx::SqlitePool;
 use std::path::Path;
 
 pub async fn init_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+    log::debug!("init_db: creating tables if not exists");
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS sentences (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -23,6 +24,7 @@ pub async fn insert_sentence(pool: &SqlitePool, sentence: &str) -> Result<(), sq
 }
 
 pub async fn select_all_sentence(pool: &SqlitePool) -> Result<Vec<String>, sqlx::Error> {
+    log::debug!("select_all_sentence: fetching all sentences");
     let rows = sqlx::query_scalar::<_, String>("SELECT sentence FROM sentences ORDER BY RANDOM()")
         .fetch_all(pool)
         .await?;
@@ -30,6 +32,7 @@ pub async fn select_all_sentence(pool: &SqlitePool) -> Result<Vec<String>, sqlx:
 }
 
 pub async fn select_like_sentence(pool: &SqlitePool, text: &str) -> Result<Vec<String>, sqlx::Error> {
+    log::debug!("select_like_sentence: searching for pattern '%{}%'", text);
     let pattern = format!("%{}%", text);
     let rows = sqlx::query_scalar::<_, String>("SELECT sentence FROM sentences WHERE sentence LIKE ? ORDER BY RANDOM()")
         .bind(pattern)
@@ -43,6 +46,7 @@ pub async fn populate_db_if_empty(pool: &SqlitePool) -> Result<(), sqlx::Error> 
         .fetch_one(pool)
         .await?;
 
+    log::debug!("populate_db_if_empty: current sentence count = {}", count);
     if count == 0 {
         if Path::new("config/sentences.txt").exists() {
             log::info!("Populating database from config/sentences.txt...");
