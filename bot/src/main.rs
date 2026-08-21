@@ -175,6 +175,8 @@ async fn speak(
     };
 
     check_permissions(ctx).await?;
+    ctx.defer_ephemeral().await?;
+
     let guild = ctx.guild().ok_or("Guild not found")?;
     log::info!("[GUILDID : {}] speak - text: {}, voice: {}", get_current_guild_id(guild.id), text, actual_voice);
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
@@ -182,8 +184,6 @@ async fn speak(
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
     let handler_lock = manager.get(guild.id).unwrap();
     let mut handler = handler_lock.lock().await;
-
-    ctx.defer_ephemeral().await?;
     let queue_msg = get_queue_message(&ctx.data().lang).await;
     let initial_msg = format!(&ctx.data().lang.generating_audio, text, queue_msg);
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
@@ -209,7 +209,7 @@ async fn speak(
 
     let components = vec![
         serenity::CreateActionRow::Buttons(vec![
-            serenity::CreateButton::new(format!("play:{}:{}", text, actual_voice))
+            serenity::CreateButton::new(format!("play:{}", file_path))
                 .label("Play")
                 .style(serenity::ButtonStyle::Success),
             serenity::CreateButton::new("stop")
@@ -256,6 +256,8 @@ async fn random(
     };
 
     check_permissions(ctx).await?;
+    ctx.defer_ephemeral().await?;
+
     let guild = ctx.guild().ok_or("Guild not found")?;
     log::info!("[GUILDID : {}] random - voice: {}, text: {:?}", get_current_guild_id(guild.id), actual_voice, text);
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
@@ -282,7 +284,6 @@ async fn random(
     let mut rng = rand::thread_rng();
     let random_sentence = sentences.choose(&mut rng).unwrap().to_string();
 
-    ctx.defer_ephemeral().await?;
     let queue_msg = get_queue_message(&ctx.data().lang).await;
     let initial_msg = format!(&ctx.data().lang.searching_random, queue_msg);
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
@@ -306,7 +307,7 @@ async fn random(
 
     let components = vec![
         serenity::CreateActionRow::Buttons(vec![
-            serenity::CreateButton::new(format!("play:{}:{}", random_sentence, actual_voice))
+            serenity::CreateButton::new(format!("play:{}", file_path))
                 .label("Play")
                 .style(serenity::ButtonStyle::Success),
             serenity::CreateButton::new("stop")
@@ -333,10 +334,10 @@ async fn audio(
     #[description = "Il file audio (mp3 or wav)"] audio: serenity::Attachment,
 ) -> Result<(), Error> {
     check_permissions(ctx).await?;
+    ctx.defer_ephemeral().await?;
+
     let guild = ctx.guild().ok_or("Guild not found")?;
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
-    
-    ctx.defer_ephemeral().await?;
 
     connect_bot_by_voice_client(ctx, channel_id).await?;
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
@@ -362,6 +363,12 @@ async fn audio(
 
     let source = songbird::input::File::new(&file_path);
     handler.play_only(source.into());
+
+    let file_path_clone = file_path.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        let _ = tokio::fs::remove_file(&file_path_clone).await;
+    });
 
     ctx.send(poise::CreateReply::default().content(&ctx.data().lang.audio_playback).ephemeral(true)).await?;
     Ok(())
@@ -480,24 +487,18 @@ async fn main() {
                                 component.create_response(ctx, serenity::CreateInteractionResponse::Message(
                                     serenity::CreateInteractionResponseMessage::new().content(&data.lang.stop_success).ephemeral(true)
                                 )).await?;
-                            } else if component.data.custom_id.starts_with("play:") {
-                                let parts: Vec<&str> = component.data.custom_id.splitn(3, ':').collect();
-                                if parts.len() == 3 {
-                                    let text = parts[1];
-                                    let voice = parts[2];
-                                    if let Some(guild_id) = component.guild_id {
-                                        let manager = songbird::get(ctx).await.unwrap();
-                                        if let Some(handler) = manager.get(guild_id) {
-                                            let mut handler = handler.lock().await;
-                                            let file_path = tts::get_or_generate_tts(text, voice).await?;
-                                            let source = songbird::input::File::new(&file_path);
-                                            handler.play_only(source.into());
-                                        }
+                            } else if let Some(file_path) = component.data.custom_id.strip_prefix("play:") {
+                                if let Some(guild_id) = component.guild_id {
+                                    let manager = songbird::get(ctx).await.unwrap();
+                                    if let Some(handler) = manager.get(guild_id) {
+                                        let mut handler = handler.lock().await;
+                                        let source = songbird::input::File::new(file_path);
+                                        handler.play_only(source.into());
                                     }
-                                    component.create_response(ctx, serenity::CreateInteractionResponse::Message(
-                                        serenity::CreateInteractionResponseMessage::new().content(format!(&data.lang.playing, text, voice)).ephemeral(true)
-                                    )).await?;
                                 }
+                                component.create_response(ctx, serenity::CreateInteractionResponse::Message(
+                                    serenity::CreateInteractionResponseMessage::new().content("Replaying audio...").ephemeral(true)
+                                )).await?;
                             }
                         }
                     }
