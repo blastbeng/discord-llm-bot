@@ -835,7 +835,6 @@ async def avatar(interaction: discord.Interaction, image: discord.Attachment):
     except Exception as e:
         await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
 
-#@ask.error
 @audio.error
 @avatar.error
 @join.error
