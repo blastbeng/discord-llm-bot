@@ -612,12 +612,12 @@ async def on_connect():
         fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
         logging.error("%s %s %s", exc_type, fname, exc_tb.tb_lineno, exc_info=1)
 
-@client.event
-async def on_message(message):
-    if str(message.channel.id) == str(os.environ.get("CHANNEL_ID_EMBED")):
-        if not message.author.bot and message.content is not None and message.content != "":
-            logging.debug(f'Message received; {message})')
-            await embed_message(message.author.name + ": " + message.content)
+#@client.event
+#async def on_message(message):
+#    if str(message.channel.id) == str(os.environ.get("CHANNEL_ID_EMBED")):
+#        if not message.author.bot and message.content is not None and message.content != "":
+#            logging.debug(f'Message received; {message})')
+#            await embed_message(message.author.name + ": " + message.content)
 
 @client.event
 async def on_guild_available(guild):
@@ -745,79 +745,79 @@ async def audio(interaction: discord.Interaction, audio: discord.Attachment):
     except Exception as e:
         await send_error(e, interaction)
 
-@client.tree.command()
-@app_commands.rename(text='text')
-@app_commands.describe(text="La frase da chiedere")
-@app_commands.rename(voice='voice')
-@app_commands.describe(voice="La voce da usare")
-@app_commands.autocomplete(voice=rps_autocomplete)
-@app_commands.checks.cooldown(1, 30.0, key=lambda i: (i.user.id))
-async def ask(interaction: discord.Interaction, text: str, voice: str = "Google"):
-    """Ask something."""
-    is_deferred=True
-    try:
-        await interaction.response.defer(thinking=True, ephemeral = True)
-        check_permissions(interaction)
-        
-        voice_client = get_voice_client_by_guildid(client.voice_clients, interaction.guild.id)
-        await connect_bot_by_voice_client(voice_client, interaction.user.voice.channel, interaction.guild)
-
-        
-        if voice_client and not hasattr(voice_client, 'play') and voice_client.is_connected():
-            await interaction.followup.send("Per favore riprova piú tardi, Sto inizializzando la connessione...", ephemeral = True)
-        else:
-            currentguildid = get_current_guild_id(interaction.guild.id)
-            #cpu_percent = psutil.cpu_percent()
-            #if int(cpu_percent) > 70:                
-            #    cpu_message = "Il server é sovraccarico, riprovare fra qualche istante"
-            #    cpu_message = cpu_message + "\n"
-            #    cpu_message = cpu_message + "*CPU: " + str(cpu_percent) + "% - RAM: " + str(psutil.virtual_memory()[2]) + "%*"
-            #    await interaction.followup.send(cpu_message, ephemeral = True)
-            #el
-            if currentguildid == '000000':
-                data = {
-                        "message": text.rstrip(),
-                        "mode": "chat",
-                        "reset": "true"
-              }
-                headers = {
-                    'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
-                }
-                connector = aiohttp.TCPConnector(force_close=True)
-                anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
-                message:discord.Message = await interaction.followup.send('**' + str(interaction.user.name) + "** ha chiesto al bot:" + " **" + text + "**" + await get_queue_message(), ephemeral = True)            
-                session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
-
-                async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
-                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
-                        if (anything_llm_response.status == 200):
-                            anything_llm_json = await anything_llm_response.json()
-                            #anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
-                            anything_llm_text = anything_llm_json["textResponse"]
-
-                            initial_text = "**"+str(interaction.user.name) + '**: '+ text + '\n**' + interaction.guild.me.nick + "**: "
-                                            
-                            worker = PlayAudioWorker(anything_llm_text, interaction, message, voice, save=False, initial_text="**"+str(interaction.user.name) + '**: '+ text + '\n**' + interaction.guild.me.nick + "**: ")
-
-                            description = "\n\nUtilizza il bottone Play se vuoi riprodurre la risposta del bot."
-
-                            view = discord.ui.View()
-                            view.add_item(PlayButton(text=anything_llm_text, interaction_from=interaction, message=message, voice=voice, save=False, initial_text=initial_text))
-                            view.add_item(StopButton())
-                            await interaction.followup.edit_message(message_id=message.id,content=initial_text + anything_llm_text + description, view = view)  
-
-
-
-                        elif (anything_llm_response.status == 503):
-                            await interaction.followup.send("Un'altra richiesta é ancora in esecuzione.\nRiprovare in un secondo momento.\nNOTA: Questo server gestisce una richiesta per volta.", ephemeral = True) 
-                        else:
-                            await interaction.followup.send("Il server IA é spento. Riprovare in un secondo momento.", ephemeral = True) 
-                    await anything_llm_session.close()
-            else:
-                await interaction.followup.send("Il Chatbot AI é offline, per favore riprova piú tardi", ephemeral = True) 
-                   
-    except Exception as e:
-        await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
+#@client.tree.command()
+#@app_commands.rename(text='text')
+#@app_commands.describe(text="La frase da chiedere")
+#@app_commands.rename(voice='voice')
+#@app_commands.describe(voice="La voce da usare")
+#@app_commands.autocomplete(voice=rps_autocomplete)
+#@app_commands.checks.cooldown(1, 30.0, key=lambda i: (i.user.id))
+#async def ask(interaction: discord.Interaction, text: str, voice: str = "Google"):
+#    """Ask something."""
+#    is_deferred=True
+#    try:
+#        await interaction.response.defer(thinking=True, ephemeral = True)
+#        check_permissions(interaction)
+#        
+#        voice_client = get_voice_client_by_guildid(client.voice_clients, interaction.guild.id)
+#        await connect_bot_by_voice_client(voice_client, interaction.user.voice.channel, interaction.guild)
+#
+#        
+#        if voice_client and not hasattr(voice_client, 'play') and voice_client.is_connected():
+#            await interaction.followup.send("Per favore riprova piú tardi, Sto inizializzando la connessione...", ephemeral = True)
+#        else:
+#            currentguildid = get_current_guild_id(interaction.guild.id)
+#            #cpu_percent = psutil.cpu_percent()
+#            #if int(cpu_percent) > 70:                
+#            #    cpu_message = "Il server é sovraccarico, riprovare fra qualche istante"
+#            #    cpu_message = cpu_message + "\n"
+#            #    cpu_message = cpu_message + "*CPU: " + str(cpu_percent) + "% - RAM: " + str(psutil.virtual_memory()[2]) + "%*"
+#            #    await interaction.followup.send(cpu_message, ephemeral = True)
+#            #el
+#            if currentguildid == '000000':
+#                data = {
+#                        "message": text.rstrip(),
+#                        "mode": "chat",
+#                        "reset": "true"
+#              }
+#                headers = {
+#                    'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
+#                }
+#                connector = aiohttp.TCPConnector(force_close=True)
+#                anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
+#                message:discord.Message = await interaction.followup.send('**' + str(interaction.user.name) + "** ha chiesto al bot:" + " **" + text + "**" + await get_queue_message(), ephemeral = True)            
+#                session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
+#
+#                async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
+#                    async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
+#                        if (anything_llm_response.status == 200):
+#                            anything_llm_json = await anything_llm_response.json()
+#                            #anything_llm_text = anything_llm_json["textResponse"].partition('\n')[0].lstrip('\"').rstrip('\"').rstrip()
+#                            anything_llm_text = anything_llm_json["textResponse"]
+#
+#                            initial_text = "**"+str(interaction.user.name) + '**: '+ text + '\n**' + interaction.guild.me.nick + "**: "
+#                                            
+#                            worker = PlayAudioWorker(anything_llm_text, interaction, message, voice, save=False, initial_text="**"+str(interaction.user.name) + '**: '+ text + '\n**' + interaction.guild.me.nick + "**: ")
+#
+#                            description = "\n\nUtilizza il bottone Play se vuoi riprodurre la risposta del bot."
+#
+#                            view = discord.ui.View()
+#                            view.add_item(PlayButton(text=anything_llm_text, interaction_from=interaction, message=message, voice=voice, save=False, initial_text=initial_text))
+#                            view.add_item(StopButton())
+#                            await interaction.followup.edit_message(message_id=message.id,content=initial_text + anything_llm_text + description, view = view)  
+#
+#
+#
+#                        elif (anything_llm_response.status == 503):
+#                            await interaction.followup.send("Un'altra richiesta é ancora in esecuzione.\nRiprovare in un secondo momento.\nNOTA: Questo server gestisce una richiesta per volta.", ephemeral = True) 
+#                        else:
+#                            await interaction.followup.send("Il server IA é spento. Riprovare in un secondo momento.", ephemeral = True) 
+#                    await anything_llm_session.close()
+#            else:
+#                await interaction.followup.send("Il Chatbot AI é offline, per favore riprova piú tardi", ephemeral = True) 
+#                   
+#    except Exception as e:
+#        await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
 
 async def ask_bot_background(text: str):
     data = {
@@ -971,7 +971,7 @@ async def avatar(interaction: discord.Interaction, image: discord.Attachment):
     except Exception as e:
         await send_error(e, interaction, from_generic=False, is_deferred=is_deferred)
 
-@ask.error
+#@ask.error
 @audio.error
 @avatar.error
 @join.error
