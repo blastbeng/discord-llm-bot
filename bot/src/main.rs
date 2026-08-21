@@ -103,8 +103,8 @@ async fn voice_autocomplete(
 #[poise::command(slash_command, cooldown = 5)]
 async fn join(ctx: Context<'_>) -> Result<(), Error> {
     check_permissions(ctx).await?;
-    let guild = ctx.guild().ok_or("Guild not found")?;
-    let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
+    let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
+    let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?;
     
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
     let handler = manager.join(guild.id, channel_id).await;
@@ -176,9 +176,9 @@ async fn speak(
     check_permissions(ctx).await?;
     ctx.defer_ephemeral().await?;
 
-    let guild = ctx.guild().ok_or("Guild not found")?;
+    let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
     log::info!("[GUILDID : {}] speak - text: {}, voice: {}", get_current_guild_id(guild.id), text, actual_voice);
-    let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
+    let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?;
     connect_bot_by_voice_client(ctx, channel_id).await?;
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
     let handler_lock = match manager.get(guild.id) {
@@ -271,9 +271,9 @@ async fn random(
     check_permissions(ctx).await?;
     ctx.defer_ephemeral().await?;
 
-    let guild = ctx.guild().ok_or("Guild not found")?;
+    let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
     log::info!("[GUILDID : {}] random - voice: {}, text: {:?}", get_current_guild_id(guild.id), actual_voice, text);
-    let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
+    let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?;
     connect_bot_by_voice_client(ctx, channel_id).await?;
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
     let handler_lock = match manager.get(guild.id) {
@@ -370,8 +370,15 @@ async fn audio(
     check_permissions(ctx).await?;
     ctx.defer_ephemeral().await?;
 
-    let guild = ctx.guild().ok_or("Guild not found")?;
-    let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
+    let allowed_extensions = ["mp3", "wav", "ogg", "m4a"];
+    let ext = audio.filename.split('.').last().unwrap_or("").to_lowercase();
+    if !allowed_extensions.contains(&ext.as_str()) {
+        ctx.say(&ctx.data().lang.invalid_extension).await?;
+        return Ok(());
+    }
+
+    let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
+    let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?;
 
     connect_bot_by_voice_client(ctx, channel_id).await?;
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
@@ -383,13 +390,6 @@ async fn audio(
         }
     };
     let mut handler = handler_lock.lock().await;
-
-    let allowed_extensions = ["mp3", "wav", "ogg", "m4a"];
-    let ext = audio.filename.split('.').last().unwrap_or("").to_lowercase();
-    if !allowed_extensions.contains(&ext.as_str()) {
-        ctx.say(&ctx.data().lang.invalid_extension).await?;
-        return Ok(());
-    }
 
     log::info!("[GUILDID : {}] audio - filename: {}", get_current_guild_id(guild.id), audio.filename);
 
@@ -442,7 +442,7 @@ async fn rename(
         ctx.say(&ctx.data().lang.nickname_too_long).await?;
         return Ok(());
     }
-    let guild = ctx.guild().ok_or("Guild not found")?;
+    let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
     guild.edit_nickname(ctx.http(), Some(&name), None).await?;
     ctx.say(format!(&ctx.data().lang.nickname_changed, name)).await?;
     Ok(())
@@ -501,7 +501,9 @@ async fn main() {
             on_error: |error| {
                 Box::pin(async move {
                     if let poise::FrameworkError::CooldownHit { remaining_cooldown, ctx, .. } = error {
-                        let msg = format!(&ctx.data().lang.spam_detected, ctx.author().id, remaining_cooldown.as_secs());
+                        let spam_msgs = &ctx.data().lang.spam_messages;
+                        let random_msg = spam_msgs.choose(&mut rand::thread_rng()).unwrap();
+                        let msg = format!("{}\nCooldown: {}s", format!(random_msg, ctx.author().id), remaining_cooldown.as_secs());
                         let _ = ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await;
                     } else {
                         log::error!("Error: {:?}", error);

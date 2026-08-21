@@ -44,7 +44,17 @@ pub async fn get_tts_google(text: &str) -> Result<Vec<u8>, Box<dyn std::error::E
         .header("User-Agent", "Mozilla/5.0")
         .send()
         .await?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Google TTS returned status: {}", resp.status()).into());
+    }
+
     let bytes = resp.bytes().await?.to_vec();
+
+    if bytes.len() < 100 {
+        return Err("Google TTS returned too few bytes, possibly an error page".into());
+    }
+
     Ok(bytes)
 }
 
@@ -91,7 +101,15 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
 
     let job_token = resp.job_token.ok_or("No job token received")?;
 
+    let max_retries = 30; // 60 seconds max (2s per retry)
+    let mut retries = 0;
+
     loop {
+        if retries >= max_retries {
+            return Err("FakeYou job timed out after 60 seconds".into());
+        }
+        retries += 1;
+
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         let status_resp = client.get(format!("https://api.fakeyou.com/tts/job/{}", job_token))
             .send()

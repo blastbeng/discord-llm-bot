@@ -26,17 +26,9 @@ pub async fn run_background_generator(pool: SqlitePool) {
                     if !Path::new(&file_path).exists() {
                         log::info!("Background generator: Generating TTS for: {} with voice: {}", sentence, voice);
                         
-                        let tts_result = if *voice == "Google" {
-                            tts::get_tts_google(&sentence).await
-                        } else {
-                            tts::get_tts_fakeyou(&sentence, voice).await
-                        };
-
-                        match tts_result {
-                            Ok(bytes) => {
-                                if let Err(e) = tts::compress_and_save_mp3(bytes, &file_path).await {
-                                    log::error!("Background generator: Failed to save mp3: {}", e);
-                                }
+                        match tts::get_or_generate_tts(&sentence, voice).await {
+                            Ok(result) => {
+                                log::info!("Background generator: Generated TTS for: {} with voice: {} (fallback: {})", sentence, voice, result.fallback);
                             }
                             Err(e) => log::warn!("Background generator: Failed to get TTS for voice {}: {}", voice, e),
                         }
