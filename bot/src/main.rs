@@ -6,6 +6,7 @@ use poise::serenity_prelude as serenity;
 use base64::{engine::general_purpose, Engine as _};
 use rand::seq::SliceRandom;
 use std::env;
+use sysinfo::{System, SystemExt};
 
 // Data stored in the bot's context
 pub struct Data {
@@ -34,6 +35,35 @@ async fn change_presence_loop(ctx: serenity::Context) {
             }
         }
     }
+}
+
+async fn get_queue_message() -> String {
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    let cpu_usage = sys.global_cpu_info().cpu_usage();
+    let total_memory = sys.total_memory();
+    let used_memory = sys.used_memory();
+    let ram_usage = (used_memory as f64 / total_memory as f64) * 100.0;
+    format!("\n\nSe il server é sovraccarico, potrebbe volerci un po' di tempo\n*CPU: {:.1}% - RAM: {:.2}%*", cpu_usage, ram_usage)
+}
+
+async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
+    let guild = ctx.guild().ok_or("Guild not found")?;
+    let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
+    let perms = channel_id.to_channel(ctx.http()).await?.permissions_for_user(ctx.http(), ctx.cache().current_user_id())?;
+    if !perms.speak() {
+        return Err("I don't have permission to speak in this channel".into());
+    }
+    Ok(())
+}
+
+async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::ChannelId) -> Result<(), Error> {
+    let guild = ctx.guild().ok_or("Guild not found")?;
+    let manager = songbird::get(ctx.serenity_context()).await.unwrap();
+    let handler_lock = manager.join(guild.id, channel_id).await?;
+    let mut handler = handler_lock.lock().await;
+    // If the bot is already in a different channel, it will be moved to the new channel.
+    Ok(())
 }
 
 async fn voice_autocomplete(
@@ -128,13 +158,12 @@ async fn speak(
         voice
     };
 
-    ctx.defer_ephemeral().await?;
-
+    check_permissions(ctx).await?;
     let guild = ctx.guild().ok_or("Guild not found")?;
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
-
+    connect_bot_by_voice_client(ctx, channel_id).await?;
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
-    let handler_lock = manager.join(guild.id, channel_id).await?;
+    let handler_lock = manager.get(guild.id).unwrap();
     let mut handler = handler_lock.lock().await;
 
     let file_path = match tts::get_or_generate_tts(&text, &actual_voice).await {
@@ -194,13 +223,12 @@ async fn random(
         voice
     };
 
-    ctx.defer_ephemeral().await?;
-
+    check_permissions(ctx).await?;
     let guild = ctx.guild().ok_or("Guild not found")?;
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
-
+    connect_bot_by_voice_client(ctx, channel_id).await?;
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
-    let handler_lock = manager.join(guild.id, channel_id).await?;
+    let handler_lock = manager.get(guild.id).unwrap();
     let mut handler = handler_lock.lock().await;
 
     let sentences = if let Some(t) = &text {
