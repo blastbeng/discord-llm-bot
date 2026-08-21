@@ -19,6 +19,7 @@ pub fn get_file_path(voice: &str, text: &str) -> String {
 
 pub async fn compress_and_save_mp3(input_bytes: Vec<u8>, file_path: &str) -> std::io::Result<()> {
     // Compress to 64k bitrate, mono channel to save disk space
+    std::fs::create_dir_all("audios")?;
     let mut cmd = Command::new("ffmpeg");
     cmd.args(&["-i", "pipe:0", "-b:a", "64k", "-ac", "1", "-y", file_path])
         .stdin(std::process::Stdio::piped())

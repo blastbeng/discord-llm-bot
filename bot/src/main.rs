@@ -55,7 +55,9 @@ fn get_current_guild_id(guild_id: serenity::GuildId) -> String {
 
 async fn get_queue_message(lang: &lang::Lang) -> String {
     let mut sys = System::new_all();
-    sys.refresh_all();
+    sys.refresh_cpu();
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    sys.refresh_cpu();
     let cpu_usage = sys.global_cpu_info().cpu_usage();
     let total_memory = sys.total_memory();
     let used_memory = sys.used_memory();
@@ -575,13 +577,7 @@ async fn main() {
                         if let poise::FrameworkError::Command { ctx, error, .. } = error {
                             log::error!("Command error: {}", error);
                             let msg = error.to_string();
-                            // If it's a meaningful user-facing error, show it; otherwise show generic
-                            let display_msg = if msg.contains("permission") || msg.contains("voice channel") || msg.contains("Guild") || msg.contains("speak") || msg.contains("connect") {
-                                msg
-                            } else {
-                                ctx.data().lang.discord_api_error.clone()
-                            };
-                            let _ = ctx.send(poise::CreateReply::default().content(display_msg).ephemeral(true)).await;
+                            let _ = ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await;
                         }
                     }
                 })
@@ -684,6 +680,7 @@ async fn main() {
         .setup(move |ctx, _ready, framework| {
             let db_pool = db_pool.clone();
             Box::pin(async move {
+                log::info!("Logged in as {} (ID: {})", _ready.user.name, _ready.user.id);
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
                 let ctx_clone = ctx.clone();
                 tokio::spawn(async move {
