@@ -230,10 +230,12 @@ async fn speak(
             return Ok(());
         }
     };
-    let mut handler = handler_lock.lock().await;
-    if handler.current_channel().is_none() {
-        ctx.say(&ctx.data().lang.initializing_connection).await?;
-        return Ok(());
+    {
+        let handler = handler_lock.lock().await;
+        if handler.current_channel().is_none() {
+            ctx.say(&ctx.data().lang.initializing_connection).await?;
+            return Ok(());
+        }
     }
     let queue_msg = get_queue_message(&ctx.data().lang).await;
     let initial_msg = format!(&ctx.data().lang.generating_audio, text, queue_msg);
@@ -257,6 +259,15 @@ async fn speak(
         log::error!("Failed to insert sentence into database: {}", e);
     }
 
+    let mut handler = handler_lock.lock().await;
+    if handler.current_channel().is_none() {
+        ctx.http().edit_message(
+            ctx.channel_id(),
+            message_id,
+            serenity::EditMessage::new().content(&ctx.data().lang.bot_not_ready)
+        ).await?;
+        return Ok(());
+    }
     let source = songbird::input::File::new(&tts_result.file_path);
     handler.play_only(source.into());
 
@@ -334,10 +345,12 @@ async fn random(
             return Ok(());
         }
     };
-    let mut handler = handler_lock.lock().await;
-    if handler.current_channel().is_none() {
-        ctx.say(&ctx.data().lang.initializing_connection).await?;
-        return Ok(());
+    {
+        let handler = handler_lock.lock().await;
+        if handler.current_channel().is_none() {
+            ctx.say(&ctx.data().lang.initializing_connection).await?;
+            return Ok(());
+        }
     }
 
     let sentences = if let Some(t) = &text {
@@ -385,6 +398,15 @@ async fn random(
         }
     };
 
+    let mut handler = handler_lock.lock().await;
+    if handler.current_channel().is_none() {
+        ctx.http().edit_message(
+            ctx.channel_id(),
+            message_id,
+            serenity::EditMessage::new().content(&ctx.data().lang.bot_not_ready)
+        ).await?;
+        return Ok(());
+    }
     let source = songbird::input::File::new(&tts_result.file_path);
     handler.play_only(source.into());
 
@@ -444,10 +466,12 @@ async fn audio(
             return Ok(());
         }
     };
-    let mut handler = handler_lock.lock().await;
-    if handler.current_channel().is_none() {
-        ctx.say(&ctx.data().lang.initializing_connection).await?;
-        return Ok(());
+    {
+        let handler = handler_lock.lock().await;
+        if handler.current_channel().is_none() {
+            ctx.say(&ctx.data().lang.initializing_connection).await?;
+            return Ok(());
+        }
     }
 
     log::info!("[GUILDID : {}] audio - filename: {}", get_current_guild_id(guild.id), audio.filename);
@@ -464,6 +488,11 @@ async fn audio(
     tokio::fs::create_dir_all(&temp_dir).await?;
     tokio::fs::write(&file_path, &bytes).await?;
 
+    let mut handler = handler_lock.lock().await;
+    if handler.current_channel().is_none() {
+        ctx.say(&ctx.data().lang.bot_not_ready).await?;
+        return Ok(());
+    }
     let source = songbird::input::File::new(&file_path);
     handler.play_only(source.into());
 
@@ -634,9 +663,7 @@ async fn main() {
                                         .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id))
                                         .is_some();
                                     if !user_in_voice {
-                                        component.create_response(ctx, serenity::CreateInteractionResponse::Message(
-                                            serenity::CreateInteractionResponseMessage::new().content(&data.lang.must_be_in_voice).ephemeral(true)
-                                        )).await?;
+                                        component.edit_response(ctx, serenity::EditInteractionResponse::new().content(&data.lang.must_be_in_voice)).await?;
                                         return Ok(());
                                     }
                                     let manager = songbird::get(ctx).await.unwrap();
