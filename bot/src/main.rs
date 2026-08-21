@@ -176,6 +176,7 @@ async fn speak(
 
     check_permissions(ctx).await?;
     let guild = ctx.guild().ok_or("Guild not found")?;
+    log::info!("[GUILDID : {}] speak - text: {}, voice: {}", get_current_guild_id(guild.id), text, actual_voice);
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
     connect_bot_by_voice_client(ctx, channel_id).await?;
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
@@ -252,6 +253,7 @@ async fn random(
 
     check_permissions(ctx).await?;
     let guild = ctx.guild().ok_or("Guild not found")?;
+    log::info!("[GUILDID : {}] random - voice: {}, text: {:?}", get_current_guild_id(guild.id), actual_voice, text);
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
     connect_bot_by_voice_client(ctx, channel_id).await?;
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
@@ -322,13 +324,15 @@ async fn audio(
     ctx: Context<'_>,
     #[description = "Il file audio (mp3 or wav)"] audio: serenity::Attachment,
 ) -> Result<(), Error> {
-    ctx.defer_ephemeral().await?;
-
+    check_permissions(ctx).await?;
     let guild = ctx.guild().ok_or("Guild not found")?;
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
+    
+    ctx.defer_ephemeral().await?;
 
+    connect_bot_by_voice_client(ctx, channel_id).await?;
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
-    let handler_lock = manager.join(guild.id, channel_id).await?;
+    let handler_lock = manager.get(guild.id).unwrap();
     let mut handler = handler_lock.lock().await;
 
     let allowed_extensions = ["mp3", "wav", "ogg", "m4a"];
@@ -337,6 +341,8 @@ async fn audio(
         ctx.say(&ctx.data().lang.invalid_extension).await?;
         return Ok(());
     }
+
+    log::info!("[GUILDID : {}] audio - filename: {}", get_current_guild_id(guild.id), audio.filename);
 
     let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
     let file_path = format!("{}/{}", temp_dir, audio.filename);
@@ -443,6 +449,10 @@ async fn main() {
                         let _ = ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await;
                     } else {
                         log::error!("Error: {:?}", error);
+                        if let poise::FrameworkError::Command { ctx, error, .. } = error {
+                            log::error!("Command error: {}", error);
+                            let _ = ctx.send(poise::CreateReply::default().content("Discord API Error, per favore riprova piú tardi").ephemeral(true)).await;
+                        }
                     }
                 })
             },
