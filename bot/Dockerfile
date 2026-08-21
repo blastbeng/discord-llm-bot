@@ -7,9 +7,15 @@ RUN apt-get update && \
     ffmpeg
 
 WORKDIR /app
-COPY Cargo.toml Cargo.lock ./
-COPY src ./src
 
+# Copy only Cargo.toml first to cache dependencies
+COPY Cargo.toml ./
+RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN cargo build --release || true
+RUN rm -rf src
+
+# Copy the actual source code and build
+COPY src ./src
 RUN cargo build --release
 
 FROM debian:bookworm-slim
