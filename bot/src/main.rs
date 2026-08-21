@@ -87,7 +87,7 @@ async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::Cha
         // Bot is in a different channel, leave first
         handler.leave().await;
         drop(handler);
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     }
     
     let _handler_lock = manager.join(guild.id, channel_id).await?;
@@ -96,7 +96,7 @@ async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::Cha
 
 async fn voice_autocomplete(
     _ctx: Context<'_>,
-    current: str,
+    current: &str,
 ) -> Vec<poise::AutocompleteChoice<String>> {
     let voices = vec![
         "Google",
@@ -118,6 +118,7 @@ async fn voice_autocomplete(
 /// Join channel.
 #[poise::command(slash_command, cooldown = 5)]
 async fn join(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
     check_permissions(ctx).await?;
     let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?;
@@ -144,6 +145,7 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
 /// Leave channel
 #[poise::command(slash_command, cooldown = 5)]
 async fn leave(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
     check_permissions(ctx).await?;
     let guild_id = ctx.guild_id().unwrap();
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
@@ -159,6 +161,7 @@ async fn leave(ctx: Context<'_>) -> Result<(), Error> {
 /// Stop playback.
 #[poise::command(slash_command, cooldown = 5)]
 async fn stop(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
     check_permissions(ctx).await?;
     let guild_id = ctx.guild_id().unwrap();
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
@@ -203,8 +206,8 @@ async fn speak(
         return Ok(());
     }
 
-    check_permissions(ctx).await?;
     ctx.defer_ephemeral().await?;
+    check_permissions(ctx).await?;
 
     let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
     log::info!("[GUILDID : {}] speak - text: {}, voice: {}", get_current_guild_id(guild.id), text, actual_voice);
@@ -219,6 +222,10 @@ async fn speak(
         }
     };
     let mut handler = handler_lock.lock().await;
+    if handler.current_channel().is_none() {
+        ctx.say(&ctx.data().lang.initializing_connection).await?;
+        return Ok(());
+    }
     let queue_msg = get_queue_message(&ctx.data().lang).await;
     let initial_msg = format!(&ctx.data().lang.generating_audio, text, queue_msg);
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
@@ -303,8 +310,8 @@ async fn random(
         return Ok(());
     }
 
-    check_permissions(ctx).await?;
     ctx.defer_ephemeral().await?;
+    check_permissions(ctx).await?;
 
     let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
     log::info!("[GUILDID : {}] random - voice: {}, text: {:?}", get_current_guild_id(guild.id), actual_voice, text);
@@ -319,6 +326,10 @@ async fn random(
         }
     };
     let mut handler = handler_lock.lock().await;
+    if handler.current_channel().is_none() {
+        ctx.say(&ctx.data().lang.initializing_connection).await?;
+        return Ok(());
+    }
 
     let sentences = if let Some(t) = &text {
         if !t.trim().is_empty() {
@@ -402,8 +413,8 @@ async fn audio(
     ctx: Context<'_>,
     #[description = "Il file audio (mp3 or wav)"] audio: serenity::Attachment,
 ) -> Result<(), Error> {
-    check_permissions(ctx).await?;
     ctx.defer_ephemeral().await?;
+    check_permissions(ctx).await?;
 
     let allowed_extensions = ["mp3", "wav", "ogg", "m4a"];
     let ext = audio.filename.split('.').last().unwrap_or("").to_lowercase();
@@ -425,6 +436,10 @@ async fn audio(
         }
     };
     let mut handler = handler_lock.lock().await;
+    if handler.current_channel().is_none() {
+        ctx.say(&ctx.data().lang.initializing_connection).await?;
+        return Ok(());
+    }
 
     log::info!("[GUILDID : {}] audio - filename: {}", get_current_guild_id(guild.id), audio.filename);
 
@@ -453,6 +468,7 @@ async fn audio(
 /// Restart bot.
 #[poise::command(slash_command, cooldown = 5)]
 async fn restart(ctx: Context<'_>) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
     let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
     let guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
     if ctx.guild_id().unwrap().to_string() != guild_id || ctx.author().id.to_string() != admin_id {
@@ -474,6 +490,7 @@ async fn rename(
     ctx: Context<'_>,
     #[description = "Nuovo nickname del bot (limite di 32 caratteri)"] name: String,
 ) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
     if name.chars().count() > 32 {
         ctx.say(&ctx.data().lang.nickname_too_long).await?;
         return Ok(());
@@ -490,6 +507,7 @@ async fn avatar(
     ctx: Context<'_>,
     #[description = "Nuovo avatar del bot"] image: serenity::Attachment,
 ) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
     let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
     let guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
     if ctx.guild_id().unwrap().to_string() != guild_id || ctx.author().id.to_string() != admin_id {
@@ -539,7 +557,7 @@ async fn main() {
                     if let poise::FrameworkError::CooldownHit { remaining_cooldown, ctx, .. } = error {
                         let spam_msgs = &ctx.data().lang.spam_messages;
                         let random_msg = spam_msgs.choose(&mut rand::thread_rng()).unwrap();
-                        let msg = format!("{}\nCooldown: {}s", format!(random_msg, ctx.author().id), remaining_cooldown.as_secs());
+                        let msg = format!("{}\nCooldown: {:.2}s", format!(random_msg, ctx.author().id), remaining_cooldown.as_secs_f32());
                         let _ = ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await;
                     } else {
                         log::error!("Error: {:?}", error);
@@ -595,10 +613,34 @@ async fn main() {
                                         return Ok(());
                                     }
                                     let manager = songbird::get(ctx).await.unwrap();
-                                    if let Some(handler) = manager.get(guild_id) {
-                                        let mut handler = handler.lock().await;
-                                        let source = songbird::input::File::new(file_path);
-                                        handler.play_only(source.into());
+                                    if let Some(handler_lock) = manager.get(guild_id) {
+                                        let mut handler = handler_lock.lock().await;
+                                        // Check if bot is still connected
+                                        if handler.current_channel().is_none() {
+                                            // Bot disconnected, try to rejoin user's channel
+                                            if let Some(user_channel) = ctx.cache().guild(guild_id)
+                                                .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id)) {
+                                                drop(handler);
+                                                let _ = manager.join(guild_id, user_channel).await;
+                                                let handler_lock = manager.get(guild_id).unwrap();
+                                                let mut handler = handler_lock.lock().await;
+                                                let source = songbird::input::File::new(file_path);
+                                                handler.play_only(source.into());
+                                            }
+                                        } else {
+                                            let source = songbird::input::File::new(file_path);
+                                            handler.play_only(source.into());
+                                        }
+                                    } else {
+                                        // Bot not in manager, try to join and play
+                                        if let Some(user_channel) = ctx.cache().guild(guild_id)
+                                            .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id)) {
+                                            if let Ok(handler_lock) = manager.join(guild_id, user_channel).await {
+                                                let mut handler = handler_lock.lock().await;
+                                                let source = songbird::input::File::new(file_path);
+                                                handler.play_only(source.into());
+                                            }
+                                        }
                                     }
                                 }
                                 component.create_response(ctx, serenity::CreateInteractionResponse::Message(
