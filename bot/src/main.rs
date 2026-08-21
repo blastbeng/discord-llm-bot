@@ -63,7 +63,7 @@ async fn get_queue_message(lang: &lang::Lang) -> String {
     let used_memory = sys.used_memory();
     let ram_usage = (used_memory as f64 / total_memory as f64) * 100.0;
     log::debug!("get_queue_message: CPU {:.1}%, RAM {:.2}%", cpu_usage, ram_usage);
-    format!(&lang.queue_overload, cpu_usage, ram_usage)
+    lang.queue_overload.replacen("{}", &cpu_usage.to_string(), 1).replacen("{}", &ram_usage.to_string(), 1)
 }
 
 async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
@@ -131,7 +131,7 @@ async fn voice_autocomplete(
 }
 
 /// Join channel.
-#[poise::command(slash_command, cooldown = 5)]
+#[poise::command(slash_command, user_cooldown = 5)]
 async fn join(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     log::info!("[GUILDID : {}] join command invoked by user {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id);
@@ -159,7 +159,7 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// Leave channel
-#[poise::command(slash_command, cooldown = 5)]
+#[poise::command(slash_command, user_cooldown = 5)]
 async fn leave(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     log::info!("[GUILDID : {}] leave command invoked by user {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id);
@@ -176,7 +176,7 @@ async fn leave(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// Stop playback.
-#[poise::command(slash_command, cooldown = 5)]
+#[poise::command(slash_command, user_cooldown = 5)]
 async fn stop(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     log::info!("[GUILDID : {}] stop command invoked by user {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id);
@@ -194,7 +194,7 @@ async fn stop(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// Repeat a sentence
-#[poise::command(slash_command, cooldown = 5)]
+#[poise::command(slash_command, user_cooldown = 5)]
 async fn speak(
     ctx: Context<'_>,
     #[description = "La frase da ripetere"] text: String,
@@ -248,7 +248,7 @@ async fn speak(
         }
     }
     let queue_msg = get_queue_message(&ctx.data().lang).await;
-    let initial_msg = format!(&ctx.data().lang.generating_audio, text, queue_msg);
+    let initial_msg = ctx.data().lang.generating_audio.replacen("{}", &text, 1).replacen("{}", &queue_msg, 1);
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
     let message_id = reply.message().await?.id;
 
@@ -302,7 +302,7 @@ async fn speak(
         ctx.channel_id(),
         message_id,
         serenity::EditMessage::new()
-            .content(format!(&ctx.data().lang.playing, text, &tts_result.actual_voice) + warning)
+            .content(ctx.data().lang.playing.replacen("{}", &text, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
             .components(components)
     ).await?;
 
@@ -310,7 +310,7 @@ async fn speak(
 }
 
 /// Say a random sentence
-#[poise::command(slash_command, cooldown = 5)]
+#[poise::command(slash_command, user_cooldown = 5)]
 async fn random(
     ctx: Context<'_>,
     #[description = "La voce da usare"]
@@ -377,7 +377,7 @@ async fn random(
     if sentences.is_empty() {
         let msg = if let Some(t) = &text {
             if !t.trim().is_empty() {
-                format!(&ctx.data().lang.no_sentence_with_text, t)
+                ctx.data().lang.no_sentence_with_text.replacen("{}", t, 1)
             } else {
                 ctx.data().lang.no_sentence.clone()
             }
@@ -392,7 +392,7 @@ async fn random(
     let random_sentence = sentences.choose(&mut rng).unwrap().to_string();
 
     let queue_msg = get_queue_message(&ctx.data().lang).await;
-    let initial_msg = format!(&ctx.data().lang.searching_random, queue_msg);
+    let initial_msg = ctx.data().lang.searching_random.replacen("{}", &queue_msg, 1);
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
     let message_id = reply.message().await?.id;
 
@@ -442,7 +442,7 @@ async fn random(
         ctx.channel_id(),
         message_id,
         serenity::EditMessage::new()
-            .content(format!(&ctx.data().lang.playing, random_sentence, &tts_result.actual_voice) + warning)
+            .content(ctx.data().lang.playing.replacen("{}", &random_sentence, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
             .components(components)
     ).await?;
 
@@ -450,7 +450,7 @@ async fn random(
 }
 
 /// Audio playback from the input audio
-#[poise::command(slash_command, cooldown = 5)]
+#[poise::command(slash_command, user_cooldown = 5)]
 async fn audio(
     ctx: Context<'_>,
     #[description = "Il file audio (mp3 or wav)"] audio: serenity::Attachment,
@@ -520,7 +520,7 @@ async fn audio(
 }
 
 /// Restart bot.
-#[poise::command(slash_command, cooldown = 5)]
+#[poise::command(slash_command, user_cooldown = 5)]
 async fn restart(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     log::info!("[GUILDID : {}] restart command invoked by user {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id);
@@ -540,7 +540,7 @@ async fn restart(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// Rename bot.
-#[poise::command(slash_command, cooldown = 5)]
+#[poise::command(slash_command, user_cooldown = 5)]
 async fn rename(
     ctx: Context<'_>,
     #[description = "Nuovo nickname del bot (limite di 32 caratteri)"] name: String,
@@ -553,12 +553,12 @@ async fn rename(
     }
     let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
     guild.edit_nickname(ctx.http(), Some(&name), None).await?;
-    ctx.say(format!(&ctx.data().lang.nickname_changed, name)).await?;
+    ctx.say(ctx.data().lang.nickname_changed.replacen("{}", &name, 1)).await?;
     Ok(())
 }
 
 /// Change bot avatar.
-#[poise::command(slash_command, cooldown = 5)]
+#[poise::command(slash_command, user_cooldown = 5)]
 async fn avatar(
     ctx: Context<'_>,
     #[description = "Nuovo avatar del bot"] image: serenity::Attachment,
