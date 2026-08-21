@@ -1,4 +1,5 @@
 mod database;
+mod generator;
 mod tts;
 use poise::serenity_prelude as serenity;
 use std::env;
@@ -31,6 +32,11 @@ async fn main() {
     let db_url = "sqlite:config/discord-bot.sqlite3";
     let db_pool = sqlx::SqlitePool::connect(db_url).await.expect("Failed to connect to DB");
     database::init_db(&db_pool).await.expect("Failed to initialize database");
+
+    let pool_clone = db_pool.clone();
+    tokio::spawn(async move {
+        generator::run_background_generator(pool_clone).await;
+    });
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {

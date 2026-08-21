@@ -48,7 +48,75 @@ pub async fn get_tts_google(text: &str) -> Result<Vec<u8>, Box<dyn std::error::E
     Ok(bytes)
 }
 
+#[derive(serde::Deserialize)]
+struct FakeYouJobResponse {
+    success: bool,
+    job_token: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct FakeYouStatusResponse {
+    success: bool,
+    status: Option<serde_json::Value>,
+    media_url: Option<String>,
+}
+
 pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    // FakeYou API integration will be implemented in the next step
-    Err("FakeYou not implemented yet".into())
+    let voice_token = match voice {
+        "Papa Francesco (FakeYou.com)" => "weight_gc8gsr41974q5ax35gvttr85v",
+        "Silvio Berlusconi (FakeYou.com)" => "weight_324nvat7xvaawe146na154gwh",
+        "Goku (FakeYou.com)" => "weight_wn689844yyr08jny6jyyvkwcp",
+        "Gerry Scotti (FakeYou.com)" => "weight_ms1kzt5m09cfw1yn666cxhy88",
+        "Peter Griffin (FakeYou.com)" => "weight_t0y9rpba3qjnq02da44ynfs45",
+        "Homer Simpson (FakeYou.com)" => "weight_zw97bw3hbtm07qwkd2exna15b",
+        _ => return Err("Invalid voice".into()),
+    };
+
+    let client = reqwest::Client::new();
+    let body = serde_json::json!({
+        "tts_model_token": voice_token,
+        "inference_text": text
+    });
+
+    let resp = client.post("https://api.fakeyou.com/tts")
+        .json(&body)
+        .send()
+        .await?
+        .json::<FakeYouJobResponse>()
+        .await?;
+
+    if !resp.success {
+        return Err("FakeYou API failed to start job".into());
+    }
+
+    let job_token = resp.job_token.ok_or("No job token received")?;
+
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        let status_resp = client.get(format!("https://api.fakeyou.com/tts/job/{}", job_token))
+            .send()
+            .await?
+            .json::<FakeYouStatusResponse>()
+            .await?;
+
+        if !status_resp.success {
+            return Err("FakeYou API job status failed".into());
+        }
+
+        if let Some(status) = status_resp.status {
+            if let Some(status_str) = status.get("status").and_then(|s| s.as_str()) {
+                if status_str == "completed" {
+                    if let Some(media_url) = status_resp.media_url {
+                        let media_resp = client.get(&media_url).send().await?;
+                        let bytes = media_resp.bytes().await?.to_vec();
+                        return Ok(bytes);
+                    } else {
+                        return Err("No media url received".into());
+                    }
+                } else if status_str == "failed" {
+                    return Err("FakeYou job failed".into());
+                }
+            }
+        }
+    }
 }
