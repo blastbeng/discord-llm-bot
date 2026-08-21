@@ -51,22 +51,6 @@ def compute_md5_hash(my_string):
     m.update(my_string.encode('utf-8'))
     return m.hexdigest()
 
-def get_anythingllm_online_status():
-    try:
-        r = requests.get(os.environ.get("ANYTHING_LLM_ENDPOINT"), timeout=1)
-        if (r.status_code == 200):
-            return True
-        else:
-            return False
-    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
-        logging.info("AnythingLLM Host Offline.")
-        return False
-    except requests.exceptions.HTTPError:
-        logging.info("AnythingLLM Host Error 4xx or 5xx.")
-        return False
-    else:
-        return True
-
 class FakeYouCustom(asynchronous_fakeyou.AsyncFakeYou):
     
     async def get_session(self) -> aiohttp.ClientSession:
@@ -655,23 +639,6 @@ async def audio(interaction: discord.Interaction, audio: discord.Attachment):
         
     except Exception as e:
         await send_error(e, interaction)
-
-async def ask_bot_background(text: str):
-    data = {
-              "message": text.rstrip(),
-              "mode": "chat"
-    }
-    headers = {
-        'Authorization': 'Bearer ' + os.environ.get("ANYTHING_LLM_API_KEY")
-    }
-    connector = aiohttp.TCPConnector(force_close=True)
-    anything_llm_url = os.environ.get("ANYTHING_LLM_ENDPOINT") + "/api/v1/workspace/" + os.environ.get("ANYTHING_LLM_WORKSPACE") + "/chat"
-    session_timeout = aiohttp.ClientTimeout(total=None,sock_connect=900,sock_read=900)
-
-    async with aiohttp.ClientSession(connector=connector, timeout=session_timeout) as anything_llm_session:
-        async with anything_llm_session.post(anything_llm_url, headers=headers, json=data, timeout=900) as anything_llm_response:
-            time.sleep(5)
-        await anything_llm_session.close()
 
 @client.tree.command()
 @app_commands.rename(voice='voice')
