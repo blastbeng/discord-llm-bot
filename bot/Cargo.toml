@@ -20,3 +20,4 @@ songbird = { version = "0.4", features = ["builtin-queue"] }
 chrono = "0.4"
 regex = "1.10"
 urlencoding = "2.1"
+rand = "0.8"

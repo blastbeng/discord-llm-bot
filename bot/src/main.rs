@@ -12,10 +12,48 @@ pub struct Data {
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Context<'a> = poise::Context<'a, Data, Error>;
 
-/// Ping command to test the bot
+/// Join channel.
 #[poise::command(slash_command)]
-async fn ping(ctx: Context<'_>) -> Result<(), Error> {
-    ctx.say("Pong!").await?;
+async fn join(ctx: Context<'_>) -> Result<(), Error> {
+    let guild = ctx.guild().ok_or("Guild not found")?;
+    let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
+    
+    let manager = songbird::get(ctx.serenity_context()).await.unwrap();
+    let handler = manager.join(guild.id, channel_id).await;
+    if handler.is_ok() {
+        ctx.say("Sto entrando nel canale").await?;
+    } else {
+        ctx.say("Errore nell'entrare nel canale").await?;
+    }
+    Ok(())
+}
+
+/// Leave channel
+#[poise::command(slash_command)]
+async fn leave(ctx: Context<'_>) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().unwrap();
+    let manager = songbird::get(ctx.serenity_context()).await.unwrap();
+    if manager.get(guild_id).is_some() {
+        manager.remove(guild_id).await;
+        ctx.say("Sto lasciando il canale").await?;
+    } else {
+        ctx.say("Non sono connesso a nessun canale").await?;
+    }
+    Ok(())
+}
+
+/// Stop playback.
+#[poise::command(slash_command)]
+async fn stop(ctx: Context<'_>) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().unwrap();
+    let manager = songbird::get(ctx.serenity_context()).await.unwrap();
+    if let Some(handler) = manager.get(guild_id) {
+        let handler = handler.lock().await;
+        handler.stop();
+        ctx.say("Interrompo il bot").await?;
+    } else {
+        ctx.say("Non sono connesso a nessun canale").await?;
+    }
     Ok(())
 }
 
@@ -40,7 +78,7 @@ async fn main() {
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![ping()],
+            commands: vec![join(), leave(), stop()],
             ..Default::default()
         })
         .setup(move |ctx, _ready, framework| {
@@ -56,6 +94,7 @@ async fn main() {
     
     let mut client = serenity::ClientBuilder::new(token, intents)
         .framework(framework)
+        .register_songbird()
         .await
         .expect("Error creating client");
 
