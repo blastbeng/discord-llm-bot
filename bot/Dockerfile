@@ -1,4 +1,4 @@
-FROM rust:1.78-slim as builder
+FROM rust:1.78-slim AS builder
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
