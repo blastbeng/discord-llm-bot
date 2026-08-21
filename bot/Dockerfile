@@ -6,6 +6,8 @@ RUN apt-get update && \
     pkg-config \
     libssl-dev \
     cmake \
+    make \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
