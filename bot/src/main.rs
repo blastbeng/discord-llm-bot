@@ -166,6 +166,12 @@ async fn speak(
     let handler_lock = manager.get(guild.id).unwrap();
     let mut handler = handler_lock.lock().await;
 
+    ctx.defer_ephemeral().await?;
+    let queue_msg = get_queue_message().await;
+    let initial_msg = format!("Inizio a generare l'audio per la frase: **{}**{}", text, queue_msg);
+    let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
+    let message_id = reply.message().await?.id;
+
     let file_path = match tts::get_or_generate_tts(&text, &actual_voice).await {
         Ok(path) => path,
         Err(e) => {
@@ -182,18 +188,23 @@ async fn speak(
 
     let components = vec![
         serenity::CreateActionRow::Buttons(vec![
+            serenity::CreateButton::new(format!("play:{}:{}", text, actual_voice))
+                .label("Play")
+                .style(serenity::ButtonStyle::Success),
             serenity::CreateButton::new("stop")
                 .label("Stop")
                 .style(serenity::ButtonStyle::Danger)
         ])
     ];
 
-    ctx.send(
-        poise::CreateReply::default()
+    ctx.http().edit_message(
+        ctx.channel_id(),
+        message_id,
+        serenity::EditMessage::new()
             .content(format!(&ctx.data().lang.playing, text, actual_voice))
             .components(components)
-            .ephemeral(true)
     ).await?;
+
     Ok(())
 }
 
@@ -247,9 +258,15 @@ async fn random(
     }
 
     let mut rng = rand::thread_rng();
-    let random_sentence = sentences.choose(&mut rng).unwrap();
+    let random_sentence = sentences.choose(&mut rng).unwrap().to_string();
 
-    let file_path = match tts::get_or_generate_tts(random_sentence, &actual_voice).await {
+    ctx.defer_ephemeral().await?;
+    let queue_msg = get_queue_message().await;
+    let initial_msg = format!("Sto cercando una frase casuale{}", queue_msg);
+    let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
+    let message_id = reply.message().await?.id;
+
+    let file_path = match tts::get_or_generate_tts(&random_sentence, &actual_voice).await {
         Ok(path) => path,
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
@@ -263,18 +280,23 @@ async fn random(
 
     let components = vec![
         serenity::CreateActionRow::Buttons(vec![
+            serenity::CreateButton::new(format!("play:{}:{}", random_sentence, actual_voice))
+                .label("Play")
+                .style(serenity::ButtonStyle::Success),
             serenity::CreateButton::new("stop")
                 .label("Stop")
                 .style(serenity::ButtonStyle::Danger)
         ])
     ];
 
-    ctx.send(
-        poise::CreateReply::default()
+    ctx.http().edit_message(
+        ctx.channel_id(),
+        message_id,
+        serenity::EditMessage::new()
             .content(format!(&ctx.data().lang.playing, random_sentence, actual_voice))
             .components(components)
-            .ephemeral(true)
     ).await?;
+
     Ok(())
 }
 
@@ -422,6 +444,24 @@ async fn main() {
                                 component.create_response(ctx, serenity::CreateInteractionResponse::Message(
                                     serenity::CreateInteractionResponseMessage::new().content(&data.lang.stop_success).ephemeral(true)
                                 )).await?;
+                            } else if component.data.custom_id.starts_with("play:") {
+                                let parts: Vec<&str> = component.data.custom_id.splitn(3, ':').collect();
+                                if parts.len() == 3 {
+                                    let text = parts[1];
+                                    let voice = parts[2];
+                                    if let Some(guild_id) = component.guild_id {
+                                        let manager = songbird::get(ctx).await.unwrap();
+                                        if let Some(handler) = manager.get(guild_id) {
+                                            let mut handler = handler.lock().await;
+                                            let file_path = tts::get_or_generate_tts(text, voice).await?;
+                                            let source = songbird::input::File::new(&file_path);
+                                            handler.play_only(source.into());
+                                        }
+                                    }
+                                    component.create_response(ctx, serenity::CreateInteractionResponse::Message(
+                                        serenity::CreateInteractionResponseMessage::new().content(format!(&data.lang.playing, text, voice)).ephemeral(true)
+                                    )).await?;
+                                }
                             }
                         }
                     }
