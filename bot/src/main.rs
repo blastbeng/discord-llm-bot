@@ -6,7 +6,7 @@ use poise::serenity_prelude as serenity;
 use base64::{engine::general_purpose, Engine as _};
 use rand::seq::SliceRandom;
 use std::env;
-use sysinfo::{System, SystemExt, CpuExt};
+use sysinfo::System;
 
 // Data stored in the bot's context
 pub struct Data {
@@ -581,7 +581,7 @@ async fn avatar(
     let b64 = general_purpose::STANDARD.encode(&bytes);
     let data_url = format!("data:{};base64,{}", image.content_type.as_deref().unwrap_or("image/png"), b64);
 
-    ctx.http().edit_user(serenity::EditUser::new().avatar(&data_url)).await?;
+    ctx.http().edit_user(serenity::builder::EditUser::new().avatar(&data_url)).await?;
     ctx.say(&ctx.data().lang.avatar_changed).await?;
     Ok(())
 }
