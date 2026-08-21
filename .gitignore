@@ -187,3 +187,4 @@ waha_sessions/*
 waha_media
 waha_media/
 waha_media/*
+.aider*
