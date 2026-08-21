@@ -1,5 +1,6 @@
 mod database;
 mod generator;
+mod lang;
 mod tts;
 use poise::serenity_prelude as serenity;
 use base64::{engine::general_purpose, Engine as _};
@@ -9,6 +10,7 @@ use std::env;
 // Data stored in the bot's context
 pub struct Data {
     pub db_pool: sqlx::SqlitePool,
+    pub lang: lang::Lang,
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -64,9 +66,9 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
     let handler = manager.join(guild.id, channel_id).await;
     if handler.is_ok() {
-        ctx.say("Sto entrando nel canale").await?;
+        ctx.say(&ctx.data().lang.join_success).await?;
     } else {
-        ctx.say("Errore nell'entrare nel canale").await?;
+        ctx.say(&ctx.data().lang.join_error).await?;
     }
     Ok(())
 }
@@ -78,9 +80,9 @@ async fn leave(ctx: Context<'_>) -> Result<(), Error> {
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
     if manager.get(guild_id).is_some() {
         manager.remove(guild_id).await;
-        ctx.say("Sto lasciando il canale").await?;
+        ctx.say(&ctx.data().lang.leave_success).await?;
     } else {
-        ctx.say("Non sono connesso a nessun canale").await?;
+        ctx.say(&ctx.data().lang.not_connected).await?;
     }
     Ok(())
 }
@@ -93,9 +95,9 @@ async fn stop(ctx: Context<'_>) -> Result<(), Error> {
     if let Some(handler) = manager.get(guild_id) {
         let handler = handler.lock().await;
         handler.stop();
-        ctx.say("Interrompo il bot").await?;
+        ctx.say(&ctx.data().lang.stop_success).await?;
     } else {
-        ctx.say("Non sono connesso a nessun canale").await?;
+        ctx.say(&ctx.data().lang.not_connected).await?;
     }
     Ok(())
 }
@@ -139,7 +141,7 @@ async fn speak(
         Ok(path) => path,
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
-            ctx.say("Errore nella generazione dell'audio, riprovare fra qualche istante.").await?;
+            ctx.say(&ctx.data().lang.tts_error).await?;
             return Ok(());
         }
     };
@@ -159,7 +161,7 @@ async fn speak(
 
     ctx.send(
         poise::CreateReply::default()
-            .content(format!("Sto riproducendo: **{}** con voce: {}", text, actual_voice))
+            .content(format!(&ctx.data().lang.playing, text, actual_voice))
             .components(components)
             .ephemeral(true)
     ).await?;
@@ -212,7 +214,7 @@ async fn random(
     };
 
     if sentences.is_empty() {
-        ctx.say("Nessuna frase trovata").await?;
+        ctx.say(&ctx.data().lang.no_sentence).await?;
         return Ok(());
     }
 
@@ -223,7 +225,7 @@ async fn random(
         Ok(path) => path,
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
-            ctx.say("Errore nella generazione dell'audio, riprovare fra qualche istante.").await?;
+            ctx.say(&ctx.data().lang.tts_error).await?;
             return Ok(());
         }
     };
@@ -241,7 +243,7 @@ async fn random(
 
     ctx.send(
         poise::CreateReply::default()
-            .content(format!("Sto riproducendo: **{}** con voce: {}", random_sentence, actual_voice))
+            .content(format!(&ctx.data().lang.playing, random_sentence, actual_voice))
             .components(components)
             .ephemeral(true)
     ).await?;
@@ -266,7 +268,7 @@ async fn audio(
     let allowed_extensions = ["mp3", "wav", "ogg", "m4a"];
     let ext = audio.filename.split('.').last().unwrap_or("").to_lowercase();
     if !allowed_extensions.contains(&ext.as_str()) {
-        ctx.say("The file extension is not valid.").await?;
+        ctx.say(&ctx.data().lang.invalid_extension).await?;
         return Ok(());
     }
 
@@ -280,7 +282,7 @@ async fn audio(
     let source = songbird::input::File::new(&file_path);
     handler.play_only(source.into());
 
-    ctx.send(poise::CreateReply::default().content("Done! I'm starting the audio playback!").ephemeral(true)).await?;
+    ctx.send(poise::CreateReply::default().content(&ctx.data().lang.audio_playback).ephemeral(true)).await?;
     Ok(())
 }
 
@@ -290,15 +292,15 @@ async fn restart(ctx: Context<'_>) -> Result<(), Error> {
     let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
     let guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
     if ctx.guild_id().unwrap().to_string() != guild_id || ctx.author().id.to_string() != admin_id {
-        ctx.say("Solo gli amministratori possono utilizzare questo comando nel server padre").await?;
+        ctx.say(&ctx.data().lang.admin_parent_server).await?;
         return Ok(());
     }
     let member = ctx.guild().unwrap().member(ctx.http(), ctx.author().id).await?;
     if !member.permissions(ctx.http()).await?.administrator() {
-        ctx.say("Solo gli amministratori possono utilizzare questo comando").await?;
+        ctx.say(&ctx.data().lang.admin_only).await?;
         return Ok(());
     }
-    ctx.say("Sto riavviando il bot.").await?;
+    ctx.say(&ctx.data().lang.restarting).await?;
     std::process::exit(0);
 }
 
@@ -309,12 +311,12 @@ async fn rename(
     #[description = "Nuovo nickname del bot (limite di 32 caratteri)"] name: String,
 ) -> Result<(), Error> {
     if name.len() > 32 {
-        ctx.say("Il mio nickname non puó essere piú lungo di 32 caratteri").await?;
+        ctx.say(&ctx.data().lang.nickname_too_long).await?;
         return Ok(());
     }
     let guild = ctx.guild().ok_or("Guild not found")?;
     guild.edit_nickname(ctx.http(), Some(&name), None).await?;
-    ctx.say(format!("Mi hai rinominato in \"{}\"", name)).await?;
+    ctx.say(format!(&ctx.data().lang.nickname_changed, name)).await?;
     Ok(())
 }
 
@@ -327,12 +329,12 @@ async fn avatar(
     let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
     let guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
     if ctx.guild_id().unwrap().to_string() != guild_id || ctx.author().id.to_string() != admin_id {
-        ctx.say("Solo gli amministratori possono utilizzare questo comando nel server padre").await?;
+        ctx.say(&ctx.data().lang.admin_parent_server).await?;
         return Ok(());
     }
 
     if !image.content_type.as_deref().map_or(false, |ct| ct.starts_with("image/")) {
-        ctx.say("Questo tipo di file non é supportato").await?;
+        ctx.say(&ctx.data().lang.unsupported_file).await?;
         return Ok(());
     }
 
@@ -341,7 +343,7 @@ async fn avatar(
     let data_url = format!("data:image/png;base64,{}", b64);
 
     ctx.http().edit_user(serenity::EditUser::new().avatar(&data_url)).await?;
-    ctx.say("L'immagine é stata modificata").await?;
+    ctx.say(&ctx.data().lang.avatar_changed).await?;
     Ok(())
 }
 
@@ -370,14 +372,14 @@ async fn main() {
             on_error: |error| {
                 Box::pin(async move {
                     if let poise::FrameworkError::CooldownHit { remaining_cooldown, ctx, .. } = error {
-                        let msg = format!("Spam detected. <@{}> Ti sto guardando.\nCooldown: {}s", ctx.author().id, remaining_cooldown.as_secs());
+                        let msg = format!(&ctx.data().lang.spam_detected, ctx.author().id, remaining_cooldown.as_secs());
                         let _ = ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await;
                     } else {
                         log::error!("Error: {:?}", error);
                     }
                 })
             },
-            event_handler: |ctx, event, _framework, _data| {
+            event_handler: |ctx, event, _framework, data| {
                 Box::pin(async move {
                     if let serenity::FullEvent::InteractionCreate { interaction } = event {
                         if let serenity::Interaction::Component(component) = interaction {
@@ -390,7 +392,7 @@ async fn main() {
                                     }
                                 }
                                 component.create_response(ctx, serenity::CreateInteractionResponse::Message(
-                                    serenity::CreateInteractionResponseMessage::new().content("Interrompo il bot").ephemeral(true)
+                                    serenity::CreateInteractionResponseMessage::new().content(&data.lang.stop_success).ephemeral(true)
                                 )).await?;
                             }
                         }
@@ -408,7 +410,8 @@ async fn main() {
                 tokio::spawn(async move {
                     change_presence_loop(ctx_clone).await;
                 });
-                Ok(Data { db_pool })
+                let lang = lang::Lang::new();
+                Ok(Data { db_pool, lang })
             })
         })
         .build();
