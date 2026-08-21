@@ -14,6 +14,7 @@ pub async fn run_background_generator(pool: SqlitePool) {
         "Silvio Berlusconi (FakeYou.com)",
     ];
 
+    log::info!("Background generator started");
     loop {
         let mut generated_count = 0;
         let mut fakeyou_count = 0;

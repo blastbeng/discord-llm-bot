@@ -23,16 +23,23 @@ async fn change_presence_loop(ctx: serenity::Context) {
         interval.tick().await;
         let url = "https://steamspy.com/api.php?request=top100in2weeks";
         let client = reqwest::Client::new();
-        if let Ok(resp) = client.get(url).send().await {
-            if let Ok(json) = resp.json::<serde_json::Value>().await {
-                if let Some(obj) = json.as_object() {
-                    let games: Vec<String> = obj.values().filter_map(|v| v["name"].as_str().map(|s| s.to_string())).collect();
-                    if let Some(game) = games.choose(&mut rand::thread_rng()) {
-                        let activity = serenity::Activity::playing(game);
-                        ctx.set_activity(Some(activity));
+        match client.get(url).send().await {
+            Ok(resp) => {
+                match resp.json::<serde_json::Value>().await {
+                    Ok(json) => {
+                        if let Some(obj) = json.as_object() {
+                            let games: Vec<String> = obj.values().filter_map(|v| v["name"].as_str().map(|s| s.to_string())).collect();
+                            if let Some(game) = games.choose(&mut rand::thread_rng()) {
+                                log::info!("change_presence_loop - setting game: {}", game);
+                                let activity = serenity::Activity::playing(game);
+                                ctx.set_activity(Some(activity));
+                            }
+                        }
                     }
+                    Err(e) => log::error!("change_presence_loop - failed to parse JSON: {}", e),
                 }
             }
+            Err(e) => log::error!("change_presence_loop - failed to fetch from steamspy: {}", e),
         }
     }
 }
@@ -130,7 +137,7 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
         let handler = handler_lock.lock().await;
         handler.leave().await;
         drop(handler);
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     }
     
     let handler = manager.join(guild.id, channel_id).await;
@@ -444,7 +451,11 @@ async fn audio(
     log::info!("[GUILDID : {}] audio - filename: {}", get_current_guild_id(guild.id), audio.filename);
 
     let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
-    let file_path = format!("{}/{}", temp_dir, audio.filename);
+    let safe_filename = std::path::Path::new(&audio.filename)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("audio.mp3");
+    let file_path = format!("{}/{}", temp_dir, safe_filename);
     
     // Download the attachment
     let bytes = reqwest::get(&audio.url).await?.bytes().await?.to_vec();
@@ -532,7 +543,7 @@ async fn avatar(
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().ok();
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().filter_or("LOG_LEVEL", "info")).init();
 
     let token = env::var("BOT_TOKEN").expect("BOT_TOKEN must be set");
     let guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set")
@@ -590,6 +601,22 @@ async fn main() {
                                             serenity::CreateInteractionResponseMessage::new().content(&data.lang.must_be_in_voice).ephemeral(true)
                                         )).await?;
                                         return Ok(());
+                                    }
+                                    // Check bot permissions in the user's channel
+                                    if let Some(user_channel) = ctx.cache().guild(guild_id)
+                                        .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id)) {
+                                        if let Some(channel) = user_channel.to_channel_cached(ctx.cache()) {
+                                            if let serenity::Channel::Guild(guild_channel) = channel {
+                                                if let Ok(perms) = guild_channel.permissions_for_user(ctx.cache(), ctx.cache().current_user_id()) {
+                                                    if !perms.speak() || !perms.connect() {
+                                                        component.create_response(ctx, serenity::CreateInteractionResponse::Message(
+                                                            serenity::CreateInteractionResponseMessage::new().content(&data.lang.no_speak_permission).ephemeral(true)
+                                                        )).await?;
+                                                        return Ok(());
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                     let manager = songbird::get(ctx).await.unwrap();
                                     if let Some(handler) = manager.get(guild_id) {
