@@ -34,6 +34,7 @@ pub async fn compress_and_save_mp3(input_bytes: Vec<u8>, file_path: &str) -> std
         stdin.write_all(&input_bytes).await?;
     }
     child.wait().await?;
+    log::debug!("compress_and_save_mp3: completed for {}", file_path);
     Ok(())
 }
 

@@ -16,6 +16,7 @@ pub async fn init_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 }
 
 pub async fn insert_sentence(pool: &SqlitePool, sentence: &str) -> Result<(), sqlx::Error> {
+    log::debug!("insert_sentence: inserting '{}'", sentence);
     sqlx::query("INSERT OR IGNORE INTO sentences (sentence) VALUES (?)")
         .bind(sentence)
         .execute(pool)

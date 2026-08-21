@@ -179,6 +179,7 @@ async fn leave(ctx: Context<'_>) -> Result<(), Error> {
 #[poise::command(slash_command, cooldown = 5)]
 async fn stop(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
+    log::info!("[GUILDID : {}] stop command invoked by user {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id);
     check_permissions(ctx).await?;
     let guild_id = ctx.guild_id().unwrap();
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
@@ -455,6 +456,7 @@ async fn audio(
     #[description = "Il file audio (mp3 or wav)"] audio: serenity::Attachment,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
+    log::info!("[GUILDID : {}] audio command invoked by user {} with filename: {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id, audio.filename);
     check_permissions(ctx).await?;
 
     let allowed_extensions = ["mp3", "wav", "ogg", "m4a"];
@@ -544,6 +546,7 @@ async fn rename(
     #[description = "Nuovo nickname del bot (limite di 32 caratteri)"] name: String,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
+    log::info!("[GUILDID : {}] rename command invoked by user {} with name: {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id, name);
     if name.chars().count() > 32 {
         ctx.say(&ctx.data().lang.nickname_too_long).await?;
         return Ok(());
@@ -561,6 +564,7 @@ async fn avatar(
     #[description = "Nuovo avatar del bot"] image: serenity::Attachment,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
+    log::info!("[GUILDID : {}] avatar command invoked by user {} with image: {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id, image.filename);
     let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
     let guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
     if ctx.guild_id().unwrap().to_string() != guild_id || ctx.author().id.to_string() != admin_id {
