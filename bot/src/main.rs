@@ -74,6 +74,22 @@ async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
 async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::ChannelId) -> Result<(), Error> {
     let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
+    
+    // If bot is already in a channel, check if the user is there too
+    if let Some(handler_lock) = manager.get(guild.id) {
+        let handler = handler_lock.lock().await;
+        if let Some(current_channel) = handler.current_channel() {
+            if current_channel.0 == channel_id.get() {
+                // Already in the right channel, no need to reconnect
+                return Ok(());
+            }
+        }
+        // Bot is in a different channel, leave first
+        handler.leave().await;
+        drop(handler);
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    
     let _handler_lock = manager.join(guild.id, channel_id).await?;
     Ok(())
 }
@@ -107,6 +123,15 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?;
     
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
+    
+    // Disconnect existing connection first (matches Python behavior)
+    if let Some(handler_lock) = manager.get(guild.id) {
+        let handler = handler_lock.lock().await;
+        handler.leave().await;
+        drop(handler);
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    
     let handler = manager.join(guild.id, channel_id).await;
     if handler.is_ok() {
         ctx.say(&ctx.data().lang.join_success).await?;
@@ -172,6 +197,11 @@ async fn speak(
     } else {
         voice
     };
+
+    if !voices.contains(&actual_voice.as_str()) {
+        ctx.say(&ctx.data().lang.invalid_voice).await?;
+        return Ok(());
+    }
 
     check_permissions(ctx).await?;
     ctx.defer_ephemeral().await?;
@@ -267,6 +297,11 @@ async fn random(
     } else {
         voice
     };
+
+    if !voices.contains(&actual_voice.as_str()) {
+        ctx.say(&ctx.data().lang.invalid_voice).await?;
+        return Ok(());
+    }
 
     check_permissions(ctx).await?;
     ctx.defer_ephemeral().await?;
@@ -404,9 +439,10 @@ async fn audio(
     let source = songbird::input::File::new(&file_path);
     handler.play_only(source.into());
 
+    // Wait longer (5 minutes) to ensure playback completes
     let file_path_clone = file_path.clone();
     tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
         let _ = tokio::fs::remove_file(&file_path_clone).await;
     });
 
@@ -509,7 +545,14 @@ async fn main() {
                         log::error!("Error: {:?}", error);
                         if let poise::FrameworkError::Command { ctx, error, .. } = error {
                             log::error!("Command error: {}", error);
-                            let _ = ctx.send(poise::CreateReply::default().content(&ctx.data().lang.discord_api_error).ephemeral(true)).await;
+                            let msg = error.to_string();
+                            // If it's a meaningful user-facing error, show it; otherwise show generic
+                            let display_msg = if msg.contains("permission") || msg.contains("voice channel") || msg.contains("Guild") || msg.contains("speak") || msg.contains("connect") {
+                                msg
+                            } else {
+                                ctx.data().lang.discord_api_error.clone()
+                            };
+                            let _ = ctx.send(poise::CreateReply::default().content(display_msg).ephemeral(true)).await;
                         }
                     }
                 })
@@ -541,6 +584,16 @@ async fn main() {
                                 )).await?;
                             } else if let Some(file_path) = component.data.custom_id.strip_prefix("play:") {
                                 if let Some(guild_id) = component.guild_id {
+                                    // Check if user is in a voice channel
+                                    let user_in_voice = ctx.cache().guild(guild_id)
+                                        .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id))
+                                        .is_some();
+                                    if !user_in_voice {
+                                        component.create_response(ctx, serenity::CreateInteractionResponse::Message(
+                                            serenity::CreateInteractionResponseMessage::new().content(&data.lang.must_be_in_voice).ephemeral(true)
+                                        )).await?;
+                                        return Ok(());
+                                    }
                                     let manager = songbird::get(ctx).await.unwrap();
                                     if let Some(handler) = manager.get(guild_id) {
                                         let mut handler = handler.lock().await;

@@ -34,9 +34,15 @@ pub async fn compress_and_save_mp3(input_bytes: Vec<u8>, file_path: &str) -> std
 }
 
 pub async fn get_tts_google(text: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    let lang = std::env::var("LANG").unwrap_or_else(|_| "ita".to_string());
+    let tts_lang = match lang.as_str() {
+        "eng" => "en",
+        _ => "it",
+    };
     let url = format!(
-        "https://translate.google.com/translate_tts?ie=UTF-8&q={}&tl=it&client=tw-ob",
-        urlencoding::encode(text)
+        "https://translate.google.com/translate_tts?ie=UTF-8&q={}&tl={}&client=tw-ob",
+        urlencoding::encode(text),
+        tts_lang
     );
     let client = reqwest::Client::new();
     let resp = client

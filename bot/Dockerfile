@@ -1,4 +1,4 @@
-FROM rust:1.88-slim AS builder
+FROM rust:1.83-slim AS builder
 
 # Install only necessary build dependencies (libssl-dev not needed due to rustls)
 RUN apt-get update && \
@@ -29,5 +29,7 @@ RUN apt-get update && \
 
 WORKDIR /app
 COPY --from=builder /app/target/release/discord-llm-bot .
+
+RUN mkdir -p /app/audios /app/config
 
 CMD ["./discord-llm-bot"]

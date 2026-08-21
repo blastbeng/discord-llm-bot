@@ -30,6 +30,8 @@ pub struct Lang {
     pub no_speak_permission: String,
     pub fakeyou_warning: String,
     pub bot_not_ready: String,
+    pub initializing_connection: String,
+    pub invalid_voice: String,
 }
 
 impl Lang {
@@ -75,6 +77,8 @@ impl Lang {
                 no_speak_permission: "I don't have permission to speak or connect in this channel".to_string(),
                 fakeyou_warning: "\n\nWARNING: FakeYou is receiving too many requests, audio generated using Google voice".to_string(),
                 bot_not_ready: "The bot is not ready yet or another user is using a command.\nPlease try again later or use the /stop command".to_string(),
+                initializing_connection: "Please try again later, I'm initializing the connection...".to_string(),
+                invalid_voice: "Invalid voice selected.".to_string(),
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
@@ -115,6 +119,8 @@ impl Lang {
                 no_speak_permission: "Non ho il permesso di parlare o connettermi in questo canale".to_string(),
                 fakeyou_warning: "\n\nWARNING: FakeYou sta ricevendo troppe richieste, audio generato usando la voce di Google".to_string(),
                 bot_not_ready: "Il bot non é ancora pronto opppure un altro user sta usando qualche altro comando.\nPer favore riprova piú tardi o utilizza il comando /stop".to_string(),
+                initializing_connection: "Per favore riprova piú tardi, Sto inizializzando la connessione...".to_string(),
+                invalid_voice: "Voce non valida selezionata.".to_string(),
             }
         }
     }
