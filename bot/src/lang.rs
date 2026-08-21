@@ -23,6 +23,13 @@ pub struct Lang {
     pub searching_random: String,
     pub discord_api_error: String,
     pub queue_overload: String,
+    pub no_sentence_with_text: String,
+    pub replaying_audio: String,
+    pub guild_not_found: String,
+    pub must_be_in_voice: String,
+    pub no_speak_permission: String,
+    pub fakeyou_warning: String,
+    pub bot_not_ready: String,
 }
 
 impl Lang {
@@ -52,6 +59,13 @@ impl Lang {
                 searching_random: "I'm looking for a random sentence{}".to_string(),
                 discord_api_error: "Discord API Error, please try again later".to_string(),
                 queue_overload: "\n\nIf the server is overloaded, it might take a while\n*CPU: {:.1}% - RAM: {:.2}%*".to_string(),
+                no_sentence_with_text: "No sentence found containing the text \"{}\"".to_string(),
+                replaying_audio: "Replaying audio...".to_string(),
+                guild_not_found: "Guild not found".to_string(),
+                must_be_in_voice: "You must be in a voice channel to use this command".to_string(),
+                no_speak_permission: "I don't have permission to speak or connect in this channel".to_string(),
+                fakeyou_warning: "\n\nWARNING: FakeYou is receiving too many requests, audio generated using Google voice".to_string(),
+                bot_not_ready: "The bot is not ready yet or another user is using a command.\nPlease try again later or use the /stop command".to_string(),
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
@@ -76,6 +90,13 @@ impl Lang {
                 searching_random: "Sto cercando una frase casuale{}".to_string(),
                 discord_api_error: "Discord API Error, per favore riprova piú tardi".to_string(),
                 queue_overload: "\n\nSe il server é sovraccarico, potrebbe volerci un po' di tempo\n*CPU: {:.1}% - RAM: {:.2}%*".to_string(),
+                no_sentence_with_text: "Nessuna frase trovata contenente il testo \"{}\"".to_string(),
+                replaying_audio: "Riproduzione audio...".to_string(),
+                guild_not_found: "Guild non trovata".to_string(),
+                must_be_in_voice: "Devi essere connesso a un canale vocale per utilizzare questo comando".to_string(),
+                no_speak_permission: "Non ho il permesso di parlare o connettermi in questo canale".to_string(),
+                fakeyou_warning: "\n\nWARNING: FakeYou sta ricevendo troppe richieste, audio generato usando la voce di Google".to_string(),
+                bot_not_ready: "Il bot non é ancora pronto opppure un altro user sta usando qualche altro comando.\nPer favore riprova piú tardi o utilizza il comando /stop".to_string(),
             }
         }
     }

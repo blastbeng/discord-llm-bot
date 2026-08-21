@@ -121,24 +121,38 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
     }
 }
 
-pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+pub struct TtsResult {
+    pub file_path: String,
+    pub actual_voice: String,
+    pub fallback: bool,
+}
+
+pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<TtsResult, Box<dyn std::error::Error + Send + Sync>> {
     let file_path = get_file_path(voice, text);
     if Path::new(&file_path).exists() {
-        return Ok(file_path);
+        return Ok(TtsResult { file_path, actual_voice: voice.to_string(), fallback: false });
     }
 
-    let bytes = if voice == "Google" {
-        get_tts_google(text).await?
+    let (bytes, actual_voice, fallback) = if voice == "Google" {
+        (get_tts_google(text).await?, "Google".to_string(), false)
     } else {
         match get_tts_fakeyou(text, voice).await {
-            Ok(b) => b,
+            Ok(b) => (b, voice.to_string(), false),
             Err(e) => {
                 log::error!("FakeYou failed, falling back to Google: {}", e);
-                get_tts_google(text).await?
+                (get_tts_google(text).await?, "Google".to_string(), true)
             }
         }
     };
 
-    compress_and_save_mp3(bytes, &file_path).await?;
-    Ok(file_path)
+    // When fallback occurs, save with Google filename so we don't cache
+    // Google audio under a FakeYou filename
+    let save_path = if fallback {
+        get_file_path("Google", text)
+    } else {
+        file_path
+    };
+
+    compress_and_save_mp3(bytes, &save_path).await?;
+    Ok(TtsResult { file_path: save_path, actual_voice, fallback })
 }

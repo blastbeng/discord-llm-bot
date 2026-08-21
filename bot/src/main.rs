@@ -57,25 +57,24 @@ async fn get_queue_message(lang: &lang::Lang) -> String {
 }
 
 async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
-    let guild = ctx.guild().ok_or("Guild not found")?;
-    let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
+    let lang = &ctx.data().lang;
+    let guild = ctx.guild().ok_or(lang.guild_not_found.as_str())?;
+    let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(lang.must_be_in_voice.as_str())?;
     
     let channel = channel_id.to_channel(ctx.http()).await?;
     if let serenity::Channel::Guild(guild_channel) = channel {
         let perms = guild_channel.permissions_for_user(ctx.cache(), ctx.cache().current_user_id())?;
         if !perms.speak() || !perms.connect() {
-            return Err("I don't have permission to speak or connect in this channel".into());
+            return Err(lang.no_speak_permission.as_str().into());
         }
     }
     Ok(())
 }
 
 async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::ChannelId) -> Result<(), Error> {
-    let guild = ctx.guild().ok_or("Guild not found")?;
+    let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
-    let handler_lock = manager.join(guild.id, channel_id).await?;
-    let mut handler = handler_lock.lock().await;
-    // If the bot is already in a different channel, it will be moved to the new channel.
+    let _handler_lock = manager.join(guild.id, channel_id).await?;
     Ok(())
 }
 
@@ -182,15 +181,21 @@ async fn speak(
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
     connect_bot_by_voice_client(ctx, channel_id).await?;
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
-    let handler_lock = manager.get(guild.id).unwrap();
+    let handler_lock = match manager.get(guild.id) {
+        Some(h) => h,
+        None => {
+            ctx.say(&ctx.data().lang.bot_not_ready).await?;
+            return Ok(());
+        }
+    };
     let mut handler = handler_lock.lock().await;
     let queue_msg = get_queue_message(&ctx.data().lang).await;
     let initial_msg = format!(&ctx.data().lang.generating_audio, text, queue_msg);
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
     let message_id = reply.message().await?.id;
 
-    let file_path = match tts::get_or_generate_tts(&text, &actual_voice).await {
-        Ok(path) => path,
+    let tts_result = match tts::get_or_generate_tts(&text, &actual_voice).await {
+        Ok(result) => result,
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
             ctx.http().edit_message(
@@ -201,15 +206,23 @@ async fn speak(
             return Ok(());
         }
     };
-    
-    database::insert_sentence(&ctx.data().db_pool, &text).await?;
 
-    let source = songbird::input::File::new(&file_path);
+    if let Err(e) = database::insert_sentence(&ctx.data().db_pool, &text).await {
+        log::error!("Failed to insert sentence into database: {}", e);
+    }
+
+    let source = songbird::input::File::new(&tts_result.file_path);
     handler.play_only(source.into());
+
+    let warning = if tts_result.fallback {
+        &ctx.data().lang.fakeyou_warning
+    } else {
+        ""
+    };
 
     let components = vec![
         serenity::CreateActionRow::Buttons(vec![
-            serenity::CreateButton::new(format!("play:{}", file_path))
+            serenity::CreateButton::new(format!("play:{}", tts_result.file_path))
                 .label("Play")
                 .style(serenity::ButtonStyle::Success),
             serenity::CreateButton::new("stop")
@@ -222,7 +235,7 @@ async fn speak(
         ctx.channel_id(),
         message_id,
         serenity::EditMessage::new()
-            .content(format!(&ctx.data().lang.playing, text, actual_voice))
+            .content(format!(&ctx.data().lang.playing, text, &tts_result.actual_voice) + warning)
             .components(components)
     ).await?;
 
@@ -263,7 +276,13 @@ async fn random(
     let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or("You must be in a voice channel")?;
     connect_bot_by_voice_client(ctx, channel_id).await?;
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
-    let handler_lock = manager.get(guild.id).unwrap();
+    let handler_lock = match manager.get(guild.id) {
+        Some(h) => h,
+        None => {
+            ctx.say(&ctx.data().lang.bot_not_ready).await?;
+            return Ok(());
+        }
+    };
     let mut handler = handler_lock.lock().await;
 
     let sentences = if let Some(t) = &text {
@@ -277,7 +296,16 @@ async fn random(
     };
 
     if sentences.is_empty() {
-        ctx.say(&ctx.data().lang.no_sentence).await?;
+        let msg = if let Some(t) = &text {
+            if !t.trim().is_empty() {
+                format!(&ctx.data().lang.no_sentence_with_text, t)
+            } else {
+                ctx.data().lang.no_sentence.clone()
+            }
+        } else {
+            ctx.data().lang.no_sentence.clone()
+        };
+        ctx.say(msg).await?;
         return Ok(());
     }
 
@@ -289,8 +317,8 @@ async fn random(
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
     let message_id = reply.message().await?.id;
 
-    let file_path = match tts::get_or_generate_tts(&random_sentence, &actual_voice).await {
-        Ok(path) => path,
+    let tts_result = match tts::get_or_generate_tts(&random_sentence, &actual_voice).await {
+        Ok(result) => result,
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
             ctx.http().edit_message(
@@ -302,12 +330,18 @@ async fn random(
         }
     };
 
-    let source = songbird::input::File::new(&file_path);
+    let source = songbird::input::File::new(&tts_result.file_path);
     handler.play_only(source.into());
+
+    let warning = if tts_result.fallback {
+        &ctx.data().lang.fakeyou_warning
+    } else {
+        ""
+    };
 
     let components = vec![
         serenity::CreateActionRow::Buttons(vec![
-            serenity::CreateButton::new(format!("play:{}", file_path))
+            serenity::CreateButton::new(format!("play:{}", tts_result.file_path))
                 .label("Play")
                 .style(serenity::ButtonStyle::Success),
             serenity::CreateButton::new("stop")
@@ -320,7 +354,7 @@ async fn random(
         ctx.channel_id(),
         message_id,
         serenity::EditMessage::new()
-            .content(format!(&ctx.data().lang.playing, random_sentence, actual_voice))
+            .content(format!(&ctx.data().lang.playing, random_sentence, &tts_result.actual_voice) + warning)
             .components(components)
     ).await?;
 
@@ -341,7 +375,13 @@ async fn audio(
 
     connect_bot_by_voice_client(ctx, channel_id).await?;
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
-    let handler_lock = manager.get(guild.id).unwrap();
+    let handler_lock = match manager.get(guild.id) {
+        Some(h) => h,
+        None => {
+            ctx.say(&ctx.data().lang.bot_not_ready).await?;
+            return Ok(());
+        }
+    };
     let mut handler = handler_lock.lock().await;
 
     let allowed_extensions = ["mp3", "wav", "ogg", "m4a"];
@@ -477,7 +517,17 @@ async fn main() {
                     if let serenity::FullEvent::InteractionCreate { interaction } = event {
                         if let serenity::Interaction::Component(component) = interaction {
                             if component.data.custom_id == "stop" {
+                                // Check if user is in a voice channel
                                 if let Some(guild_id) = component.guild_id {
+                                    let user_in_voice = ctx.cache().guild(guild_id)
+                                        .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id))
+                                        .is_some();
+                                    if !user_in_voice {
+                                        component.create_response(ctx, serenity::CreateInteractionResponse::Message(
+                                            serenity::CreateInteractionResponseMessage::new().content(&data.lang.must_be_in_voice).ephemeral(true)
+                                        )).await?;
+                                        return Ok(());
+                                    }
                                     let manager = songbird::get(ctx).await.unwrap();
                                     if let Some(handler) = manager.get(guild_id) {
                                         let handler = handler.lock().await;
@@ -497,7 +547,7 @@ async fn main() {
                                     }
                                 }
                                 component.create_response(ctx, serenity::CreateInteractionResponse::Message(
-                                    serenity::CreateInteractionResponseMessage::new().content("Replaying audio...").ephemeral(true)
+                                    serenity::CreateInteractionResponseMessage::new().content(&data.lang.replaying_audio).ephemeral(true)
                                 )).await?;
                             }
                         }
