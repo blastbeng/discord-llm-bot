@@ -2,7 +2,7 @@ services:
   discord-llm-bot:
     pull_policy: build
     build:
-      context: ./bot
+      context: ./bot_python
       dockerfile: Dockerfile.client
       network: host
     container_name: discord-bot
