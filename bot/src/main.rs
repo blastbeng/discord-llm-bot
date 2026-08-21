@@ -135,7 +135,14 @@ async fn speak(
     let handler_lock = manager.join(guild.id, channel_id).await?;
     let mut handler = handler_lock.lock().await;
 
-    let file_path = tts::get_or_generate_tts(&text, &actual_voice).await?;
+    let file_path = match tts::get_or_generate_tts(&text, &actual_voice).await {
+        Ok(path) => path,
+        Err(e) => {
+            log::error!("TTS generation failed: {}", e);
+            ctx.say("Errore nella generazione dell'audio, riprovare fra qualche istante.").await?;
+            return Ok(());
+        }
+    };
     
     database::insert_sentence(&ctx.data().db_pool, &text).await?;
 
@@ -211,7 +218,14 @@ async fn random(
     let mut rng = rand::thread_rng();
     let random_sentence = sentences.choose(&mut rng).unwrap();
 
-    let file_path = tts::get_or_generate_tts(random_sentence, &actual_voice).await?;
+    let file_path = match tts::get_or_generate_tts(random_sentence, &actual_voice).await {
+        Ok(path) => path,
+        Err(e) => {
+            log::error!("TTS generation failed: {}", e);
+            ctx.say("Errore nella generazione dell'audio, riprovare fra qualche istante.").await?;
+            return Ok(());
+        }
+    };
 
     let source = songbird::input::File::new(&file_path);
     handler.play_only(source.into());
@@ -247,6 +261,13 @@ async fn audio(
     let handler_lock = manager.join(guild.id, channel_id).await?;
     let mut handler = handler_lock.lock().await;
 
+    let allowed_extensions = ["mp3", "wav", "ogg", "m4a"];
+    let ext = audio.filename.split('.').last().unwrap_or("").to_lowercase();
+    if !allowed_extensions.contains(&ext.as_str()) {
+        ctx.say("The file extension is not valid.").await?;
+        return Ok(());
+    }
+
     let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
     let file_path = format!("{}/{}", temp_dir, audio.filename);
     
@@ -268,6 +289,11 @@ async fn restart(ctx: Context<'_>) -> Result<(), Error> {
     let guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
     if ctx.guild_id().unwrap().to_string() != guild_id || ctx.author().id.to_string() != admin_id {
         ctx.say("Solo gli amministratori possono utilizzare questo comando nel server padre").await?;
+        return Ok(());
+    }
+    let member = ctx.guild().unwrap().member(ctx.http(), ctx.author().id).await?;
+    if !member.permissions(ctx.http()).await?.administrator() {
+        ctx.say("Solo gli amministratori possono utilizzare questo comando").await?;
         return Ok(());
     }
     ctx.say("Sto riavviando il bot.").await?;
@@ -300,6 +326,11 @@ async fn avatar(
     let guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
     if ctx.guild_id().unwrap().to_string() != guild_id || ctx.author().id.to_string() != admin_id {
         ctx.say("Solo gli amministratori possono utilizzare questo comando nel server padre").await?;
+        return Ok(());
+    }
+
+    if !image.content_type.as_deref().map_or(false, |ct| ct.starts_with("image/")) {
+        ctx.say("Questo tipo di file non é supportato").await?;
         return Ok(());
     }
 

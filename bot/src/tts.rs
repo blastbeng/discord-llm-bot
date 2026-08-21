@@ -130,7 +130,13 @@ pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<String, Box<
     let bytes = if voice == "Google" {
         get_tts_google(text).await?
     } else {
-        get_tts_fakeyou(text, voice).await?
+        match get_tts_fakeyou(text, voice).await {
+            Ok(b) => b,
+            Err(e) => {
+                log::error!("FakeYou failed, falling back to Google: {}", e);
+                get_tts_google(text).await?
+            }
+        }
     };
 
     compress_and_save_mp3(bytes, &file_path).await?;
