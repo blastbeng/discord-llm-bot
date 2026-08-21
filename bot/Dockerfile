@@ -5,6 +5,7 @@ RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
+    cmake \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
