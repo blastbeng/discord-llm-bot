@@ -15,9 +15,13 @@ pub async fn run_background_generator(pool: SqlitePool) {
     ];
 
     loop {
+        let mut generated_count = 0;
         if let Ok(sentences) = database::select_all_sentence(&pool).await {
-            for sentence in sentences {
+            'outer: for sentence in sentences {
                 for voice in voices.iter() {
+                    if generated_count >= 3 {
+                        break 'outer;
+                    }
                     let file_path = tts::get_file_path(voice, &sentence);
                     if !Path::new(&file_path).exists() {
                         log::info!("Background generator: Generating TTS for: {} with voice: {}", sentence, voice);
@@ -36,13 +40,14 @@ pub async fn run_background_generator(pool: SqlitePool) {
                             }
                             Err(e) => log::warn!("Background generator: Failed to get TTS for voice {}: {}", voice, e),
                         }
+                        generated_count += 1;
                         // Sleep a bit to avoid rate limiting
                         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                     }
                 }
             }
         }
-        // Wait before checking the database again
-        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        // Wait 5 minutes before checking the database again
+        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
     }
 }
