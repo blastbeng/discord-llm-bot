@@ -441,7 +441,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 	msg, err := e.CreateFollowupMessage(discord.NewMessageCreateBuilder().
 		SetContent(T("generating_audio", text, getQueueMessage())).
 		SetComponents(discord.NewActionRow(
-			discord.NewPrimaryButton(T("button_play"), "play:"+playID),
+			discord.NewSuccessButton(T("button_play"), "play:"+playID),
 			discord.NewDangerButton(T("button_stop"), "stop:"+e.GuildID().String()),
 		)).
 		SetEphemeral(true).Build())
@@ -473,7 +473,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 		_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().
 			SetContent(T("playing_audio", text, voiceName)).
 			SetComponents(discord.NewActionRow(
-				discord.NewPrimaryButton(T("button_play"), "play:"+playID),
+				discord.NewSuccessButton(T("button_play"), "play:"+playID),
 				discord.NewDangerButton(T("button_stop"), "stop:"+e.GuildID().String()),
 			)).
 			Build())
@@ -540,7 +540,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 	msg, err := e.CreateFollowupMessage(discord.NewMessageCreateBuilder().
 		SetContent(T("searching_random", getQueueMessage())).
 		SetComponents(discord.NewActionRow(
-			discord.NewPrimaryButton(T("button_play"), "play:"+playID),
+			discord.NewSuccessButton(T("button_play"), "play:"+playID),
 			discord.NewDangerButton(T("button_stop"), "stop:"+e.GuildID().String()),
 		)).
 		SetEphemeral(true).Build())
@@ -572,7 +572,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 		_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().
 			SetContent(T("playing_audio", sentence, voiceName)).
 			SetComponents(discord.NewActionRow(
-				discord.NewPrimaryButton(T("button_play"), "play:"+playID),
+				discord.NewSuccessButton(T("button_play"), "play:"+playID),
 				discord.NewDangerButton(T("button_stop"), "stop:"+e.GuildID().String()),
 			)).
 			Build())
@@ -590,11 +590,13 @@ func handleRestart(e *events.ApplicationCommandInteractionCreate) {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
-	if e.User().ID().String() != os.Getenv("ADMIN_ID") {
-		if e.GuildID().String() != os.Getenv("GUILD_ID") || e.Member() == nil || !e.Member().Permissions.Has(discord.PermissionAdministrator) {
-			e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("no_permissions")).SetEphemeral(true).Build())
-			return
-		}
+	if e.GuildID().String() != os.Getenv("GUILD_ID") || e.User().ID().String() != os.Getenv("ADMIN_ID") {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("admin_only_parent")).SetEphemeral(true).Build())
+		return
+	}
+	if e.Member() == nil || !e.Member().Permissions.Has(discord.PermissionAdministrator) {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("admin_only")).SetEphemeral(true).Build())
+		return
 	}
 	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("restarting_bot")).SetEphemeral(true).Build())
 	go func() {
