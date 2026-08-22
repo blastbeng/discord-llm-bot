@@ -368,10 +368,21 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 		return
 	}
 
-	voiceClient, _ := e.Client().Voice().GetOrCreateGuildVoiceClient(e.GuildID())
-	if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
-		return
+	voiceClient, ok := e.Client().Voice().GetGuildVoiceClient(e.GuildID())
+	if !ok || !voiceClient.Connected() {
+		voiceClient, _ = e.Client().Voice().GetOrCreateGuildVoiceClient(e.GuildID())
+		if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
+			return
+		}
+	} else {
+		currentChannelID, _ := voiceClient.ChannelID()
+		if currentChannelID == nil || *currentChannelID != *channelID {
+			if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+				e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
+				return
+			}
+		}
 	}
 
 	text := e.Data.String("text")
@@ -446,10 +457,21 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 		return
 	}
 
-	voiceClient, _ := e.Client().Voice().GetOrCreateGuildVoiceClient(e.GuildID())
-	if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
-		return
+	voiceClient, ok := e.Client().Voice().GetGuildVoiceClient(e.GuildID())
+	if !ok || !voiceClient.Connected() {
+		voiceClient, _ = e.Client().Voice().GetOrCreateGuildVoiceClient(e.GuildID())
+		if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
+			return
+		}
+	} else {
+		currentChannelID, _ := voiceClient.ChannelID()
+		if currentChannelID == nil || *currentChannelID != *channelID {
+			if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+				e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
+				return
+			}
+		}
 	}
 
 	voiceName := e.Data.String("voice")
@@ -628,10 +650,21 @@ func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 		return
 	}
 
-	voiceClient, _ := e.Client().Voice().GetOrCreateGuildVoiceClient(e.GuildID())
-	if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
-		return
+	voiceClient, ok := e.Client().Voice().GetGuildVoiceClient(e.GuildID())
+	if !ok || !voiceClient.Connected() {
+		voiceClient, _ = e.Client().Voice().GetOrCreateGuildVoiceClient(e.GuildID())
+		if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
+			return
+		}
+	} else {
+		currentChannelID, _ := voiceClient.ChannelID()
+		if currentChannelID == nil || *currentChannelID != *channelID {
+			if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+				e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
+				return
+			}
+		}
 	}
 
 	attachmentID := e.Data.Options.Attachment("audio").Value
@@ -727,13 +760,13 @@ func HandleButton(e *events.ButtonInteractionCreate) {
 				_ = e.UpdateMessage(discord.NewMessageUpdateBuilder().SetContent(fmt.Sprintf("%s\nVoce: %s%s", info.Text, info.Voice, T("error_audio_generation_retry"))).Build())
 				return
 			}
+			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("playing_audio_button")).SetEphemeral(true).Build())
 			if err := PlayAudio(voiceClient, guildID.String(), filePath); err != nil {
 				log.Printf("Error playing audio: %v", err)
 			}
 			if os.Getenv("SAVE_AUDIO") != "true" {
 				os.Remove(filePath)
 			}
-			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("playing_audio_button")).SetEphemeral(true).Build())
 		}()
 	} else if strings.HasPrefix(customID, "stop:") {
 		guildID := strings.TrimPrefix(customID, "stop:")
