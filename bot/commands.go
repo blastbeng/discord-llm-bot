@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"log"
 	"math/rand"
@@ -58,7 +57,7 @@ func getQueueMessage() string {
 	if len(cpuPercent) > 0 {
 		cpuStr = fmt.Sprintf("%.1f", cpuPercent[0])
 	}
-	return fmt.Sprintf("\n\nSe il server é sovraccarico, potrebbe volerci un po' di tempo\n*CPU: %s%% - RAM: %.2f%%*", cpuStr, ramPercent)
+	return T("queue_message", cpuStr, ramPercent)
 }
 
 func RegisterCommands(clientID discord.Snowflake, rest interface {
@@ -220,62 +219,62 @@ func getVoiceChannelID(client bot.Client, guildID discord.Snowflake, userID disc
 
 func handleJoin(e *events.ApplicationCommandInteractionCreate) {
 	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
 		return
 	}
 	channelID := getVoiceChannelID(e.Client(), e.GuildID(), e.User().ID())
 	if channelID == nil {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Devi essere connesso a un canale vocale per utilizzare questo comando").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("must_be_in_voice")).SetEphemeral(true).Build())
 		return
 	}
 
 	voiceClient, _ := e.Client().Voice().GetOrCreateGuildVoiceClient(e.GuildID())
 	if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante la connessione al canale vocale").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
 		return
 	}
-	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Sto entrando nel canale").SetEphemeral(true).Build())
+	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("joining_channel")).SetEphemeral(true).Build())
 }
 
 func handleLeave(e *events.ApplicationCommandInteractionCreate) {
 	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
 		return
 	}
 	voiceClient, ok := e.Client().Voice().GetGuildVoiceClient(e.GuildID())
 	if !ok || !voiceClient.Connected() {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Non sono connesso a nessun canale").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("not_connected")).SetEphemeral(true).Build())
 		return
 	}
 	voiceClient.Disconnect(context.Background())
-	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Sto lasciando il canale").SetEphemeral(true).Build())
+	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("leaving_channel")).SetEphemeral(true).Build())
 }
 
 func handleStop(e *events.ApplicationCommandInteractionCreate) {
 	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
 		return
 	}
 	StopAudio(e.GuildID().String())
-	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Interrompo il bot").SetEphemeral(true).Build())
+	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("stopping_bot")).SetEphemeral(true).Build())
 }
 
 func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
 		return
 	}
 	e.DeferCreateMessage(true)
 
 	channelID := getVoiceChannelID(e.Client(), e.GuildID(), e.User().ID())
 	if channelID == nil {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Devi essere connesso a un canale vocale").SetEphemeral(true).Build())
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("must_be_in_voice")).SetEphemeral(true).Build())
 		return
 	}
 
 	voiceClient, _ := e.Client().Voice().GetOrCreateGuildVoiceClient(e.GuildID())
 	if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante la connessione al canale vocale").SetEphemeral(true).Build())
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
 		return
 	}
 
@@ -293,7 +292,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 	audioMessagesMu.Unlock()
 
 	msg, err := e.CreateFollowupMessage(discord.NewMessageCreateBuilder().
-		SetContent(fmt.Sprintf("Inizio a generare l'audio per la frase: **%s**%s", text, getQueueMessage())).
+		SetContent(T("generating_audio", text, getQueueMessage())).
 		SetComponents(discord.NewActionRow(
 			discord.NewPrimaryButton("Play", "play:"+playID),
 			discord.NewDangerButton("Stop", "stop:"+e.GuildID().String()),
@@ -317,7 +316,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 					voiceName = "Google"
 					filePath = GetAudioFilePath(text, voiceName)
 					audioData, err = GetTTSGoogle(text)
-					_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(fmt.Sprintf("Sto riproducendo: %s\nVoce: %s\n\nWARNING: FakeYou sta ricevendo troppe richieste, audio generato usando la voce di Google", text, voiceName)).Build())
+					_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(T("fakeyou_fallback", text, voiceName)).Build())
 				}
 			}
 			if err != nil {
@@ -347,7 +346,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 			log.Printf("Error playing audio: %v", err)
 		}
 		_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().
-			SetContent(fmt.Sprintf("Sto riproducendo: %s\nVoce: %s", text, voiceName)).
+			SetContent(T("playing_audio", text, voiceName)).
 			SetComponents(discord.NewActionRow(
 				discord.NewPrimaryButton("Play", "play:"+playID),
 				discord.NewDangerButton("Stop", "stop:"+e.GuildID().String()),
@@ -358,20 +357,20 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 
 func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
 		return
 	}
 	e.DeferCreateMessage(true)
 
 	channelID := getVoiceChannelID(e.Client(), e.GuildID(), e.User().ID())
 	if channelID == nil {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Devi essere connesso a un canale vocale").SetEphemeral(true).Build())
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("must_be_in_voice")).SetEphemeral(true).Build())
 		return
 	}
 
 	voiceClient, _ := e.Client().Voice().GetOrCreateGuildVoiceClient(e.GuildID())
 	if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante la connessione al canale vocale").SetEphemeral(true).Build())
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
 		return
 	}
 
@@ -389,7 +388,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 		sentences, err = db.SelectAllSentence()
 	}
 	if err != nil || len(sentences) == 0 {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Nessuna frase trovata").SetEphemeral(true).Build())
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("no_sentence_found")).SetEphemeral(true).Build())
 		return
 	}
 
@@ -404,7 +403,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 	audioMessagesMu.Unlock()
 
 	msg, err := e.CreateFollowupMessage(discord.NewMessageCreateBuilder().
-		SetContent(fmt.Sprintf("Sto cercando una frase casuale%s", getQueueMessage())).
+		SetContent(T("searching_random", getQueueMessage())).
 		SetComponents(discord.NewActionRow(
 			discord.NewPrimaryButton("Play", "play:"+playID),
 			discord.NewDangerButton("Stop", "stop:"+e.GuildID().String()),
@@ -428,7 +427,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 					voiceName = "Google"
 					filePath = GetAudioFilePath(sentence, voiceName)
 					audioData, err = GetTTSGoogle(sentence)
-					_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(fmt.Sprintf("Sto riproducendo: %s\nVoce: %s\n\nWARNING: FakeYou sta ricevendo troppe richieste, audio generato usando la voce di Google", sentence, voiceName)).Build())
+					_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(T("fakeyou_fallback", sentence, voiceName)).Build())
 				}
 			}
 			if err != nil {
@@ -457,7 +456,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 			log.Printf("Error playing audio: %v", err)
 		}
 		_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().
-			SetContent(fmt.Sprintf("Sto riproducendo: %s\nVoce: %s", sentence, voiceName)).
+			SetContent(T("playing_audio", sentence, voiceName)).
 			SetComponents(discord.NewActionRow(
 				discord.NewPrimaryButton("Play", "play:"+playID),
 				discord.NewDangerButton("Stop", "stop:"+e.GuildID().String()),
@@ -468,18 +467,18 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 
 func handleRestart(e *events.ApplicationCommandInteractionCreate) {
 	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
 		return
 	}
 	if e.GuildID().String() != os.Getenv("GUILD_ID") || e.User().ID().String() != os.Getenv("ADMIN_ID") {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Non hai i permessi per utilizzare questo comando.").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("no_permissions")).SetEphemeral(true).Build())
 		return
 	}
 	if e.Member() == nil || !e.Member().Permissions.Has(discord.PermissionAdministrator) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Solo gli amministratori possono utilizzare questo comando").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("admin_only")).SetEphemeral(true).Build())
 		return
 	}
-	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Sto riavviando il bot.").SetEphemeral(true).Build())
+	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("restarting_bot")).SetEphemeral(true).Build())
 	go func() {
 		time.Sleep(1 * time.Second)
 		os.Exit(0)
@@ -488,101 +487,101 @@ func handleRestart(e *events.ApplicationCommandInteractionCreate) {
 
 func handleRename(e *events.ApplicationCommandInteractionCreate) {
 	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
 		return
 	}
 	name := e.Data.String("name")
 	if len(name) > 32 {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Il mio nickname non può essere più lungo di 32 caratteri").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("nick_too_long")).SetEphemeral(true).Build())
 		return
 	}
 
 	if err := e.Client().Rest().UpdateCurrentMember(e.GuildID(), discord.CurrentMemberUpdate{Nick: &name}); err != nil {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante il cambio di nickname.").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("error_nick")).SetEphemeral(true).Build())
 		return
 	}
-	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(fmt.Sprintf("Mi hai rinominato in \"%s\"", name)).SetEphemeral(true).Build())
+	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("nick_changed", name)).SetEphemeral(true).Build())
 }
 
 func handleAvatar(e *events.ApplicationCommandInteractionCreate) {
 	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
 		return
 	}
 	if e.GuildID().String() != os.Getenv("GUILD_ID") {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Solo gli amministratori possono utilizzare questo comando nel server padre").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("admin_only_parent")).SetEphemeral(true).Build())
 		return
 	}
 
 	attachmentID := e.Data.Options.Attachment("image").Value
 	attachment, ok := e.Data.Resolved.Attachments[attachmentID]
 	if !ok {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante il recupero dell'allegato.").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("error_attachment")).SetEphemeral(true).Build())
 		return
 	}
 
 	if !strings.HasPrefix(attachment.ContentType, "image/") {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Questo tipo di file non è supportato").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("unsupported_file")).SetEphemeral(true).Build())
 		return
 	}
 
 	resp, err := http.Get(attachment.URL)
 	if err != nil {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante il download dell'immagine.").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("error_download_image")).SetEphemeral(true).Build())
 		return
 	}
 	defer resp.Body.Close()
 
 	imageData, err := io.ReadAll(resp.Body)
 	if err != nil {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante la lettura dell'immagine.").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("error_read_image")).SetEphemeral(true).Build())
 		return
 	}
 
 	avatar := discord.NewIconRaw(discord.IconType(attachment.ContentType), bytes.NewReader(imageData))
 	if err := e.Client().Rest().UpdateCurrentUser(discord.UserUpdate{Avatar: &avatar}); err != nil {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante l'aggiornamento dell'avatar.").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("error_update_avatar")).SetEphemeral(true).Build())
 		return
 	}
-	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("L'immagine è stata modificata").SetEphemeral(true).Build())
+	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("avatar_changed")).SetEphemeral(true).Build())
 }
 
 func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
 		return
 	}
 	e.DeferCreateMessage(true)
 
 	channelID := getVoiceChannelID(e.Client(), e.GuildID(), e.User().ID())
 	if channelID == nil {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Devi essere connesso a un canale vocale").SetEphemeral(true).Build())
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("must_be_in_voice")).SetEphemeral(true).Build())
 		return
 	}
 
 	voiceClient, _ := e.Client().Voice().GetOrCreateGuildVoiceClient(e.GuildID())
 	if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante la connessione al canale vocale").SetEphemeral(true).Build())
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
 		return
 	}
 
 	attachmentID := e.Data.Options.Attachment("audio").Value
 	attachment, ok := e.Data.Resolved.Attachments[attachmentID]
 	if !ok {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante il recupero dell'allegato.").SetEphemeral(true).Build())
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_attachment")).SetEphemeral(true).Build())
 		return
 	}
 
 	ext := strings.ToLower(filepath.Ext(attachment.Filename))
 	if ext != ".mp3" && ext != ".wav" {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("The file extension is not valid. Only mp3 or wav are allowed.").SetEphemeral(true).Build())
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("invalid_audio_ext")).SetEphemeral(true).Build())
 		return
 	}
 
 	// Download the audio file
 	resp, err := http.Get(attachment.URL)
 	if err != nil {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante il download dell'audio.").SetEphemeral(true).Build())
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_download_audio")).SetEphemeral(true).Build())
 		return
 	}
 	defer resp.Body.Close()
@@ -590,12 +589,12 @@ func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 	tempPath := filepath.Join(os.Getenv("TMP_DIR"), "audio_"+uuid.NewString()+filepath.Ext(attachment.Filename))
 	out, err := os.Create(tempPath)
 	if err != nil {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante la creazione del file temporaneo.").SetEphemeral(true).Build())
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_create_temp")).SetEphemeral(true).Build())
 		return
 	}
 	if _, err := io.Copy(out, resp.Body); err != nil {
 		out.Close()
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante il salvataggio dell'audio.").SetEphemeral(true).Build())
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_save_audio")).SetEphemeral(true).Build())
 		return
 	}
 	out.Close()
@@ -607,7 +606,7 @@ func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 		os.Remove(tempPath)
 	}()
 
-	e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Done! I'm starting the audio playback!").SetEphemeral(true).Build())
+	e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("audio_playback_started")).SetEphemeral(true).Build())
 }
 
 func HandleButton(e *events.ButtonInteractionCreate) {
@@ -618,7 +617,7 @@ func HandleButton(e *events.ButtonInteractionCreate) {
 		info, ok := audioMessages[id]
 		audioMessagesMu.Unlock()
 		if !ok {
-			e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Audio non trovato.").SetEphemeral(true).Build())
+			e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("audio_not_found")).SetEphemeral(true).Build())
 			return
 		}
 		e.DeferCreateMessage(true)
@@ -668,10 +667,10 @@ func HandleButton(e *events.ButtonInteractionCreate) {
 		if err := PlayAudio(voiceClient, guildID.String(), filePath); err != nil {
 			log.Printf("Error playing audio: %v", err)
 		}
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Riproduco l'audio.").SetEphemeral(true).Build())
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("playing_audio_button")).SetEphemeral(true).Build())
 	} else if strings.HasPrefix(customID, "stop:") {
 		guildID := strings.TrimPrefix(customID, "stop:")
 		StopAudio(guildID)
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Interrompo il bot.").SetEphemeral(true).Build())
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("stopping_bot_button")).SetEphemeral(true).Build())
 	}
 }
