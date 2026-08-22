@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"os"
 	"time"
@@ -61,13 +62,39 @@ func backgroundGenerator() {
 	for range ticker.C {
 		sentence, err := db.SelectRandomSentenceWithoutAudio()
 		if err != nil {
-			log.Printf("Background generator error: %v", err)
+			if err != sql.ErrNoRows {
+				log.Printf("Background generator error: %v", err)
+			}
 			continue
 		}
 		if sentence == "" {
 			continue
 		}
+
+		filePath := GetAudioFilePath(sentence, "Google")
+		if _, err := os.Stat(filePath); err == nil {
+			continue // File already exists, skip
+		}
+
 		log.Printf("Background generator: processing sentence '%s'", sentence)
-		// TODO: Generate and save compressed audio
+		audioData, err := GetTTSGoogle(sentence)
+		if err != nil {
+			log.Printf("Background generator: TTS error: %v", err)
+			continue
+		}
+
+		tempPath := filePath + ".tmp"
+		if err := SaveAudio(tempPath, audioData); err != nil {
+			log.Printf("Background generator: Save error: %v", err)
+			continue
+		}
+
+		if err := CompressAudio(tempPath, filePath); err != nil {
+			log.Printf("Background generator: Compress error: %v", err)
+			os.Remove(tempPath)
+			continue
+		}
+		os.Remove(tempPath)
+		log.Printf("Background generator: saved and compressed '%s'", sentence)
 	}
 }
