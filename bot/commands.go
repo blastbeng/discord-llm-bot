@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"math/rand"
@@ -36,16 +37,29 @@ var (
 	audioMessagesMu sync.Mutex
 )
 
-func checkCooldown(userID discord.Snowflake) bool {
+func checkCooldown(userID discord.Snowflake, mention string, commandName string) string {
 	cooldownsMu.Lock()
 	defer cooldownsMu.Unlock()
 	if last, ok := cooldowns[userID]; ok {
 		if time.Since(last) < 5*time.Second {
-			return false
+			remaining := 5 - time.Since(last).Seconds()
+			cooldownStr := fmt.Sprintf("%s -> Cooldown: 5.0[%.2f]s", commandName, remaining)
+			msgs := []string{
+				T("spam_detected_1", mention, cooldownStr),
+				T("spam_detected_2", mention, cooldownStr),
+				T("spam_detected_3", mention, cooldownStr),
+				T("spam_detected_4", mention, cooldownStr),
+				T("spam_detected_5", mention, cooldownStr),
+				T("spam_detected_6", mention, cooldownStr),
+				T("spam_detected_7", mention, cooldownStr),
+				T("spam_detected_8", mention, cooldownStr),
+			}
+			rand.Seed(time.Now().UnixNano())
+			return msgs[rand.Intn(len(msgs))]
 		}
 	}
 	cooldowns[userID] = time.Now()
-	return true
+	return ""
 }
 
 func getQueueMessage() string {
@@ -218,8 +232,8 @@ func getVoiceChannelID(client bot.Client, guildID discord.Snowflake, userID disc
 }
 
 func handleJoin(e *events.ApplicationCommandInteractionCreate) {
-	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
+	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
 	channelID := getVoiceChannelID(e.Client(), e.GuildID(), e.User().ID())
@@ -237,8 +251,8 @@ func handleJoin(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleLeave(e *events.ApplicationCommandInteractionCreate) {
-	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
+	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
 	voiceClient, ok := e.Client().Voice().GetGuildVoiceClient(e.GuildID())
@@ -251,8 +265,8 @@ func handleLeave(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleStop(e *events.ApplicationCommandInteractionCreate) {
-	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
+	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
 	StopAudio(e.GuildID().String())
@@ -260,8 +274,8 @@ func handleStop(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
-	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
+	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
 	e.DeferCreateMessage(true)
@@ -356,8 +370,8 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleRandom(e *events.ApplicationCommandInteractionCreate) {
-	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
+	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
 	e.DeferCreateMessage(true)
@@ -466,8 +480,8 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleRestart(e *events.ApplicationCommandInteractionCreate) {
-	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
+	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
 	if e.GuildID().String() != os.Getenv("GUILD_ID") || e.User().ID().String() != os.Getenv("ADMIN_ID") {
@@ -486,8 +500,8 @@ func handleRestart(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleRename(e *events.ApplicationCommandInteractionCreate) {
-	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
+	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
 	name := e.Data.String("name")
@@ -504,8 +518,8 @@ func handleRename(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleAvatar(e *events.ApplicationCommandInteractionCreate) {
-	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
+	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
 	if e.GuildID().String() != os.Getenv("GUILD_ID") {
@@ -547,8 +561,8 @@ func handleAvatar(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleAudio(e *events.ApplicationCommandInteractionCreate) {
-	if !checkCooldown(e.User().ID()) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("spam_detected", e.User().Mention())).SetEphemeral(true).Build())
+	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
 	e.DeferCreateMessage(true)
