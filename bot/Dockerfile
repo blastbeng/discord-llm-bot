@@ -3,8 +3,8 @@ RUN apk add --no-cache gcc musl-dev ffmpeg git
 WORKDIR /app
 ENV GOPROXY=https://proxy.golang.org,direct
 
-# Copy go.mod and go.sum (if present) first to leverage Docker cache
-COPY go.mod go.sum* ./
+# Copy go.mod first to leverage Docker cache
+COPY go.mod ./
 RUN go mod download
 
 # Copy the rest of the project sources
