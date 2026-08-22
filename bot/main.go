@@ -36,7 +36,6 @@ func main() {
 
 	// Start background generator
 	go backgroundGenerator()
-	go changePresenceLoop(client)
 
 	client, err := bot.New(os.Getenv("BOT_TOKEN"),
 		bot.WithIntents(discord.IntentGuilds, discord.IntentGuildVoiceStates),
@@ -48,6 +47,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
+
+	go changePresenceLoop(client)
 
 	if err = client.OpenGateway(context.Background()); err != nil {
 		log.Fatalf("Failed to open gateway: %v", err)

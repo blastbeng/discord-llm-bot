@@ -9,11 +9,13 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
+	"github.com/google/uuid"
 )
 
 func RegisterCommands(clientID discord.Snowflake, rest interface {
@@ -90,6 +92,17 @@ func RegisterCommands(clientID discord.Snowflake, rest interface {
 				},
 			},
 		},
+		discord.SlashCommandCreate{
+			Name:        "audio",
+			Description: "Audio playback from the input audio",
+			Options: []discord.ApplicationCommandOption{
+				discord.ApplicationCommandOptionAttachment{
+					Name:        "audio",
+					Description: "The file audio (mp3 or wav)",
+					Required:    true,
+				},
+			},
+		},
 	}
 
 	if _, err := rest.CreateGlobalCommands(context.Background(), clientID, commands); err != nil {
@@ -116,6 +129,8 @@ func HandleCommand(e *events.ApplicationCommandInteractionCreate) {
 		handleRename(e)
 	case "avatar":
 		handleAvatar(e)
+	case "audio":
+		handleAudio(e)
 	}
 }
 
@@ -334,4 +349,57 @@ func handleAvatar(e *events.ApplicationCommandInteractionCreate) {
 		return
 	}
 	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("L'immagine è stata modificata").SetEphemeral(true).Build())
+}
+
+func handleAudio(e *events.ApplicationCommandInteractionCreate) {
+	e.DeferCreateMessage(true)
+
+	channelID := getUserVoiceChannelID(e)
+	if channelID == nil {
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Devi essere connesso a un canale vocale").SetEphemeral(true).Build())
+		return
+	}
+
+	voiceClient, _ := e.Client().Voice().GetOrCreateGuildVoiceClient(e.GuildID())
+	if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante la connessione al canale vocale").SetEphemeral(true).Build())
+		return
+	}
+
+	attachmentID := e.Data.Options.Attachment("audio").Value
+	attachment, ok := e.Data.Resolved.Attachments[attachmentID]
+	if !ok {
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante il recupero dell'allegato.").SetEphemeral(true).Build())
+		return
+	}
+
+	// Download the audio file
+	resp, err := http.Get(attachment.URL)
+	if err != nil {
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante il download dell'audio.").SetEphemeral(true).Build())
+		return
+	}
+	defer resp.Body.Close()
+
+	tempPath := filepath.Join(os.Getenv("TMP_DIR"), "audio_"+uuid.NewString()+filepath.Ext(attachment.Filename))
+	out, err := os.Create(tempPath)
+	if err != nil {
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante la creazione del file temporaneo.").SetEphemeral(true).Build())
+		return
+	}
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		out.Close()
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante il salvataggio dell'audio.").SetEphemeral(true).Build())
+		return
+	}
+	out.Close()
+	defer os.Remove(tempPath)
+
+	go func() {
+		if err := PlayAudio(voiceClient, e.GuildID().String(), tempPath); err != nil {
+			log.Printf("Error playing audio: %v", err)
+		}
+	}()
+
+	e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Done! I'm starting the audio playback!").SetEphemeral(true).Build())
 }
