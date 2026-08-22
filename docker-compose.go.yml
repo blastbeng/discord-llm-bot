@@ -1,18 +1,22 @@
 services:
   discord-llm-bot-go:
+    pull_policy: build
     build:
       context: ./bot
       dockerfile: Dockerfile
+      network: host
     container_name: discord-bot-go
     network_mode: host
     environment:
       - BOT_TOKEN=${BOT_TOKEN}
       - GUILD_ID=${GUILD_ID}
       - ADMIN_ID=${ADMIN_ID}
+      - LANG=${LANG}
       - TMP_DIR=/tmp/discord-llm-bot
     volumes:
       - ".env:/app/.env"
       - "./config:/app/config"
       - "/tmp/discord-llm-bot:/tmp/discord-llm-bot"
       - "./audios:/app/audios"
+    image: "blastbeng/discord-llm-bot-go:1.0.0"
     restart: unless-stopped
