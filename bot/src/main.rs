@@ -636,9 +636,7 @@ async fn main() {
                     if ctx.guild_id().map(|g| g.to_string()) != Some(allowed_guild_id) {
                         let _ = ctx.say(&ctx.data().lang.wrong_guild).await;
                         log::warn!("Command invoked in wrong guild by user {}", ctx.author().id);
-                        return Err("Bot can only be used in the parent server".into());
                     }
-                    Ok(())
                 })
             },
             on_error: |error| {
@@ -653,8 +651,6 @@ async fn main() {
                         let random_msg_filled = random_msg.replace("{}", &user_id);
                         let msg = format!("{}\nCooldown: {:.2}s", random_msg_filled, remaining_cooldown.as_secs_f32());
                         let _ = ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await;
-                    } else if let poise::FrameworkError::PreCommand { error, .. } = &error {
-                        log::warn!("Pre-command check failed: {}", error);
                     } else {
                         log::error!("Error: {}", error);
                         if let poise::FrameworkError::Command { ctx, error, .. } = error {
