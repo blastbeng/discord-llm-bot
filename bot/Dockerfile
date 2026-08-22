@@ -17,7 +17,7 @@ ENV CARGO_BUILD_JOBS=4
 
 # Copy only Cargo.toml first to cache dependencies
 COPY Cargo.toml ./
-RUN mkdir src && echo "fn main() {}" > src/main.rs
+RUN mkdir src && echo 'fn main() { eprintln!("DUMMY BINARY - this means the real build was skipped!"); }' > src/main.rs
 RUN cargo build --release || true
 RUN rm -rf src
 

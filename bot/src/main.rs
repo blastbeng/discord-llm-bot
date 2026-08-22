@@ -637,6 +637,7 @@ async fn avatar(
 
 #[tokio::main]
 async fn main() {
+    eprintln!("=== discord-llm-bot starting (binary loaded correctly) ===");
     dotenv::dotenv().ok();
     env_logger::Builder::from_env(env_logger::Env::default().filter_or("LOG_LEVEL", "info,tracing=warn")).init();
 
@@ -823,8 +824,7 @@ async fn main() {
     log::info!("Starting Discord client...");
     match client.start().await {
         Ok(()) => {
-            log::error!("Client exited normally (Ok) - this should NOT happen! The gateway disconnected immediately.");
-            log::error!("Possible causes: invalid token, another bot instance with same token, or network issue.");
+            log::error!("Client exited normally (Ok) - gateway disconnected immediately!");
             std::process::exit(1);
         }
         Err(e) => {
