@@ -11,12 +11,34 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
 	"github.com/google/uuid"
 )
+
+var (
+	cooldowns   = make(map[discord.Snowflake]time.Time)
+	cooldownsMu sync.Mutex
+)
+
+func checkCooldown(userID discord.Snowflake) bool {
+	cooldownsMu.Lock()
+	defer cooldownsMu.Unlock()
+	if last, ok := cooldowns[userID]; ok {
+		if time.Since(last) < 5*time.Second {
+			return false
+		}
+	}
+	cooldowns[userID] = time.Now()
+	return true
+}
+
+func getQueueMessage() string {
+	return "\n\nSe il server é sovraccarico, potrebbe volerci un po' di tempo"
+}
 
 func RegisterCommands(clientID discord.Snowflake, rest interface {
 	CreateGlobalCommands(ctx context.Context, applicationID discord.Snowflake, commands []discord.ApplicationCommandCreate, opts ...discord.RequestOpt) ([]discord.ApplicationCommand, error)
@@ -176,6 +198,10 @@ func getUserVoiceChannelID(e *events.ApplicationCommandInteractionCreate) *disco
 }
 
 func handleJoin(e *events.ApplicationCommandInteractionCreate) {
+	if !checkCooldown(e.User().ID()) {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		return
+	}
 	channelID := getUserVoiceChannelID(e)
 	if channelID == nil {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Devi essere connesso a un canale vocale per utilizzare questo comando").SetEphemeral(true).Build())
@@ -191,6 +217,10 @@ func handleJoin(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleLeave(e *events.ApplicationCommandInteractionCreate) {
+	if !checkCooldown(e.User().ID()) {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		return
+	}
 	voiceClient, ok := e.Client().Voice().GetGuildVoiceClient(e.GuildID())
 	if !ok || !voiceClient.Connected() {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Non sono connesso a nessun canale").SetEphemeral(true).Build())
@@ -201,11 +231,19 @@ func handleLeave(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleStop(e *events.ApplicationCommandInteractionCreate) {
+	if !checkCooldown(e.User().ID()) {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		return
+	}
 	StopAudio(e.GuildID().String())
 	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Interrompo il bot").SetEphemeral(true).Build())
 }
 
 func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
+	if !checkCooldown(e.User().ID()) {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		return
+	}
 	e.DeferCreateMessage(true)
 
 	channelID := getUserVoiceChannelID(e)
@@ -228,7 +266,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 
 	filePath := GetAudioFilePath(text, voiceName)
 
-	msg, err := e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(fmt.Sprintf("Sto riproducendo: %s\nVoce: %s", text, voiceName)).SetEphemeral(true).Build())
+	msg, err := e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(fmt.Sprintf("Inizio a generare l'audio per la frase: **%s**%s", text, getQueueMessage())).SetEphemeral(true).Build())
 	if err != nil {
 		log.Printf("Error creating followup message: %v", err)
 		return
@@ -280,6 +318,10 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleRandom(e *events.ApplicationCommandInteractionCreate) {
+	if !checkCooldown(e.User().ID()) {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		return
+	}
 	e.DeferCreateMessage(true)
 
 	channelID := getUserVoiceChannelID(e)
@@ -317,7 +359,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 
 	filePath := GetAudioFilePath(sentence, voiceName)
 
-	msg, err := e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(fmt.Sprintf("Sto riproducendo: %s\nVoce: %s", sentence, voiceName)).SetEphemeral(true).Build())
+	msg, err := e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(fmt.Sprintf("Sto cercando una frase casuale%s", getQueueMessage())).SetEphemeral(true).Build())
 	if err != nil {
 		log.Printf("Error creating followup message: %v", err)
 		return
@@ -368,6 +410,10 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleRestart(e *events.ApplicationCommandInteractionCreate) {
+	if !checkCooldown(e.User().ID()) {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		return
+	}
 	if e.GuildID().String() != os.Getenv("GUILD_ID") || e.User().ID().String() != os.Getenv("ADMIN_ID") {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Non hai i permessi per utilizzare questo comando.").SetEphemeral(true).Build())
 		return
@@ -384,6 +430,10 @@ func handleRestart(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleRename(e *events.ApplicationCommandInteractionCreate) {
+	if !checkCooldown(e.User().ID()) {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		return
+	}
 	name := e.Data.String("name")
 	if len(name) > 32 {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Il mio nickname non può essere più lungo di 32 caratteri").SetEphemeral(true).Build())
@@ -398,6 +448,10 @@ func handleRename(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleAvatar(e *events.ApplicationCommandInteractionCreate) {
+	if !checkCooldown(e.User().ID()) {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		return
+	}
 	if e.GuildID().String() != os.Getenv("GUILD_ID") {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Solo gli amministratori possono utilizzare questo comando nel server padre").SetEphemeral(true).Build())
 		return
@@ -437,6 +491,10 @@ func handleAvatar(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleAudio(e *events.ApplicationCommandInteractionCreate) {
+	if !checkCooldown(e.User().ID()) {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
+		return
+	}
 	e.DeferCreateMessage(true)
 
 	channelID := getUserVoiceChannelID(e)
