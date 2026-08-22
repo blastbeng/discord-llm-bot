@@ -228,7 +228,13 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 
 	filePath := GetAudioFilePath(text, voiceName)
 
-	go func() {
+	msg, err := e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(fmt.Sprintf("Sto riproducendo: %s\nVoce: %s", text, voiceName)).SetEphemeral(true).Build())
+	if err != nil {
+		log.Printf("Error creating followup message: %v", err)
+		return
+	}
+
+	go func(messageID discord.Snowflake) {
 		if _, err := os.Stat(filePath); err != nil {
 			var audioData []byte
 			var err error
@@ -241,6 +247,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 					voiceName = "Google"
 					filePath = GetAudioFilePath(text, voiceName)
 					audioData, err = GetTTSGoogle(text)
+					_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(fmt.Sprintf("Sto riproducendo: %s\nVoce: %s\n\nWARNING: FakeYou sta ricevendo troppe richieste, audio generato usando la voce di Google", text, voiceName)).Build())
 				}
 			}
 			if err != nil {
@@ -269,9 +276,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
 			log.Printf("Error playing audio: %v", err)
 		}
-	}()
-
-	e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(fmt.Sprintf("Sto riproducendo: %s", text)).SetEphemeral(true).Build())
+	}(msg.ID)
 }
 
 func handleRandom(e *events.ApplicationCommandInteractionCreate) {
@@ -312,7 +317,13 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 
 	filePath := GetAudioFilePath(sentence, voiceName)
 
-	go func() {
+	msg, err := e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(fmt.Sprintf("Sto riproducendo: %s\nVoce: %s", sentence, voiceName)).SetEphemeral(true).Build())
+	if err != nil {
+		log.Printf("Error creating followup message: %v", err)
+		return
+	}
+
+	go func(messageID discord.Snowflake) {
 		if _, err := os.Stat(filePath); err != nil {
 			var audioData []byte
 			var err error
@@ -325,6 +336,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 					voiceName = "Google"
 					filePath = GetAudioFilePath(sentence, voiceName)
 					audioData, err = GetTTSGoogle(sentence)
+					_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(fmt.Sprintf("Sto riproducendo: %s\nVoce: %s\n\nWARNING: FakeYou sta ricevendo troppe richieste, audio generato usando la voce di Google", sentence, voiceName)).Build())
 				}
 			}
 			if err != nil {
@@ -352,14 +364,16 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
 			log.Printf("Error playing audio: %v", err)
 		}
-	}()
-
-	e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(fmt.Sprintf("Sto riproducendo: %s", sentence)).SetEphemeral(true).Build())
+	}(msg.ID)
 }
 
 func handleRestart(e *events.ApplicationCommandInteractionCreate) {
 	if e.GuildID().String() != os.Getenv("GUILD_ID") || e.User().ID().String() != os.Getenv("ADMIN_ID") {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Non hai i permessi per utilizzare questo comando.").SetEphemeral(true).Build())
+		return
+	}
+	if e.Member() == nil || !e.Member().Permissions.Has(discord.PermissionAdministrator) {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Solo gli amministratori possono utilizzare questo comando").SetEphemeral(true).Build())
 		return
 	}
 	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Sto riavviando il bot.").SetEphemeral(true).Build())
