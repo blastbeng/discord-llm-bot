@@ -81,10 +81,8 @@ func getOrGenerateAudio(text string, voiceName string) (filePath string, finalVo
 	}
 	os.Remove(tempPath)
 
-	if voiceName == "Google" {
-		db.InsertSentence(text)
-		db.UpdateSentenceHasAudio(text)
-	}
+	db.InsertSentence(text)
+	db.UpdateSentenceHasAudio(text)
 	return filePath, voiceName, nil
 }
 
