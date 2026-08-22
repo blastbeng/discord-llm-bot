@@ -55,7 +55,9 @@ async fn get_queue_message(lang: &lang::Lang) -> String {
     let used_memory = sys.used_memory();
     let ram_usage = (used_memory as f64 / total_memory as f64) * 100.0;
     log::debug!("get_queue_message: CPU {:.1}%, RAM {:.2}%", cpu_usage, ram_usage);
-    lang.queue_overload.replacen("{}", &cpu_usage.to_string(), 1).replacen("{}", &ram_usage.to_string(), 1)
+    let cpu_str = format!("{:.1}", cpu_usage);
+    let ram_str = format!("{:.2}", ram_usage);
+    lang.queue_overload.replacen("{}", &cpu_str, 1).replacen("{}", &ram_str, 1)
 }
 
 async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
@@ -669,7 +671,7 @@ async fn main() {
                         log::error!("Error: {}", error);
                         if let poise::FrameworkError::Command { ctx, error, .. } = error {
                             log::error!("Command error: {}", error);
-                            let msg = error.to_string();
+                            let msg = ctx.data().lang.discord_api_error.clone();
                             let _ = ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await;
                         }
                     }
