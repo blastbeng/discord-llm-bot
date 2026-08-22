@@ -279,7 +279,8 @@ async fn speak(
         ctx.http().edit_message(
             ctx.channel_id(),
             message_id,
-            serenity::EditMessage::new().content(&ctx.data().lang.bot_not_ready)
+            &serenity::EditMessage::new().content(&ctx.data().lang.bot_not_ready),
+            Vec::new()
         ).await?;
         return Ok(());
     }
@@ -587,10 +588,8 @@ async fn avatar(
     }
 
     let bytes = reqwest::get(&image.url).await?.bytes().await?.to_vec();
-    let b64 = general_purpose::STANDARD.encode(&bytes);
-    let data_url = format!("data:{};base64,{}", image.content_type.as_deref().unwrap_or("image/png"), b64);
-    let avatar = serenity::builder::CreateAttachment::data(data_url.into_bytes(), "avatar.png");
-    let mut current_user = ctx.cache.current_user.clone();
+    let avatar = serenity::builder::CreateAttachment::data(bytes, image.filename.clone());
+    let current_user = ctx.cache.current_user.clone();
     current_user.edit(ctx.http(), serenity::builder::EditProfile::new().avatar(&avatar)).await?;
     ctx.say(&ctx.data().lang.avatar_changed).await?;
     Ok(())
@@ -764,7 +763,8 @@ async fn main() {
     log::info!("Starting Discord client...");
     match client.start().await {
         Ok(()) => {
-            log::error!("Client exited normally (Ok) - this should not happen!");
+            log::error!("Client exited normally (Ok) - this should NOT happen! The gateway disconnected immediately.");
+            log::error!("Possible causes: invalid token, another bot instance with same token, or network issue.");
             std::process::exit(1);
         }
         Err(e) => {
