@@ -330,16 +330,16 @@ func checkVoicePermissions(client *bot.Client, guildID snowflake.ID, userID snow
 		return nil, T("must_be_in_voice")
 	}
 
-	guild := client.Caches.Guild(guildID)
-	if guild == nil {
+	guild, ok := client.Caches.Guild(guildID)
+	if !ok {
 		return channelID, ""
 	}
-	channel := client.Caches.Channel(*channelID)
-	if channel == nil {
+	channel, ok := client.Caches.Channel(*channelID)
+	if !ok {
 		return channelID, ""
 	}
-	selfMember := client.Caches.Member(guildID, client.ID())
-	if selfMember == nil {
+	selfMember, ok := client.Caches.Member(guildID, client.ID())
+	if !ok {
 		return channelID, ""
 	}
 	perms := client.Caches.MemberPermissionsInChannel(channel, selfMember)
@@ -361,17 +361,17 @@ func handleJoin(e *events.ApplicationCommandInteractionCreate) {
 		return
 	}
 
-	voiceClient, ok := e.Client().Voice().GetGuildVoiceClient(e.GuildID())
-	if ok && voiceClient.Connected() {
-		currentChannelID, _ := voiceClient.ChannelID()
+	guildID := *e.GuildID()
+	conn := e.Client().VoiceManager().GetConn(guildID)
+	if conn.Connected() {
+		currentChannelID, _ := conn.ChannelID()
 		if currentChannelID != nil && *currentChannelID == *channelID {
 			e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("already_connected")).SetEphemeral(true).Build())
 			return
 		}
 	}
 
-	voiceClient, _ = e.Client().Voice().GetOrCreateGuildVoiceClient(e.GuildID())
-	if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+	if err := conn.Connect(context.Background(), *channelID, false, false); err != nil {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
 		return
 	}
@@ -387,13 +387,14 @@ func handleLeave(e *events.ApplicationCommandInteractionCreate) {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 		return
 	}
-	voiceClient, ok := e.Client().Voice().GetGuildVoiceClient(e.GuildID())
-	if !ok || !voiceClient.Connected() {
+	guildID := *e.GuildID()
+	conn := e.Client().VoiceManager().GetConn(guildID)
+	if !conn.Connected() {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("not_connected")).SetEphemeral(true).Build())
 		return
 	}
 	StopAudio(e.GuildID().String())
-	voiceClient.Disconnect(context.Background())
+	conn.Disconnect(context.Background())
 	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("leaving_channel")).SetEphemeral(true).Build())
 }
 
@@ -423,17 +424,17 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 		return
 	}
 
-	voiceClient, ok := e.Client().Voice().GetGuildVoiceClient(e.GuildID())
-	if !ok || !voiceClient.Connected() {
-		voiceClient, _ = e.Client().Voice().GetOrCreateGuildVoiceClient(e.GuildID())
-		if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+	guildID := *e.GuildID()
+	conn := e.Client().VoiceManager().GetConn(guildID)
+	if !conn.Connected() {
+		if err := conn.Connect(context.Background(), *channelID, false, false); err != nil {
 			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
 			return
 		}
 	} else {
-		currentChannelID, _ := voiceClient.ChannelID()
+		currentChannelID, _ := conn.ChannelID()
 		if currentChannelID == nil || *currentChannelID != *channelID {
-			if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+			if err := conn.Connect(context.Background(), *channelID, false, false); err != nil {
 				e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
 				return
 			}
@@ -512,17 +513,17 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 		return
 	}
 
-	voiceClient, ok := e.Client().Voice().GetGuildVoiceClient(e.GuildID())
-	if !ok || !voiceClient.Connected() {
-		voiceClient, _ = e.Client().Voice().GetOrCreateGuildVoiceClient(e.GuildID())
-		if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+	guildID := *e.GuildID()
+	conn := e.Client().VoiceManager().GetConn(guildID)
+	if !conn.Connected() {
+		if err := conn.Connect(context.Background(), *channelID, false, false); err != nil {
 			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
 			return
 		}
 	} else {
-		currentChannelID, _ := voiceClient.ChannelID()
+		currentChannelID, _ := conn.ChannelID()
 		if currentChannelID == nil || *currentChannelID != *channelID {
-			if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+			if err := conn.Connect(context.Background(), *channelID, false, false); err != nil {
 				e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
 				return
 			}
@@ -707,17 +708,17 @@ func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 		return
 	}
 
-	voiceClient, ok := e.Client().Voice().GetGuildVoiceClient(e.GuildID())
-	if !ok || !voiceClient.Connected() {
-		voiceClient, _ = e.Client().Voice().GetOrCreateGuildVoiceClient(e.GuildID())
-		if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+	guildID := *e.GuildID()
+	conn := e.Client().VoiceManager().GetConn(guildID)
+	if !conn.Connected() {
+		if err := conn.Connect(context.Background(), *channelID, false, false); err != nil {
 			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
 			return
 		}
 	} else {
-		currentChannelID, _ := voiceClient.ChannelID()
+		currentChannelID, _ := conn.ChannelID()
 		if currentChannelID == nil || *currentChannelID != *channelID {
-			if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+			if err := conn.Connect(context.Background(), *channelID, false, false); err != nil {
 				e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
 				return
 			}
@@ -772,7 +773,7 @@ func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 	out.Close()
 
 	go func() {
-		if err := PlayAudio(voiceClient, e.GuildID().String(), tempPath); err != nil {
+		if err := PlayAudio(conn, e.GuildID().String(), tempPath); err != nil {
 			LogError("Error playing audio: %v", err)
 		}
 		os.Remove(tempPath)
@@ -794,23 +795,22 @@ func HandleButton(e *events.ComponentInteractionCreate) {
 			return
 		}
 		e.DeferCreateMessage(true)
-		guildID := e.GuildID()
-		channelID, errMsg := checkVoicePermissions(e.Client(), *guildID, e.User().ID)
+		guildID := *e.GuildID()
+		channelID, errMsg := checkVoicePermissions(e.Client(), guildID, e.User().ID)
 		if errMsg != "" {
 			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 			return
 		}
-		voiceClient, ok := e.Client().Voice().GetGuildVoiceClient(guildID)
-		if !ok || !voiceClient.Connected() {
-			voiceClient, _ = e.Client().Voice().GetOrCreateGuildVoiceClient(guildID)
-			if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+		conn := e.Client().VoiceManager().GetConn(guildID)
+		if !conn.Connected() {
+			if err := conn.Connect(context.Background(), *channelID, false, false); err != nil {
 				e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
 				return
 			}
 		} else {
-			currentChannelID, _ := voiceClient.ChannelID()
+			currentChannelID, _ := conn.ChannelID()
 			if currentChannelID == nil || *currentChannelID != *channelID {
-				if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+				if err := conn.Connect(context.Background(), *channelID, false, false); err != nil {
 					e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
 					return
 				}
@@ -827,7 +827,7 @@ func HandleButton(e *events.ComponentInteractionCreate) {
 				return
 			}
 			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("playing_audio_button")).SetEphemeral(true).Build())
-			if err := PlayAudio(voiceClient, guildID.String(), filePath); err != nil {
+			if err := PlayAudio(conn, guildID.String(), filePath); err != nil {
 				LogError("Error playing audio: %v", err)
 			}
 			if os.Getenv("SAVE_AUDIO") != "true" {
