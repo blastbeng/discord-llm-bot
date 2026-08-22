@@ -16,7 +16,7 @@ var (
 
 // CompressAudio will use ffmpeg to compress the mp3 to a low bitrate
 func CompressAudio(inputPath, outputPath string) error {
-	cmd := exec.Command("ffmpeg", "-y", "-i", inputPath, "-b:a", "32k", "-ac", "1", outputPath)
+	cmd := exec.Command("ffmpeg", "-y", "-i", inputPath, "-b:a", "64k", "-ac", "2", outputPath)
 	return cmd.Run()
 }
 
@@ -26,7 +26,7 @@ func PlayAudio(voiceClient voice.Client, guildID string, filePath string) error 
 	LogDebug("Starting audio playback for guild %s", guildID)
 	StopAudio(guildID)
 
-	cmd := exec.Command("ffmpeg", "-i", filePath, "-c:a", "libopus", "-f", "ogg", "pipe:1")
+	cmd := exec.Command("ffmpeg", "-i", filePath, "-c:a", "libopus", "-ar", "48000", "-ac", "2", "-f", "ogg", "pipe:1")
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
