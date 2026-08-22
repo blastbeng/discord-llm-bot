@@ -629,7 +629,9 @@ async fn avatar(
 async fn main() {
     eprintln!("=== discord-llm-bot starting (binary loaded correctly) ===");
     dotenv::dotenv().ok();
-    env_logger::Builder::from_env(env_logger::Env::default().filter_or("LOG_LEVEL", "info,tracing=warn")).init();
+    let mut builder = env_logger::Builder::from_env(env_logger::Env::default().filter_or("LOG_LEVEL", "info"));
+    builder.filter_module("tracing", log::LevelFilter::Warn);
+    builder.init();
 
     let token = env::var("BOT_TOKEN").expect("BOT_TOKEN must be set");
 
