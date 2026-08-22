@@ -171,6 +171,42 @@ var translations = map[string]map[string]string{
 		"ita": "\n\nSe il server é sovraccarico, potrebbe volerci un po' di tempo\n*CPU: %s%% - RAM: %.2f%%*",
 		"eng": "\n\nIf the server is overloaded, it might take a while\n*CPU: %s%% - RAM: %.2f%%*",
 	},
+	"discord_api_error": {
+		"ita": "Discord API Error, per favore riprova piú tardi",
+		"eng": "Discord API Error, please try again later",
+	},
+	"disagio": {
+		"ita": "Disagio.",
+		"eng": "Discomfort.",
+	},
+	"no_permissions_channel": {
+		"ita": "Non hai i permessi per utilizzare questo comando in questo canale vocale.",
+		"eng": "You don't have permissions to use this command in this voice channel.",
+	},
+	"initializing_connection": {
+		"ita": "Per favore riprova piú tardi, Sto inizializzando la connessione...",
+		"eng": "Please try again later, I'm initializing the connection...",
+	},
+	"bot_not_ready": {
+		"ita": "Il bot non é ancora pronto opppure un altro user sta usando qualche altro comando.\nPer favore riprova piú tardi o utilizza il comando /stop",
+		"eng": "The bot is not ready yet or another user is using some other command.\nPlease try again later or use the /stop command",
+	},
+	"no_sentence_found_with_text": {
+		"ita": "Nessuna frase trovata contenente il testo \"%s\"",
+		"eng": "No sentence found containing the text \"%s\"",
+	},
+	"error_fakeyou_requests": {
+		"ita": "\n\nERROR: FakeYou sta ricevendo troppe richieste, prova a selezionare una voce diversa.",
+		"eng": "\n\nERROR: FakeYou is receiving too many requests, try selecting a different voice.",
+	},
+	"error_audio_generation_voice": {
+		"ita": "\n\nERROR: Errore nella generazione dell'audio, prova a selezionare una voce diversa.",
+		"eng": "\n\nERROR: Error generating audio, try selecting a different voice.",
+	},
+	"error_audio_generation_retry": {
+		"ita": "\n\nERROR: Errore nella generazione dell'audio, riprovare fra qualche istante.",
+		"eng": "\n\nERROR: Error generating audio, please try again in a few moments.",
+	},
 }
 
 // T translates a key to the language specified in the LANG environment variable.
