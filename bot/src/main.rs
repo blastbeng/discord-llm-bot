@@ -55,9 +55,9 @@ async fn get_queue_message(lang: &lang::Lang) -> String {
     let used_memory = sys.used_memory();
     let ram_usage = (used_memory as f64 / total_memory as f64) * 100.0;
     log::debug!("get_queue_message: CPU {:.1}%, RAM {:.2}%", cpu_usage, ram_usage);
-    let cpu_str = format!("{:.1}", cpu_usage);
-    let ram_str = format!("{:.2}", ram_usage);
-    lang.queue_overload.replacen("{}", &cpu_str, 1).replacen("{}", &ram_str, 1)
+    lang.queue_overload
+        .replacen("{:.1}", &format!("{:.1}", cpu_usage), 1)
+        .replacen("{:.2}", &format!("{:.2}", ram_usage), 1)
 }
 
 async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
@@ -71,11 +71,8 @@ async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
     
     let channel = channel_id.to_channel(ctx.http()).await?;
     if let serenity::Channel::Guild(guild_channel) = channel {
-        let perms = {
-            let guild = ctx.cache().guild(guild_id).ok_or("Guild not in cache")?;
-            let bot_member = guild.members.get(&ctx.cache().current_user().id).ok_or("Bot member not in cache")?;
-            guild.user_permissions_in(&guild_channel, bot_member)
-        };
+        #[allow(deprecated)]
+        let perms = guild_channel.permissions_for_user(ctx.cache(), ctx.cache().current_user().id)?;
         if !perms.speak() || !perms.connect() {
             log::warn!("check_permissions: user {} lacks speak/connect permission in channel {}", ctx.author().id, channel_id);
             return Err(lang.no_speak_permission.as_str().into());
@@ -155,6 +152,7 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
     if handler.is_ok() {
         ctx.say(&ctx.data().lang.join_success).await?;
     } else {
+        log::error!("Failed to join voice channel: {:?}", handler.err());
         ctx.say(&ctx.data().lang.join_error).await?;
     }
     Ok(())
@@ -255,7 +253,6 @@ async fn speak(
     let queue_msg = get_queue_message(&ctx.data().lang).await;
     let initial_msg = ctx.data().lang.generating_audio.replacen("{}", &text, 1).replacen("{}", &queue_msg, 1);
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
-    let message_id = reply.message().await?.id;
 
     let tts_result = match tts::get_or_generate_tts(&text, &actual_voice).await {
         Ok(result) => result,
@@ -266,12 +263,7 @@ async fn speak(
             } else {
                 &ctx.data().lang.tts_error_fakeyou
             };
-            ctx.http().edit_message(
-                ctx.channel_id(),
-                message_id,
-                &serenity::EditMessage::new().content(error_msg),
-                Vec::new()
-            ).await?;
+            reply.edit(ctx, poise::CreateReply::default().content(error_msg).ephemeral(true)).await?;
             return Ok(());
         }
     };
@@ -282,12 +274,7 @@ async fn speak(
 
     let mut handler = handler_lock.lock().await;
     if handler.current_channel().is_none() {
-        ctx.http().edit_message(
-            ctx.channel_id(),
-            message_id,
-            &serenity::EditMessage::new().content(&ctx.data().lang.bot_not_ready),
-            Vec::new()
-        ).await?;
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
         return Ok(());
     }
     let source = songbird::input::File::new(tts_result.file_path.clone());
@@ -310,13 +297,10 @@ async fn speak(
         ])
     ];
 
-    ctx.http().edit_message(
-        ctx.channel_id(),
-        message_id,
-        &serenity::EditMessage::new()
-            .content(ctx.data().lang.playing.replacen("{}", &text, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
-            .components(components),
-        Vec::new()
+    reply.edit(ctx, poise::CreateReply::default()
+        .content(ctx.data().lang.playing.replacen("{}", &text, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
+        .components(components)
+        .ephemeral(true)
     ).await?;
 
     Ok(())
@@ -412,7 +396,6 @@ async fn random(
     let queue_msg = get_queue_message(&ctx.data().lang).await;
     let initial_msg = ctx.data().lang.searching_random.replacen("{}", &queue_msg, 1);
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
-    let message_id = reply.message().await?.id;
 
     let tts_result = match tts::get_or_generate_tts(&random_sentence, &actual_voice).await {
         Ok(result) => result,
@@ -423,24 +406,14 @@ async fn random(
             } else {
                 &ctx.data().lang.tts_error_fakeyou
             };
-            ctx.http().edit_message(
-                ctx.channel_id(),
-                message_id,
-                &serenity::EditMessage::new().content(error_msg),
-                Vec::new()
-            ).await?;
+            reply.edit(ctx, poise::CreateReply::default().content(error_msg).ephemeral(true)).await?;
             return Ok(());
         }
     };
 
     let mut handler = handler_lock.lock().await;
     if handler.current_channel().is_none() {
-        ctx.http().edit_message(
-            ctx.channel_id(),
-            message_id,
-            &serenity::EditMessage::new().content(&ctx.data().lang.bot_not_ready),
-            Vec::new()
-        ).await?;
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
         return Ok(());
     }
     let source = songbird::input::File::new(tts_result.file_path.clone());
@@ -463,13 +436,10 @@ async fn random(
         ])
     ];
 
-    ctx.http().edit_message(
-        ctx.channel_id(),
-        message_id,
-        &serenity::EditMessage::new()
-            .content(ctx.data().lang.playing.replacen("{}", &random_sentence, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
-            .components(components),
-        Vec::new()
+    reply.edit(ctx, poise::CreateReply::default()
+        .content(ctx.data().lang.playing.replacen("{}", &random_sentence, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
+        .components(components)
+        .ephemeral(true)
     ).await?;
 
     Ok(())
@@ -560,12 +530,10 @@ async fn restart(ctx: Context<'_>) -> Result<(), Error> {
         return Ok(());
     }
     let guild_id = ctx.guild_id().unwrap();
-    let perms = {
-        let guild = ctx.cache().guild(guild_id).ok_or("Guild not in cache")?;
-        let member = guild.members.get(&ctx.author().id).ok_or("Member not in cache")?;
-        guild.member_permissions(member)
-    };
-    if !perms.administrator() {
+    let guild = ctx.guild().unwrap();
+    let member = guild.member(ctx, ctx.author().id).await?;
+    #[allow(deprecated)]
+    if !member.permissions(ctx)?.administrator() {
         ctx.say(&ctx.data().lang.admin_only).await?;
         return Ok(());
     }
@@ -793,7 +761,9 @@ async fn main() {
         })
         .build();
 
-    let intents = serenity::GatewayIntents::non_privileged() | serenity::GatewayIntents::MESSAGE_CONTENT;
+    let intents = serenity::GatewayIntents::non_privileged() 
+        | serenity::GatewayIntents::MESSAGE_CONTENT
+        | serenity::GatewayIntents::GUILD_VOICE_STATES;
     
     let mut client = serenity::ClientBuilder::new(token, intents)
         .framework(framework)
