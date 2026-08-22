@@ -351,11 +351,11 @@ func checkVoicePermissions(client bot.Client, guildID snowflake.ID, userID snowf
 }
 
 func handleJoin(e *events.ApplicationCommandInteractionCreate) {
-	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+	if spamMsg := checkCooldown(e.User().ID, e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
-	channelID, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID())
+	channelID, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID)
 	if errMsg != "" {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 		return
@@ -398,11 +398,11 @@ func handleLeave(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleStop(e *events.ApplicationCommandInteractionCreate) {
-	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+	if spamMsg := checkCooldown(e.User().ID, e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
-	if _, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID()); errMsg != "" {
+	if _, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID); errMsg != "" {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 		return
 	}
@@ -411,13 +411,13 @@ func handleStop(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
-	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+	if spamMsg := checkCooldown(e.User().ID, e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
 	e.DeferCreateMessage(true)
 
-	channelID, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID())
+	channelID, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID)
 	if errMsg != "" {
 		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 		return
@@ -500,13 +500,13 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleRandom(e *events.ApplicationCommandInteractionCreate) {
-	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+	if spamMsg := checkCooldown(e.User().ID, e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
 	e.DeferCreateMessage(true)
 
-	channelID, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID())
+	channelID, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID)
 	if errMsg != "" {
 		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 		return
@@ -599,11 +599,11 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleRestart(e *events.ApplicationCommandInteractionCreate) {
-	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+	if spamMsg := checkCooldown(e.User().ID, e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
-	if e.GuildID().String() != os.Getenv("GUILD_ID") || e.User().ID().String() != os.Getenv("ADMIN_ID") {
+	if e.GuildID().String() != os.Getenv("GUILD_ID") || e.User().ID.String() != os.Getenv("ADMIN_ID") {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("admin_only_parent")).SetEphemeral(true).Build())
 		return
 	}
@@ -620,7 +620,7 @@ func handleRestart(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleRename(e *events.ApplicationCommandInteractionCreate) {
-	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+	if spamMsg := checkCooldown(e.User().ID, e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
@@ -642,7 +642,7 @@ func handleRename(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleAvatar(e *events.ApplicationCommandInteractionCreate) {
-	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+	if spamMsg := checkCooldown(e.User().ID, e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
@@ -651,7 +651,7 @@ func handleAvatar(e *events.ApplicationCommandInteractionCreate) {
 		return
 	}
 
-	if e.User().ID().String() != os.Getenv("ADMIN_ID") && (e.Member() == nil || !e.Member().Permissions.Has(discord.PermissionAdministrator)) {
+	if e.User().ID.String() != os.Getenv("ADMIN_ID") && (e.Member() == nil || !e.Member().Permissions.Has(discord.PermissionAdministrator)) {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("admin_only")).SetEphemeral(true).Build())
 		return
 	}
@@ -695,13 +695,13 @@ func handleAvatar(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleAudio(e *events.ApplicationCommandInteractionCreate) {
-	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+	if spamMsg := checkCooldown(e.User().ID, e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
 	e.DeferCreateMessage(true)
 
-	channelID, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID())
+	channelID, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID)
 	if errMsg != "" {
 		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 		return
