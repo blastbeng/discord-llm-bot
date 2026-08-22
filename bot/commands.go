@@ -335,6 +335,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 			}
 			if err != nil {
 				log.Printf("Error generating audio: %v", err)
+				_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(text + "\nVoce: " + voiceName + T("error_audio_generation_retry")).Build())
 				return
 			}
 			tempPath := filePath + ".tmp"
@@ -402,7 +403,11 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 		sentences, err = db.SelectAllSentence()
 	}
 	if err != nil || len(sentences) == 0 {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("no_sentence_found")).SetEphemeral(true).Build())
+		if text != "" {
+			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("no_sentence_found_with_text", text)).SetEphemeral(true).Build())
+		} else {
+			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("no_sentence_found")).SetEphemeral(true).Build())
+		}
 		return
 	}
 
@@ -446,6 +451,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 			}
 			if err != nil {
 				log.Printf("Error generating audio: %v", err)
+				_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(sentence + "\nVoce: " + voiceName + T("error_audio_generation_retry")).Build())
 				return
 			}
 			tempPath := filePath + ".tmp"
@@ -658,6 +664,7 @@ func HandleButton(e *events.ButtonInteractionCreate) {
 			}
 			if err != nil {
 				log.Printf("Error generating audio: %v", err)
+				_ = e.UpdateMessage(discord.NewMessageUpdateBuilder().SetContent(info.Text + "\nVoce: " + info.Voice + T("error_audio_generation_retry")).Build())
 				return
 			}
 			tempPath := filePath + ".tmp"
