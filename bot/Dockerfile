@@ -1,5 +1,5 @@
 FROM golang:1.22-alpine AS builder
-RUN apk add --no-cache gcc musl-dev ffmpeg
+RUN apk add --no-cache gcc musl-dev ffmpeg git
 WORKDIR /app
 COPY go.* ./
 RUN go mod download
