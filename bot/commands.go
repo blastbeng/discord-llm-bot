@@ -313,8 +313,8 @@ func HandleCommand(e *events.ApplicationCommandInteractionCreate) {
 	}
 }
 
-func getVoiceChannelID(client bot.Client, guildID snowflake.ID, userID snowflake.ID) *snowflake.ID {
-	voiceState, ok := client.Cache().VoiceState(guildID, userID)
+func getVoiceChannelID(client *bot.Client, guildID snowflake.ID, userID snowflake.ID) *snowflake.ID {
+	voiceState, ok := client.Caches().VoiceState(guildID, userID)
 	if !ok || voiceState.ChannelID == nil {
 		return nil
 	}
@@ -324,21 +324,21 @@ func getVoiceChannelID(client bot.Client, guildID snowflake.ID, userID snowflake
 // checkVoicePermissions verifies that the user is in a voice channel and that the bot
 // has Speak permission in that channel. It returns the channel ID and an error message
 // (empty string if all checks pass).
-func checkVoicePermissions(client bot.Client, guildID snowflake.ID, userID snowflake.ID) (*snowflake.ID, string) {
+func checkVoicePermissions(client *bot.Client, guildID snowflake.ID, userID snowflake.ID) (*snowflake.ID, string) {
 	channelID := getVoiceChannelID(client, guildID, userID)
 	if channelID == nil {
 		return nil, T("must_be_in_voice")
 	}
 
-	guild := client.Cache().Guild(guildID)
+	guild := client.Caches().Guild(guildID)
 	if guild == nil {
 		return channelID, ""
 	}
-	channel := client.Cache().Channel(*channelID)
+	channel := client.Caches().Channel(*channelID)
 	if channel == nil {
 		return channelID, ""
 	}
-	selfMember := client.Cache().Member(guildID, client.ID())
+	selfMember := client.Caches().Member(guildID, client.ID())
 	if selfMember == nil {
 		return channelID, ""
 	}
