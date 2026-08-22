@@ -114,6 +114,7 @@ func GetTTSFakeYou(text string, voice string) ([]byte, error) {
 	if !infResp.Success || infResp.JobToken == "" {
 		return nil, fmt.Errorf("fakeyou inference failed to return job token")
 	}
+	LogDebug("FakeYou inference created for voice %s, job token: %s", voice, infResp.JobToken)
 
 	// 2. Poll for result
 	var predictionToken string
@@ -135,13 +136,16 @@ func GetTTSFakeYou(text string, voice string) ([]byte, error) {
 
 		if taskData.Status.Status == "result_success" {
 			predictionToken = taskData.PredictionToken
+			LogDebug("FakeYou task succeeded, prediction token: %s", predictionToken)
 			break
 		} else if taskData.Status.Status == "result_failure" {
+			LogError("FakeYou task failed")
 			return nil, fmt.Errorf("fakeyou task failed")
 		}
 	}
 
 	if predictionToken == "" {
+		LogError("FakeYou task timed out")
 		return nil, fmt.Errorf("fakeyou task timed out")
 	}
 

@@ -235,7 +235,7 @@ func RegisterCommands(clientID discord.Snowflake, rest interface {
 	if _, err := rest.CreateGlobalCommands(context.Background(), clientID, commands); err != nil {
 		log.Fatalf("Failed to register commands: %v", err)
 	}
-	log.Println("Commands registered")
+	LogInfo("Commands registered")
 }
 
 func HandleAutocomplete(e *events.AutocompleteInteractionCreate) {
@@ -273,6 +273,7 @@ func HandleAutocomplete(e *events.AutocompleteInteractionCreate) {
 }
 
 func HandleCommand(e *events.ApplicationCommandInteractionCreate) {
+	LogDebug("Command %s executed by %s in guild %s", e.Data.CommandName(), e.User().ID(), e.GuildID())
 	switch e.Data.CommandName() {
 	case "join":
 		handleJoin(e)
@@ -404,7 +405,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 		)).
 		SetEphemeral(true).Build())
 	if err != nil {
-		log.Printf("Error creating followup message: %v", err)
+		LogError("Error creating followup message: %v", err)
 		return
 	}
 
@@ -420,7 +421,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 			_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(T("fakeyou_fallback", text, voiceName)).Build())
 		}
 		if err != nil {
-			log.Printf("Error generating audio: %v", err)
+			LogError("Error generating audio: %v", err)
 			errMsg := T("error_audio_generation_retry")
 			if err.Error() == "text too long" {
 				errMsg = T("error_text_too_long")
@@ -436,7 +437,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 			)).
 			Build())
 		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
-			log.Printf("Error playing audio: %v", err)
+			LogError("Error playing audio: %v", err)
 		}
 		if os.Getenv("SAVE_AUDIO") != "true" {
 			os.Remove(filePath)
@@ -503,7 +504,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 		)).
 		SetEphemeral(true).Build())
 	if err != nil {
-		log.Printf("Error creating followup message: %v", err)
+		LogError("Error creating followup message: %v", err)
 		return
 	}
 
@@ -519,7 +520,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 			_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(T("fakeyou_fallback", sentence, voiceName)).Build())
 		}
 		if err != nil {
-			log.Printf("Error generating audio: %v", err)
+			LogError("Error generating audio: %v", err)
 			errMsg := T("error_audio_generation_retry")
 			if err.Error() == "text too long" {
 				errMsg = T("error_text_too_long")
@@ -535,7 +536,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 			)).
 			Build())
 		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
-			log.Printf("Error playing audio: %v", err)
+			LogError("Error playing audio: %v", err)
 		}
 		if os.Getenv("SAVE_AUDIO") != "true" {
 			os.Remove(filePath)
@@ -716,7 +717,7 @@ func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 
 	go func() {
 		if err := PlayAudio(voiceClient, e.GuildID().String(), tempPath); err != nil {
-			log.Printf("Error playing audio: %v", err)
+			LogError("Error playing audio: %v", err)
 		}
 		os.Remove(tempPath)
 	}()
@@ -726,6 +727,7 @@ func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 
 func HandleButton(e *events.ButtonInteractionCreate) {
 	customID := e.Data.CustomID()
+	LogDebug("Button %s clicked by %s in guild %s", customID, e.User().ID(), e.GuildID())
 	if strings.HasPrefix(customID, "play:") {
 		id := strings.TrimPrefix(customID, "play:")
 		audioMessagesMu.Lock()
@@ -756,13 +758,13 @@ func HandleButton(e *events.ButtonInteractionCreate) {
 				info.Voice = finalVoice
 			}
 			if err != nil {
-				log.Printf("Error generating audio: %v", err)
+				LogError("Error generating audio: %v", err)
 				_ = e.UpdateMessage(discord.NewMessageUpdateBuilder().SetContent(fmt.Sprintf("%s\nVoce: %s%s", info.Text, info.Voice, T("error_audio_generation_retry"))).Build())
 				return
 			}
 			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("playing_audio_button")).SetEphemeral(true).Build())
 			if err := PlayAudio(voiceClient, guildID.String(), filePath); err != nil {
-				log.Printf("Error playing audio: %v", err)
+				LogError("Error playing audio: %v", err)
 			}
 			if os.Getenv("SAVE_AUDIO") != "true" {
 				os.Remove(filePath)

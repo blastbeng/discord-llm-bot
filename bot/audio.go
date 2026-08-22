@@ -23,6 +23,7 @@ func CompressAudio(inputPath, outputPath string) error {
 // PlayAudio starts streaming an mp3 file to a Discord voice channel.
 // It converts the mp3 to opus on the fly using ffmpeg.
 func PlayAudio(voiceClient voice.Client, guildID string, filePath string) error {
+	LogDebug("Starting audio playback for guild %s", guildID)
 	StopAudio(guildID)
 
 	cmd := exec.Command("ffmpeg", "-i", filePath, "-c:a", "libopus", "-f", "ogg", "pipe:1")
@@ -40,6 +41,7 @@ func PlayAudio(voiceClient voice.Client, guildID string, filePath string) error 
 
 	oggReader := ogg.NewDecodeReader(out)
 	voiceClient.SetAudioProvider(voice.NewOggOpusProvider(oggReader))
+	LogDebug("Streaming audio to Discord for guild %s", guildID)
 
 	err := cmd.Wait()
 	if err != nil && !strings.Contains(err.Error(), "signal: killed") {
@@ -50,6 +52,7 @@ func PlayAudio(voiceClient voice.Client, guildID string, filePath string) error 
 
 // StopAudio stops the current audio playback for a guild.
 func StopAudio(guildID string) {
+	LogDebug("Stopping audio playback for guild %s", guildID)
 	audioCmdsMu.Lock()
 	defer audioCmdsMu.Unlock()
 	if cmd, ok := audioCmds[guildID]; ok {

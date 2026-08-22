@@ -23,6 +23,7 @@ var (
 )
 
 func main() {
+	InitLogger()
 	_ = godotenv.Load(".env")
 
 	var err error
@@ -37,20 +38,20 @@ func main() {
 	}
 
 	if err := db.PopulateDatabase("config/sentences.txt"); err != nil {
-		log.Printf("Failed to populate database: %v", err)
+		LogError("Failed to populate database: %v", err)
 	}
 
 	// Start background generator only if SAVE_AUDIO is true
 	if os.Getenv("SAVE_AUDIO") == "true" {
 		go backgroundGenerator()
 	} else {
-		log.Println("SAVE_AUDIO is false, background generator disabled")
+		LogInfo("SAVE_AUDIO is false, background generator disabled")
 	}
 
 	client, err := bot.New(os.Getenv("BOT_TOKEN"),
 		bot.WithIntents(discord.IntentGuilds, discord.IntentGuildVoiceStates),
 		bot.WithEventHandlers(func(e *events.Ready) {
-			log.Printf("Logged in as %s", e.Client().ID())
+			LogInfo("Logged in as %s", e.Client().ID())
 			RegisterCommands(e.Client().ID(), e.Client().Rest())
 		}, HandleCommand, HandleAutocomplete, HandleButton),
 	)
@@ -69,7 +70,7 @@ func main() {
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
 
-	log.Println("Shutting down...")
+	LogInfo("Shutting down...")
 }
 
 func backgroundGenerator() {
@@ -80,7 +81,7 @@ func backgroundGenerator() {
 		sentence, err := db.SelectRandomSentenceWithoutAudio()
 		if err != nil {
 			if err != sql.ErrNoRows {
-				log.Printf("Background generator error: %v", err)
+				LogError("Background generator error: %v", err)
 			}
 			continue
 		}
@@ -94,32 +95,32 @@ func backgroundGenerator() {
 		}
 
 		if len(sentence) > 200 {
-			log.Printf("Background generator: skipping sentence '%s' (too long for Google TTS), marking as processed", sentence)
+			LogDebug("Background generator: skipping sentence '%s' (too long for Google TTS), marking as processed", sentence)
 			db.UpdateSentenceHasAudio(sentence)
 			continue
 		}
 
-		log.Printf("Background generator: processing sentence '%s'", sentence)
+		LogDebug("Background generator: processing sentence '%s'", sentence)
 		audioData, err := GetTTSGoogle(sentence)
 		if err != nil {
-			log.Printf("Background generator: TTS error: %v", err)
+			LogError("Background generator: TTS error: %v", err)
 			continue
 		}
 
 		tempPath := filePath + ".tmp"
 		if err := SaveAudio(tempPath, audioData); err != nil {
-			log.Printf("Background generator: Save error: %v", err)
+			LogError("Background generator: Save error: %v", err)
 			continue
 		}
 
 		if err := CompressAudio(tempPath, filePath); err != nil {
-			log.Printf("Background generator: Compress error: %v", err)
+			LogError("Background generator: Compress error: %v", err)
 			os.Remove(tempPath)
 			continue
 		}
 		os.Remove(tempPath)
 		db.UpdateSentenceHasAudio(sentence)
-		log.Printf("Background generator: saved and compressed '%s'", sentence)
+		LogDebug("Background generator: saved and compressed '%s'", sentence)
 	}
 }
 
@@ -137,7 +138,7 @@ func changePresenceLoop(client bot.Client) {
 func doPresence(client bot.Client) {
 	resp, err := http.Get("https://steamspy.com/api.php?request=top100in2weeks")
 	if err != nil {
-		log.Printf("Presence loop error: %v", err)
+		LogError("Presence loop error: %v", err)
 		return
 	}
 	defer resp.Body.Close()
@@ -146,7 +147,7 @@ func doPresence(client bot.Client) {
 		Name string `json:"name"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&games); err != nil {
-		log.Printf("Presence loop decode error: %v", err)
+		LogError("Presence loop decode error: %v", err)
 		return
 	}
 
@@ -162,6 +163,6 @@ func doPresence(client bot.Client) {
 	game := gameNames[rand.Intn(len(gameNames))]
 
 	if err := client.SetPresence(context.Background(), discord.NewPlayingActivity(game)); err != nil {
-		log.Printf("Presence loop set presence error: %v", err)
+		LogError("Presence loop set presence error: %v", err)
 	}
 }
