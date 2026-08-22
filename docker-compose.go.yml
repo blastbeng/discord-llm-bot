@@ -15,4 +15,4 @@ services:
       - ".env:/app/.env"
       - "./config:/app/config"
       - "/tmp/discord-llm-bot:/tmp/discord-llm-bot"
-    restart: no
+    restart: unless-stopped

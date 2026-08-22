@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
+	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/disgoorg/disgo/discord"
@@ -60,6 +64,32 @@ func RegisterCommands(clientID discord.Snowflake, rest interface {
 				},
 			},
 		},
+		discord.SlashCommandCreate{
+			Name:        "restart",
+			Description: "Restart the bot",
+		},
+		discord.SlashCommandCreate{
+			Name:        "rename",
+			Description: "Rename the bot",
+			Options: []discord.ApplicationCommandOption{
+				discord.ApplicationCommandOptionString{
+					Name:        "name",
+					Description: "The new nickname (max 32 chars)",
+					Required:    true,
+				},
+			},
+		},
+		discord.SlashCommandCreate{
+			Name:        "avatar",
+			Description: "Change the bot avatar",
+			Options: []discord.ApplicationCommandOption{
+				discord.ApplicationCommandOptionAttachment{
+					Name:        "image",
+					Description: "The new avatar image",
+					Required:    true,
+				},
+			},
+		},
 	}
 
 	if _, err := rest.CreateGlobalCommands(context.Background(), clientID, commands); err != nil {
@@ -80,6 +110,12 @@ func HandleCommand(e *events.ApplicationCommandInteractionCreate) {
 		handleSpeak(e)
 	case "random":
 		handleRandom(e)
+	case "restart":
+		handleRestart(e)
+	case "rename":
+		handleRename(e)
+	case "avatar":
+		handleAvatar(e)
 	}
 }
 
@@ -231,4 +267,69 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 	}()
 
 	e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(fmt.Sprintf("Sto riproducendo: %s", sentence)).SetEphemeral(true).Build())
+}
+
+func handleRestart(e *events.ApplicationCommandInteractionCreate) {
+	if e.GuildID().String() != os.Getenv("GUILD_ID") || e.User().ID().String() != os.Getenv("ADMIN_ID") {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Non hai i permessi per utilizzare questo comando.").SetEphemeral(true).Build())
+		return
+	}
+	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Sto riavviando il bot.").SetEphemeral(true).Build())
+	go func() {
+		time.Sleep(1 * time.Second)
+		os.Exit(0)
+	}()
+}
+
+func handleRename(e *events.ApplicationCommandInteractionCreate) {
+	name := e.Data.String("name")
+	if len(name) > 32 {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Il mio nickname non può essere più lungo di 32 caratteri").SetEphemeral(true).Build())
+		return
+	}
+
+	if err := e.Client().Rest().UpdateCurrentMember(e.GuildID(), discord.CurrentMemberUpdate{Nick: &name}); err != nil {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante il cambio di nickname.").SetEphemeral(true).Build())
+		return
+	}
+	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(fmt.Sprintf("Mi hai rinominato in \"%s\"", name)).SetEphemeral(true).Build())
+}
+
+func handleAvatar(e *events.ApplicationCommandInteractionCreate) {
+	if e.GuildID().String() != os.Getenv("GUILD_ID") {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Solo gli amministratori possono utilizzare questo comando nel server padre").SetEphemeral(true).Build())
+		return
+	}
+
+	attachmentID := e.Data.Options.Attachment("image").Value
+	attachment, ok := e.Data.Resolved.Attachments[attachmentID]
+	if !ok {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante il recupero dell'allegato.").SetEphemeral(true).Build())
+		return
+	}
+
+	if !strings.HasPrefix(attachment.ContentType, "image/") {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Questo tipo di file non è supportato").SetEphemeral(true).Build())
+		return
+	}
+
+	resp, err := http.Get(attachment.URL)
+	if err != nil {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante il download dell'immagine.").SetEphemeral(true).Build())
+		return
+	}
+	defer resp.Body.Close()
+
+	imageData, err := io.ReadAll(resp.Body)
+	if err != nil {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante la lettura dell'immagine.").SetEphemeral(true).Build())
+		return
+	}
+
+	avatar := discord.NewIconRaw(discord.IconType(attachment.ContentType), bytes.NewReader(imageData))
+	if err := e.Client().Rest().UpdateCurrentUser(discord.UserUpdate{Avatar: &avatar}); err != nil {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante l'aggiornamento dell'avatar.").SetEphemeral(true).Build())
+		return
+	}
+	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("L'immagine è stata modificata").SetEphemeral(true).Build())
 }

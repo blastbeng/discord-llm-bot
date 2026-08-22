@@ -3,7 +3,10 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"log"
+	"math/rand"
+	"net/http"
 	"os"
 	"time"
 
@@ -33,6 +36,7 @@ func main() {
 
 	// Start background generator
 	go backgroundGenerator()
+	go changePresenceLoop(client)
 
 	client, err := bot.New(os.Getenv("BOT_TOKEN"),
 		bot.WithIntents(discord.IntentGuilds, discord.IntentGuildVoiceStates),
@@ -95,5 +99,49 @@ func backgroundGenerator() {
 		}
 		os.Remove(tempPath)
 		log.Printf("Background generator: saved and compressed '%s'", sentence)
+	}
+}
+
+func changePresenceLoop(client bot.Client) {
+	ticker := time.NewTicker(6 * time.Hour)
+	defer ticker.Stop()
+
+	doPresence(client) // run once immediately
+
+	for range ticker.C {
+		doPresence(client)
+	}
+}
+
+func doPresence(client bot.Client) {
+	resp, err := http.Get("https://steamspy.com/api.php?request=top100in2weeks")
+	if err != nil {
+		log.Printf("Presence loop error: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	var games map[string]struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&games); err != nil {
+		log.Printf("Presence loop decode error: %v", err)
+		return
+	}
+
+	var gameNames []string
+	for _, g := range games {
+		gameNames = append(gameNames, g.Name)
+	}
+
+	if len(gameNames) == 0 {
+		return
+	}
+
+	rand.Seed(time.Now().UnixNano())
+	game := gameNames[rand.Intn(len(gameNames))]
+
+	if err := client.SetPresence(context.Background(), discord.NewPlayingActivity(game)); err != nil {
+		log.Printf("Presence loop set presence error: %v", err)
 	}
 }
