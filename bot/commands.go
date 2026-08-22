@@ -268,13 +268,13 @@ func HandleAutocomplete(e *events.AutocompleteInteractionCreate) {
 		allVoices = append(allVoices, voice)
 	}
 
-	var choices []discord.ApplicationCommandOptionChoiceString
+	var choices []discord.AutocompleteChoiceString
 	for _, voice := range allVoices {
 		if len(choices) >= 25 {
 			break
 		}
 		if strings.Contains(strings.ToLower(voice), strings.ToLower(current)) {
-			choices = append(choices, discord.ApplicationCommandOptionChoiceString{
+			choices = append(choices, discord.AutocompleteChoiceString{
 				Name:  voice,
 				Value: voice,
 			})
