@@ -398,6 +398,9 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
 			log.Printf("Error playing audio: %v", err)
 		}
+		if os.Getenv("SAVE_AUDIO") != "true" {
+			os.Remove(filePath)
+		}
 		_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().
 			SetContent(T("playing_audio", text, voiceName)).
 			SetComponents(discord.NewActionRow(
@@ -485,6 +488,9 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 		}
 		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
 			log.Printf("Error playing audio: %v", err)
+		}
+		if os.Getenv("SAVE_AUDIO") != "true" {
+			os.Remove(filePath)
 		}
 		_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().
 			SetContent(T("playing_audio", sentence, voiceName)).
@@ -681,6 +687,9 @@ func HandleButton(e *events.ButtonInteractionCreate) {
 		}
 		if err := PlayAudio(voiceClient, guildID.String(), filePath); err != nil {
 			log.Printf("Error playing audio: %v", err)
+		}
+		if os.Getenv("SAVE_AUDIO") != "true" {
+			os.Remove(filePath)
 		}
 		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("playing_audio_button")).SetEphemeral(true).Build())
 	} else if strings.HasPrefix(customID, "stop:") {
