@@ -622,8 +622,6 @@ async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().filter_or("LOG_LEVEL", "info,tracing=warn")).init();
 
     let token = env::var("BOT_TOKEN").expect("BOT_TOKEN must be set");
-    let guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set")
-        .parse::<serenity::GuildId>().expect("Invalid GUILD_ID");
 
     // Initialize database pool (we will create the schema in the next step)
     let db_url = "sqlite:config/discord-bot.sqlite3";
