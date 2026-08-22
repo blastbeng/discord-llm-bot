@@ -44,7 +44,12 @@ func GetAudioFilePath(text string, voice string) string {
 
 // GetTTSGoogle fetches TTS audio from the unofficial Google Translate endpoint.
 func GetTTSGoogle(text string) ([]byte, error) {
-	resp, err := http.Get("https://translate.google.com/translate_tts?ie=UTF-8&tl=it&client=tw-ob&q=" + url.QueryEscape(text))
+	req, err := http.NewRequest("GET", "https://translate.google.com/translate_tts?ie=UTF-8&tl=it&client=tw-ob&q="+url.QueryEscape(text), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

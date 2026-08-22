@@ -92,7 +92,11 @@ func getOrGenerateAudio(text string, voiceName string) (filePath string, finalVo
 		db.UpdateSentenceHasAudio(text)
 	} else {
 		// Save to a temporary file to be played
-		tempPath := filepath.Join(os.TempDir(), "audio_"+uuid.NewString()+".mp3")
+		ext := ".mp3"
+		if voiceName != "Google" {
+			ext = ".wav"
+		}
+		tempPath := filepath.Join(os.TempDir(), "audio_"+uuid.NewString()+ext)
 		if err := SaveAudio(tempPath, audioData); err != nil {
 			return "", voiceName, err
 		}
@@ -304,14 +308,43 @@ func getVoiceChannelID(client bot.Client, guildID discord.Snowflake, userID disc
 	return voiceState.ChannelID
 }
 
+// checkVoicePermissions verifies that the user is in a voice channel and that the bot
+// has Speak permission in that channel. It returns the channel ID and an error message
+// (empty string if all checks pass).
+func checkVoicePermissions(client bot.Client, guildID discord.Snowflake, userID discord.Snowflake) (*discord.Snowflake, string) {
+	channelID := getVoiceChannelID(client, guildID, userID)
+	if channelID == nil {
+		return nil, T("must_be_in_voice")
+	}
+
+	guild := client.Cache().Guild(guildID)
+	if guild == nil {
+		return channelID, ""
+	}
+	channel := client.Cache().Channel(*channelID)
+	if channel == nil {
+		return channelID, ""
+	}
+	selfMember := client.Cache().Member(guildID, client.ID())
+	if selfMember == nil {
+		return channelID, ""
+	}
+	perms := discord.CalcOverwrites(guild, channel, selfMember)
+	if !perms.Has(discord.PermissionSpeak) {
+		return nil, T("no_permissions_channel")
+	}
+
+	return channelID, ""
+}
+
 func handleJoin(e *events.ApplicationCommandInteractionCreate) {
 	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
-	channelID := getVoiceChannelID(e.Client(), e.GuildID(), e.User().ID())
-	if channelID == nil {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("must_be_in_voice")).SetEphemeral(true).Build())
+	channelID, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID())
+	if errMsg != "" {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 		return
 	}
 
@@ -337,6 +370,10 @@ func handleLeave(e *events.ApplicationCommandInteractionCreate) {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
+	if _, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID()); errMsg != "" {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
+		return
+	}
 	voiceClient, ok := e.Client().Voice().GetGuildVoiceClient(e.GuildID())
 	if !ok || !voiceClient.Connected() {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("not_connected")).SetEphemeral(true).Build())
@@ -352,6 +389,10 @@ func handleStop(e *events.ApplicationCommandInteractionCreate) {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
+	if _, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID()); errMsg != "" {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
+		return
+	}
 	StopAudio(e.GuildID().String())
 	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("stopping_bot")).SetEphemeral(true).Build())
 }
@@ -363,9 +404,9 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 	}
 	e.DeferCreateMessage(true)
 
-	channelID := getVoiceChannelID(e.Client(), e.GuildID(), e.User().ID())
-	if channelID == nil {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("must_be_in_voice")).SetEphemeral(true).Build())
+	channelID, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID())
+	if errMsg != "" {
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 		return
 	}
 
@@ -452,9 +493,9 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 	}
 	e.DeferCreateMessage(true)
 
-	channelID := getVoiceChannelID(e.Client(), e.GuildID(), e.User().ID())
-	if channelID == nil {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("must_be_in_voice")).SetEphemeral(true).Build())
+	channelID, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID())
+	if errMsg != "" {
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 		return
 	}
 
@@ -645,9 +686,9 @@ func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 	}
 	e.DeferCreateMessage(true)
 
-	channelID := getVoiceChannelID(e.Client(), e.GuildID(), e.User().ID())
-	if channelID == nil {
-		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("must_be_in_voice")).SetEphemeral(true).Build())
+	channelID, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID())
+	if errMsg != "" {
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 		return
 	}
 
@@ -739,13 +780,13 @@ func HandleButton(e *events.ButtonInteractionCreate) {
 		}
 		e.DeferCreateMessage(true)
 		guildID := e.GuildID()
-		channelID := getVoiceChannelID(e.Client(), guildID, e.User().ID())
+		channelID, errMsg := checkVoicePermissions(e.Client(), guildID, e.User().ID())
+		if errMsg != "" {
+			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
+			return
+		}
 		voiceClient, ok := e.Client().Voice().GetGuildVoiceClient(guildID)
 		if !ok || !voiceClient.Connected() {
-			if channelID == nil {
-				e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("must_be_in_voice")).SetEphemeral(true).Build())
-				return
-			}
 			voiceClient, _ = e.Client().Voice().GetOrCreateGuildVoiceClient(guildID)
 			if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
 				e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
@@ -772,6 +813,10 @@ func HandleButton(e *events.ButtonInteractionCreate) {
 		}()
 	} else if strings.HasPrefix(customID, "stop:") {
 		guildID := strings.TrimPrefix(customID, "stop:")
+		if _, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID()); errMsg != "" {
+			e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
+			return
+		}
 		StopAudio(guildID)
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("stopping_bot_button")).SetEphemeral(true).Build())
 	}
