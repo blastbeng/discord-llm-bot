@@ -17,13 +17,15 @@ import (
 	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
+	"github.com/disgoorg/disgo/rest"
+	"github.com/disgoorg/snowflake/v2"
 	"github.com/google/uuid"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
 )
 
 var (
-	cooldowns   = make(map[discord.Snowflake]time.Time)
+	cooldowns   = make(map[snowflake.Snowflake]time.Time)
 	cooldownsMu sync.Mutex
 )
 
@@ -106,7 +108,7 @@ func getOrGenerateAudio(text string, voiceName string) (filePath string, finalVo
 	return filePath, voiceName, nil
 }
 
-func checkCooldown(userID discord.Snowflake, mention string, commandName string) string {
+func checkCooldown(userID snowflake.Snowflake, mention string, commandName string) string {
 	cooldownsMu.Lock()
 	defer cooldownsMu.Unlock()
 	if last, ok := cooldowns[userID]; ok {
@@ -147,8 +149,8 @@ func getQueueMessage() string {
 	return T("queue_message", cpuStr, ramPercent)
 }
 
-func RegisterCommands(clientID discord.Snowflake, rest interface {
-	CreateGlobalCommands(ctx context.Context, applicationID discord.Snowflake, commands []discord.ApplicationCommandCreate, opts ...discord.RequestOpt) ([]discord.ApplicationCommand, error)
+func RegisterCommands(clientID snowflake.Snowflake, rest interface {
+	CreateGlobalCommands(ctx context.Context, applicationID snowflake.Snowflake, commands []discord.ApplicationCommandCreate, opts ...rest.RequestOpt) ([]discord.ApplicationCommand, error)
 }) {
 	commands := []discord.ApplicationCommandCreate{
 		discord.SlashCommandCreate{
@@ -300,7 +302,7 @@ func HandleCommand(e *events.ApplicationCommandInteractionCreate) {
 	}
 }
 
-func getVoiceChannelID(client bot.Client, guildID discord.Snowflake, userID discord.Snowflake) *discord.Snowflake {
+func getVoiceChannelID(client bot.Client, guildID snowflake.Snowflake, userID snowflake.Snowflake) *snowflake.Snowflake {
 	voiceState, ok := client.Cache().VoiceState(guildID, userID)
 	if !ok || voiceState.ChannelID == nil {
 		return nil
@@ -311,7 +313,7 @@ func getVoiceChannelID(client bot.Client, guildID discord.Snowflake, userID disc
 // checkVoicePermissions verifies that the user is in a voice channel and that the bot
 // has Speak permission in that channel. It returns the channel ID and an error message
 // (empty string if all checks pass).
-func checkVoicePermissions(client bot.Client, guildID discord.Snowflake, userID discord.Snowflake) (*discord.Snowflake, string) {
+func checkVoicePermissions(client bot.Client, guildID snowflake.Snowflake, userID snowflake.Snowflake) (*snowflake.Snowflake, string) {
 	channelID := getVoiceChannelID(client, guildID, userID)
 	if channelID == nil {
 		return nil, T("must_be_in_voice")
@@ -450,7 +452,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 		return
 	}
 
-	go func(messageID discord.Snowflake) {
+	go func(messageID snowflake.Snowflake) {
 		defer func() {
 			audioMessagesMu.Lock()
 			delete(audioMessages, playID)
@@ -549,7 +551,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 		return
 	}
 
-	go func(messageID discord.Snowflake) {
+	go func(messageID snowflake.Snowflake) {
 		defer func() {
 			audioMessagesMu.Lock()
 			delete(audioMessages, playID)
@@ -768,7 +770,7 @@ func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 	e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("audio_playback_started")).SetEphemeral(true).Build())
 }
 
-func HandleButton(e *events.ButtonInteractionCreate) {
+func HandleButton(e *events.ComponentInteractionCreate) {
 	customID := e.Data.CustomID()
 	LogDebug("Button %s clicked by %s in guild %s", customID, e.User().ID(), e.GuildID())
 	if strings.HasPrefix(customID, "play:") {
