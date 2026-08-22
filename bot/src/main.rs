@@ -45,15 +45,6 @@ async fn change_presence_loop(ctx: serenity::Context) {
     }
 }
 
-fn get_current_guild_id(guild_id: serenity::GuildId) -> String {
-    let parent_guild_id = env::var("GUILD_ID").unwrap_or_default();
-    if guild_id.to_string() == parent_guild_id {
-        "000000".to_string()
-    } else {
-        guild_id.to_string()
-    }
-}
-
 async fn get_queue_message(lang: &lang::Lang) -> String {
     let mut sys = System::new_all();
     sys.refresh_cpu();
@@ -140,7 +131,7 @@ async fn voice_autocomplete(
 #[poise::command(slash_command, user_cooldown = 5)]
 async fn join(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    log::info!("[GUILDID : {}] join command invoked by user {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id);
+    log::info!("[GUILDID : {}] join command invoked by user {}", ctx.guild_id().unwrap(), ctx.author().id);
     check_permissions(ctx).await?;
     let channel_id = {
         let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
@@ -171,7 +162,7 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
 #[poise::command(slash_command, user_cooldown = 5)]
 async fn leave(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    log::info!("[GUILDID : {}] leave command invoked by user {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id);
+    log::info!("[GUILDID : {}] leave command invoked by user {}", ctx.guild_id().unwrap(), ctx.author().id);
     check_permissions(ctx).await?;
     let guild_id = ctx.guild_id().unwrap();
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
@@ -188,7 +179,7 @@ async fn leave(ctx: Context<'_>) -> Result<(), Error> {
 #[poise::command(slash_command, user_cooldown = 5)]
 async fn stop(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    log::info!("[GUILDID : {}] stop command invoked by user {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id);
+    log::info!("[GUILDID : {}] stop command invoked by user {}", ctx.guild_id().unwrap(), ctx.author().id);
     check_permissions(ctx).await?;
     let guild_id = ctx.guild_id().unwrap();
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
@@ -211,7 +202,7 @@ async fn speak(
     #[autocomplete = "voice_autocomplete"]
     voice: Option<String>,
 ) -> Result<(), Error> {
-    log::info!("[GUILDID : {}] speak command invoked by user {} with text: {:?}, voice: {:?}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id, text, voice);
+    log::info!("[GUILDID : {}] speak command invoked by user {} with text: {:?}, voice: {:?}", ctx.guild_id().unwrap(), ctx.author().id, text, voice);
     let voice = voice.unwrap_or_else(|| "Google".to_string());
     let voices = [
         "Google",
@@ -240,7 +231,7 @@ async fn speak(
     let guild_id = ctx.guild_id().unwrap();
     let channel_id = {
         let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
-        log::info!("[GUILDID : {}] speak - text: {}, voice: {}", get_current_guild_id(guild.id), text, actual_voice);
+        log::info!("[GUILDID : {}] speak - text: {}, voice: {}", guild.id, text, actual_voice);
         guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
     };
     connect_bot_by_voice_client(ctx, channel_id).await?;
@@ -333,7 +324,7 @@ async fn random(
     voice: Option<String>,
     #[description = "Il testo da cercare"] text: Option<String>,
 ) -> Result<(), Error> {
-    log::info!("[GUILDID : {}] random command invoked by user {} with voice: {:?}, text: {:?}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id, voice, text);
+    log::info!("[GUILDID : {}] random command invoked by user {} with voice: {:?}, text: {:?}", ctx.guild_id().unwrap(), ctx.author().id, voice, text);
     let voice = voice.unwrap_or_else(|| "Google".to_string());
     let voices = [
         "Google",
@@ -362,7 +353,7 @@ async fn random(
     let guild_id = ctx.guild_id().unwrap();
     let channel_id = {
         let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
-        log::info!("[GUILDID : {}] random - voice: {}, text: {:?}", get_current_guild_id(guild.id), actual_voice, text);
+        log::info!("[GUILDID : {}] random - voice: {}, text: {:?}", guild.id, actual_voice, text);
         guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
     };
     connect_bot_by_voice_client(ctx, channel_id).await?;
@@ -479,7 +470,7 @@ async fn audio(
     #[description = "Il file audio (mp3 or wav)"] audio: serenity::Attachment,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    log::info!("[GUILDID : {}] audio command invoked by user {} with filename: {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id, audio.filename);
+    log::info!("[GUILDID : {}] audio command invoked by user {} with filename: {}", ctx.guild_id().unwrap(), ctx.author().id, audio.filename);
     check_permissions(ctx).await?;
 
     let allowed_extensions = ["mp3", "wav", "ogg", "m4a"];
@@ -512,7 +503,7 @@ async fn audio(
         }
     }
 
-    log::info!("[GUILDID : {}] audio - filename: {}", get_current_guild_id(guild_id), audio.filename);
+    log::info!("[GUILDID : {}] audio - filename: {}", guild_id, audio.filename);
 
     let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
     let safe_filename = std::path::Path::new(&audio.filename)
@@ -549,7 +540,7 @@ async fn audio(
 #[poise::command(slash_command, user_cooldown = 5)]
 async fn restart(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    log::info!("[GUILDID : {}] restart command invoked by user {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id);
+    log::info!("[GUILDID : {}] restart command invoked by user {}", ctx.guild_id().unwrap(), ctx.author().id);
     let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
     let _guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
     if ctx.guild_id().unwrap().to_string() != _guild_id || ctx.author().id.to_string() != admin_id {
@@ -577,7 +568,7 @@ async fn rename(
     #[description = "Nuovo nickname del bot (limite di 32 caratteri)"] name: String,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    log::info!("[GUILDID : {}] rename command invoked by user {} with name: {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id, name);
+    log::info!("[GUILDID : {}] rename command invoked by user {} with name: {}", ctx.guild_id().unwrap(), ctx.author().id, name);
     if name.chars().count() > 32 {
         ctx.say(&ctx.data().lang.nickname_too_long).await?;
         return Ok(());
@@ -595,7 +586,7 @@ async fn avatar(
     #[description = "Nuovo avatar del bot"] image: serenity::Attachment,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    log::info!("[GUILDID : {}] avatar command invoked by user {} with image: {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id, image.filename);
+    log::info!("[GUILDID : {}] avatar command invoked by user {} with image: {}", ctx.guild_id().unwrap(), ctx.author().id, image.filename);
     let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
     let guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
     if ctx.guild_id().unwrap().to_string() != guild_id || ctx.author().id.to_string() != admin_id {
