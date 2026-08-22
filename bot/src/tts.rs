@@ -1,11 +1,11 @@
+use id3::{Tag, Version};
 use md5::compute as md5_compute;
 use std::path::Path;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-pub fn get_file_path(voice: &str, text: &str) -> String {
-    let hash = format!("{:x}", md5_compute(text));
-    let voice_token = match voice {
+pub fn get_voice_token(voice: &str) -> &str {
+    match voice {
         "Papa Francesco (FakeYou.com)" => "weight_gc8gsr41974q5ax35gvttr85v",
         "Silvio Berlusconi (FakeYou.com)" => "weight_324nvat7xvaawe146na154gwh",
         "Goku (FakeYou.com)" => "weight_wn689844yyr08jny6jyyvkwcp",
@@ -13,7 +13,26 @@ pub fn get_file_path(voice: &str, text: &str) -> String {
         "Peter Griffin (FakeYou.com)" => "weight_t0y9rpba3qjnq02da44ynfs45",
         "Homer Simpson (FakeYou.com)" => "weight_zw97bw3hbtm07qwkd2exna15b",
         _ => "Google",
-    };
+    }
+}
+
+pub fn write_id3_tags(file_path: &str, artist: &str, title: &str, lyrics: &str) {
+    let mut tag = Tag::new();
+    tag.set_artist(artist);
+    tag.set_title(title);
+    tag.add_frame(id3::frame::Lyrics {
+        lang: "ita".to_string(),
+        description: String::new(),
+        content: lyrics.to_string(),
+    });
+    if let Err(e) = tag.write_to_path(file_path, Version::Id3v24) {
+        log::warn!("write_id3_tags: failed to write tags to {}: {}", file_path, e);
+    }
+}
+
+pub fn get_file_path(voice: &str, text: &str) -> String {
+    let hash = format!("{:x}", md5_compute(text));
+    let voice_token = get_voice_token(voice);
     let file_path = format!("audios/{}_{}.mp3", voice_token, hash);
     log::debug!("get_file_path: voice={}, text={}, path={}", voice, text, file_path);
     file_path
@@ -193,5 +212,14 @@ pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<TtsResult, B
     };
 
     compress_and_save_mp3(bytes, &save_path).await?;
+
+    // Write ID3 tags (artist, title, lyrics) into the MP3 file
+    let (artist, title) = if actual_voice == "Google" {
+        ("Google", "Google")
+    } else {
+        (voice, get_voice_token(voice))
+    };
+    write_id3_tags(&save_path, artist, title, text);
+
     Ok(TtsResult { file_path: save_path, actual_voice, fallback })
 }

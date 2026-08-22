@@ -20,3 +20,5 @@ urlencoding = "2.1"
 rand = "0.8"
 base64 = "0.22"
 sysinfo = "0.30"
+id3 = "1.14"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }

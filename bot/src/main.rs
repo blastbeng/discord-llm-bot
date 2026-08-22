@@ -259,10 +259,15 @@ async fn speak(
         Ok(result) => result,
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
+            let error_msg = if actual_voice == "Google" {
+                &ctx.data().lang.tts_error_google
+            } else {
+                &ctx.data().lang.tts_error_fakeyou
+            };
             ctx.http().edit_message(
                 ctx.channel_id(),
                 message_id,
-                &serenity::EditMessage::new().content(&ctx.data().lang.tts_error),
+                &serenity::EditMessage::new().content(error_msg),
                 Vec::new()
             ).await?;
             return Ok(());
@@ -411,10 +416,15 @@ async fn random(
         Ok(result) => result,
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
+            let error_msg = if actual_voice == "Google" {
+                &ctx.data().lang.tts_error_google
+            } else {
+                &ctx.data().lang.tts_error_fakeyou
+            };
             ctx.http().edit_message(
                 ctx.channel_id(),
                 message_id,
-                &serenity::EditMessage::new().content(&ctx.data().lang.tts_error),
+                &serenity::EditMessage::new().content(error_msg),
                 Vec::new()
             ).await?;
             return Ok(());
@@ -600,6 +610,10 @@ async fn avatar(
     }
 
     let bytes = reqwest::get(&image.url).await?.bytes().await?.to_vec();
+    if image::load_from_memory(&bytes).is_err() {
+        ctx.say(&ctx.data().lang.unsupported_file).await?;
+        return Ok(());
+    }
     let avatar = serenity::builder::CreateAttachment::bytes(bytes, image.filename.clone());
     let mut current_user = ctx.cache().current_user().clone();
     current_user.edit(ctx.http(), serenity::builder::EditProfile::new().avatar(&avatar)).await?;
