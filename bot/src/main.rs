@@ -667,10 +667,9 @@ async fn main() {
                                         if let Some(guild) = ctx.cache.guild(guild_id) {
                                             if let Some(channel_id) = guild.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id) {
                                                 if let Some(guild_channel) = guild.channels.get(&channel_id) {
-                                                    if let Some(bot_member) = guild.members.get(&ctx.cache.current_user().id) {
-                                                        let perms = guild.user_permissions_in(guild_channel, bot_member);
-                                                        perms.speak() && perms.connect()
-                                                    } else { false }
+                                                    #[allow(deprecated)]
+                                                    let perms = guild_channel.permissions_for_user(&ctx.cache, ctx.cache.current_user().id);
+                                                    perms.speak() && perms.connect()
                                                 } else { false }
                                             } else { false }
                                         } else { false }
