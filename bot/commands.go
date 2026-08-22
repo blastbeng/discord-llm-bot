@@ -249,7 +249,13 @@ func HandleAutocomplete(e *events.AutocompleteInteractionCreate) {
 		return
 	}
 
-	focusedName := e.Data.FocusedName()
+	focusedName := ""
+	for _, option := range e.Data.Options {
+		if option.Focused {
+			focusedName = option.Name
+			break
+		}
+	}
 	if focusedName != "voice" {
 		return
 	}
