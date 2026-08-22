@@ -792,6 +792,14 @@ func HandleButton(e *events.ButtonInteractionCreate) {
 				e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
 				return
 			}
+		} else {
+			currentChannelID, _ := voiceClient.ChannelID()
+			if currentChannelID == nil || *currentChannelID != *channelID {
+				if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+					e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
+					return
+				}
+			}
 		}
 		go func() {
 			filePath, finalVoice, err := getOrGenerateAudio(info.Text, info.Voice)
