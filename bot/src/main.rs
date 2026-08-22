@@ -755,5 +755,14 @@ async fn main() {
         .expect("Error creating client");
 
     log::info!("Starting Discord client...");
-    client.start().await.unwrap();
+    match client.start().await {
+        Ok(()) => {
+            log::error!("Client exited normally (Ok) - this should not happen!");
+            std::process::exit(1);
+        }
+        Err(e) => {
+            log::error!("Client error: {}", e);
+            std::process::exit(1);
+        }
+    }
 }
