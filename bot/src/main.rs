@@ -138,24 +138,14 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
         let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
         guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
     };
-    let guild_id = ctx.guild_id().unwrap();
-    
-    let manager = songbird::get(ctx.serenity_context()).await.unwrap();
-    
-    // Disconnect existing connection first (matches Python behavior)
-    if let Some(handler_lock) = manager.get(guild_id) {
-        let mut handler = handler_lock.lock().await;
-        let _ = handler.leave().await;
-        drop(handler);
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    }
-    
-    let handler = manager.join(guild_id, channel_id).await;
-    if handler.is_ok() {
-        ctx.say(&ctx.data().lang.join_success).await?;
-    } else {
-        log::error!("Failed to join voice channel: {:?}", handler.err());
-        ctx.say(&ctx.data().lang.join_error).await?;
+    match connect_bot_by_voice_client(ctx, channel_id).await {
+        Ok(_) => {
+            ctx.say(&ctx.data().lang.join_success).await?;
+        }
+        Err(e) => {
+            log::error!("Failed to join voice channel: {:?}", e);
+            ctx.say(&ctx.data().lang.join_error).await?;
+        }
     }
     Ok(())
 }
