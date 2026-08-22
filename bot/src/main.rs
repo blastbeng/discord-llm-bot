@@ -31,10 +31,11 @@ async fn change_presence_loop(ctx: serenity::Context) {
                             let games: Vec<String> = obj.values().filter_map(|v| v["name"].as_str().map(|s| s.to_string())).collect();
                             if let Some(game) = games.choose(&mut rand::thread_rng()) {
                                 log::info!("change_presence_loop - setting game: {}", game);
-                                let activity = serenity::builder::CreateActivity::new()
-                                    .name(&game)
-                                    .kind(serenity::ActivityType::Playing)
-                                    .build();
+                                let activity = serenity::Activity {
+                                    name: game.clone(),
+                                    kind: serenity::ActivityType::Playing,
+                                    ..Default::default()
+                                };
                                 ctx.set_activity(Some(activity));
                             }
                         }
