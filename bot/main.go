@@ -89,7 +89,8 @@ func backgroundGenerator() {
 		}
 
 		if len(sentence) > 200 {
-			log.Printf("Background generator: skipping sentence '%s' (too long for Google TTS)", sentence)
+			log.Printf("Background generator: skipping sentence '%s' (too long for Google TTS), marking as processed", sentence)
+			db.UpdateSentenceHasAudio(sentence)
 			continue
 		}
 

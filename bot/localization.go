@@ -219,6 +219,10 @@ var translations = map[string]map[string]string{
 		"ita": "Il testo è troppo lungo per la voce di Google (massimo 200 caratteri).",
 		"eng": "The text is too long for Google voice (maximum 200 characters).",
 	},
+	"already_connected": {
+		"ita": "Sono già connesso a questo canale",
+		"eng": "I'm already connected to this channel",
+	},
 }
 
 // T translates a key to the language specified in the LANG environment variable.
