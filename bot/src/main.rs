@@ -7,7 +7,6 @@ use rand::seq::SliceRandom;
 use std::env;
 use sysinfo::System;
 use songbird::SerenityInit;
-use serenity::CacheHttp;
 
 #[derive(Debug)]
 // Data stored in the bot's context
@@ -78,7 +77,8 @@ async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
     
     let channel = channel_id.to_channel(ctx.http()).await?;
     if let serenity::Channel::Guild(guild_channel) = channel {
-        let perms = guild_channel.permissions_for_user(ctx.cache(), ctx.cache().current_user().id)?;
+        let guild = ctx.cache().guild(guild_channel.guild_id).ok_or("Guild not found")?;
+        let perms = guild.user_permissions_in(&guild_channel, ctx.cache().current_user().id);
         if !perms.speak() || !perms.connect() {
             log::warn!("check_permissions: user {} lacks speak/connect permission in channel {}", ctx.author().id, channel_id);
             return Err(lang.no_speak_permission.as_str().into());
@@ -101,7 +101,7 @@ async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::Cha
             }
         }
         log::info!("connect_bot_by_voice_client: leaving current channel to join {}", channel_id);
-        handler.leave().await;
+        let _ = handler.leave().await;
         drop(handler);
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     }
@@ -149,7 +149,7 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
     // Disconnect existing connection first (matches Python behavior)
     if let Some(handler_lock) = manager.get(guild_id) {
         let mut handler = handler_lock.lock().await;
-        handler.leave().await;
+        let _ = handler.leave().await;
         drop(handler);
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     }
@@ -172,7 +172,7 @@ async fn leave(ctx: Context<'_>) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap();
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
     if manager.get(guild_id).is_some() {
-        manager.remove(guild_id).await;
+        let _ = manager.remove(guild_id).await;
         ctx.say(&ctx.data().lang.leave_success).await?;
     } else {
         ctx.say(&ctx.data().lang.not_connected).await?;
@@ -547,14 +547,15 @@ async fn restart(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     log::info!("[GUILDID : {}] restart command invoked by user {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id);
     let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
-    let guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
-    if ctx.guild_id().unwrap().to_string() != guild_id || ctx.author().id.to_string() != admin_id {
+    let _guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
+    if ctx.guild_id().unwrap().to_string() != _guild_id || ctx.author().id.to_string() != admin_id {
         ctx.say(&ctx.data().lang.admin_parent_server).await?;
         return Ok(());
     }
     let guild_id = ctx.guild_id().unwrap();
-    let member = guild_id.member(ctx.http(), ctx.author().id).await?;
-    if !member.permissions(ctx)?.administrator() {
+    let guild = ctx.cache().guild(guild_id).ok_or("Guild not found")?;
+    let perms = guild.member_permissions(ctx.author().id);
+    if !perms.administrator() {
         ctx.say(&ctx.data().lang.admin_only).await?;
         return Ok(());
     }
@@ -677,9 +678,8 @@ async fn main() {
                                         if let Some(guild) = ctx.cache.guild(guild_id) {
                                             if let Some(channel_id) = guild.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id) {
                                                 if let Some(guild_channel) = guild.channels.get(&channel_id) {
-                                                    if let Ok(perms) = guild_channel.permissions_for_user(&ctx.cache, ctx.cache.current_user().id) {
-                                                        perms.speak() && perms.connect()
-                                                    } else { false }
+                                                    let perms = guild.user_permissions_in(guild_channel, ctx.cache.current_user().id);
+                                                    perms.speak() && perms.connect()
                                                 } else { false }
                                             } else { false }
                                         } else { false }
