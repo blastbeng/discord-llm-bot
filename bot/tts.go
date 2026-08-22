@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -167,4 +168,13 @@ func SaveAudio(filePath string, data []byte) error {
 		return err
 	}
 	return os.WriteFile(filePath, data, 0644)
+}
+
+// GetRandomVoice returns a random voice from the available voices including Google.
+func GetRandomVoice() string {
+	voices := []string{"Google"}
+	for voice := range fakeYouVoices {
+		voices = append(voices, voice)
+	}
+	return voices[rand.Intn(len(voices))]
 }

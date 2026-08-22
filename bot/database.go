@@ -23,7 +23,8 @@ func (d *Database) CreateTables() error {
 	_, err := d.db.Exec(`
 		CREATE TABLE IF NOT EXISTS sentences (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			sentence TEXT NOT NULL UNIQUE
+			sentence TEXT NOT NULL UNIQUE,
+			has_audio BOOLEAN DEFAULT 0
 		);
 	`)
 	return err
@@ -73,7 +74,11 @@ func (d *Database) SelectAllSentence() ([]string, error) {
 // SelectRandomSentenceWithoutAudio will be used by the background generator
 func (d *Database) SelectRandomSentenceWithoutAudio() (string, error) {
 	var sentence string
-	// This is a placeholder query. We will update it to check for missing mp3s later.
-	err := d.db.QueryRow("SELECT sentence FROM sentences ORDER BY RANDOM() LIMIT 1").Scan(&sentence)
+	err := d.db.QueryRow("SELECT sentence FROM sentences WHERE has_audio = 0 ORDER BY RANDOM() LIMIT 1").Scan(&sentence)
 	return sentence, err
+}
+
+func (d *Database) UpdateSentenceHasAudio(sentence string) error {
+	_, err := d.db.Exec("UPDATE sentences SET has_audio = 1 WHERE sentence = ?", sentence)
+	return err
 }

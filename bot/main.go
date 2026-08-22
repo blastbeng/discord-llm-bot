@@ -98,6 +98,7 @@ func backgroundGenerator() {
 			continue
 		}
 		os.Remove(tempPath)
+		db.UpdateSentenceHasAudio(sentence)
 		log.Printf("Background generator: saved and compressed '%s'", sentence)
 	}
 }

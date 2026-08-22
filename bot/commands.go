@@ -174,8 +174,8 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 
 	text := e.Data.String("text")
 	voiceName := e.Data.String("voice")
-	if voiceName == "" {
-		voiceName = "Google"
+	if voiceName == "" || voiceName == "random" {
+		voiceName = GetRandomVoice()
 	}
 
 	filePath := GetAudioFilePath(text, voiceName)
@@ -195,6 +195,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 		SaveAudio(tempPath, audioData)
 		CompressAudio(tempPath, filePath)
 		os.Remove(tempPath)
+		db.UpdateSentenceHasAudio(text)
 	}
 
 	go func() {
@@ -222,8 +223,8 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 	}
 
 	voiceName := e.Data.String("voice")
-	if voiceName == "" {
-		voiceName = "Google"
+	if voiceName == "" || voiceName == "random" {
+		voiceName = GetRandomVoice()
 	}
 
 	text := e.Data.String("text")
@@ -258,6 +259,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 		SaveAudio(tempPath, audioData)
 		CompressAudio(tempPath, filePath)
 		os.Remove(tempPath)
+		db.UpdateSentenceHasAudio(sentence)
 	}
 
 	go func() {
