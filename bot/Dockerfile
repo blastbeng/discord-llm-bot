@@ -12,6 +12,9 @@ RUN apt-get update && \
 
 WORKDIR /app
 
+# Set cargo build jobs to 4 to speed up compilation
+ENV CARGO_BUILD_JOBS=4
+
 # Copy only Cargo.toml first to cache dependencies
 COPY Cargo.toml ./
 RUN mkdir src && echo "fn main() {}" > src/main.rs
