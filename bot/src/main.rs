@@ -78,7 +78,7 @@ async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
     
     let channel = channel_id.to_channel(ctx.http()).await?;
     if let serenity::Channel::Guild(guild_channel) = channel {
-        let perms = guild_channel.permissions_for_user(ctx.cache(), &ctx.cache().current_user())?;
+        let perms = guild_channel.permissions_for_user(ctx.cache(), ctx.cache().current_user().id)?;
         if !perms.speak() || !perms.connect() {
             log::warn!("check_permissions: user {} lacks speak/connect permission in channel {}", ctx.author().id, channel_id);
             return Err(lang.no_speak_permission.as_str().into());
@@ -602,7 +602,7 @@ async fn avatar(
 
     let bytes = reqwest::get(&image.url).await?.bytes().await?.to_vec();
     let avatar = serenity::builder::CreateAttachment::bytes(bytes, image.filename.clone());
-    let current_user = ctx.cache().current_user().clone();
+    let mut current_user = ctx.cache().current_user().clone();
     current_user.edit(ctx.http(), serenity::builder::EditProfile::new().avatar(&avatar)).await?;
     ctx.say(&ctx.data().lang.avatar_changed).await?;
     Ok(())
@@ -663,7 +663,7 @@ async fn main() {
                                 // Check if user is in a voice channel
                                 if let Some(guild_id) = component.guild_id {
                                     log::info!("Component interaction: stop button pressed by user {} in guild {}", component.user.id, guild_id);
-                                    let user_in_voice = ctx.cache().guild(guild_id)
+                                    let user_in_voice = ctx.cache.guild(guild_id)
                                         .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id))
                                         .is_some();
                                     if !user_in_voice {
@@ -674,10 +674,10 @@ async fn main() {
                                     }
                                     // Check bot permissions in the user's channel
                                     let has_perms = {
-                                        if let Some(guild) = ctx.cache().guild(guild_id) {
+                                        if let Some(guild) = ctx.cache.guild(guild_id) {
                                             if let Some(channel_id) = guild.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id) {
                                                 if let Some(guild_channel) = guild.channels.get(&channel_id) {
-                                                    if let Ok(perms) = guild_channel.permissions_for_user(ctx.cache(), &ctx.cache().current_user()) {
+                                                    if let Ok(perms) = guild_channel.permissions_for_user(&ctx.cache, ctx.cache.current_user().id) {
                                                         perms.speak() && perms.connect()
                                                     } else { false }
                                                 } else { false }
@@ -707,7 +707,7 @@ async fn main() {
                                         serenity::CreateInteractionResponseMessage::new().ephemeral(true)
                                     )).await;
                                     // Check if user is in a voice channel
-                                    let user_in_voice = ctx.cache().guild(guild_id)
+                                    let user_in_voice = ctx.cache.guild(guild_id)
                                         .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id))
                                         .is_some();
                                     if !user_in_voice {
@@ -720,7 +720,7 @@ async fn main() {
                                         // Check if bot is still connected
                                         if handler.current_channel().is_none() {
                                             // Bot disconnected, try to rejoin user's channel
-                                            if let Some(user_channel) = ctx.cache().guild(guild_id)
+                                            if let Some(user_channel) = ctx.cache.guild(guild_id)
                                                 .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id)) {
                                                 drop(handler);
                                                 let _ = manager.join(guild_id, user_channel).await;
@@ -735,7 +735,7 @@ async fn main() {
                                         }
                                     } else {
                                         // Bot not in manager, try to join and play
-                                        if let Some(user_channel) = ctx.cache().guild(guild_id)
+                                        if let Some(user_channel) = ctx.cache.guild(guild_id)
                                             .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id)) {
                                             if let Ok(handler_lock) = manager.join(guild_id, user_channel).await {
                                                 let mut handler = handler_lock.lock().await;
