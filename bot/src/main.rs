@@ -643,9 +643,19 @@ async fn main() {
 
     let token = env::var("BOT_TOKEN").expect("BOT_TOKEN must be set");
 
-    // Initialize database pool (we will create the schema in the next step)
-    let db_url = "sqlite:config/discord-bot.sqlite3";
-    let db_pool = sqlx::SqlitePool::connect(db_url).await.expect("Failed to connect to DB");
+    // Initialize database pool
+    let db_url = env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:config/discord-bot.sqlite3".to_string());
+    
+    // Create config directory if it doesn't exist
+    std::fs::create_dir_all("config").expect("Failed to create config directory");
+
+    // Also create the database file if it doesn't exist
+    let db_path = db_url.strip_prefix("sqlite:").unwrap_or(&db_url);
+    if !std::path::Path::new(db_path).exists() {
+        std::fs::File::create(db_path).expect("Failed to create database file");
+    }
+
+    let db_pool = sqlx::SqlitePool::connect(&db_url).await.expect("Failed to connect to DB");
     database::init_db(&db_pool).await.expect("Failed to initialize database");
     log::info!("Database initialized successfully");
     database::populate_db_if_empty(&db_pool).await.expect("Failed to populate database");
