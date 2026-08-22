@@ -38,8 +38,12 @@ func main() {
 		log.Printf("Failed to populate database: %v", err)
 	}
 
-	// Start background generator
-	go backgroundGenerator()
+	// Start background generator only if SAVE_AUDIO is true
+	if os.Getenv("SAVE_AUDIO") == "true" {
+		go backgroundGenerator()
+	} else {
+		log.Println("SAVE_AUDIO is false, background generator disabled")
+	}
 
 	client, err := bot.New(os.Getenv("BOT_TOKEN"),
 		bot.WithIntents(discord.IntentGuilds, discord.IntentGuildVoiceStates),

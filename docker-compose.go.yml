@@ -13,6 +13,7 @@ services:
       - ADMIN_ID=${ADMIN_ID}
       - LANG=${LANG}
       - TMP_DIR=/tmp/discord-llm-bot
+      - SAVE_AUDIO=${SAVE_AUDIO}
     volumes:
       - ".env:/app/.env"
       - "./config:/app/config"

@@ -38,9 +38,13 @@ var (
 )
 
 func getOrGenerateAudio(text string, voiceName string) (filePath string, finalVoice string, err error) {
-	filePath = GetAudioFilePath(text, voiceName)
-	if _, err := os.Stat(filePath); err == nil {
-		return filePath, voiceName, nil
+	saveAudio := os.Getenv("SAVE_AUDIO") == "true"
+
+	if saveAudio {
+		filePath = GetAudioFilePath(text, voiceName)
+		if _, err := os.Stat(filePath); err == nil {
+			return filePath, voiceName, nil
+		}
 	}
 
 	var audioData []byte
@@ -54,9 +58,11 @@ func getOrGenerateAudio(text string, voiceName string) (filePath string, finalVo
 		if err != nil {
 			log.Printf("FakeYou failed, falling back to Google: %v", err)
 			voiceName = "Google"
-			filePath = GetAudioFilePath(text, voiceName)
-			if _, err := os.Stat(filePath); err == nil {
-				return filePath, voiceName, nil
+			if saveAudio {
+				filePath = GetAudioFilePath(text, voiceName)
+				if _, err := os.Stat(filePath); err == nil {
+					return filePath, voiceName, nil
+				}
 			}
 			if len(text) > 200 {
 				return "", voiceName, fmt.Errorf("text too long")
@@ -68,21 +74,31 @@ func getOrGenerateAudio(text string, voiceName string) (filePath string, finalVo
 		return "", voiceName, err
 	}
 
-	tempPath := filePath + ".tmp"
-	if voiceName != "Google" {
-		tempPath = filePath + ".wav.tmp"
-	}
-	if err := SaveAudio(tempPath, audioData); err != nil {
-		return "", voiceName, err
-	}
-	if err := CompressAudio(tempPath, filePath); err != nil {
+	if saveAudio {
+		tempPath := filePath + ".tmp"
+		if voiceName != "Google" {
+			tempPath = filePath + ".wav.tmp"
+		}
+		if err := SaveAudio(tempPath, audioData); err != nil {
+			return "", voiceName, err
+		}
+		if err := CompressAudio(tempPath, filePath); err != nil {
+			os.Remove(tempPath)
+			return "", voiceName, err
+		}
 		os.Remove(tempPath)
-		return "", voiceName, err
-	}
-	os.Remove(tempPath)
 
-	db.InsertSentence(text)
-	db.UpdateSentenceHasAudio(text)
+		db.InsertSentence(text)
+		db.UpdateSentenceHasAudio(text)
+	} else {
+		// Save to a temporary file to be played
+		tempPath := filepath.Join(os.TempDir(), "audio_"+uuid.NewString()+".mp3")
+		if err := SaveAudio(tempPath, audioData); err != nil {
+			return "", voiceName, err
+		}
+		filePath = tempPath
+	}
+
 	return filePath, voiceName, nil
 }
 
