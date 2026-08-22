@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/disgoorg/disgo/bot"
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
 	"github.com/google/uuid"
@@ -24,6 +25,16 @@ import (
 var (
 	cooldowns   = make(map[discord.Snowflake]time.Time)
 	cooldownsMu sync.Mutex
+)
+
+type audioMessageInfo struct {
+	Text  string
+	Voice string
+}
+
+var (
+	audioMessages   = make(map[string]audioMessageInfo)
+	audioMessagesMu sync.Mutex
 )
 
 func checkCooldown(userID discord.Snowflake) bool {
@@ -199,8 +210,8 @@ func HandleCommand(e *events.ApplicationCommandInteractionCreate) {
 	}
 }
 
-func getUserVoiceChannelID(e *events.ApplicationCommandInteractionCreate) *discord.Snowflake {
-	voiceState, ok := e.Client().Cache().VoiceState(e.GuildID(), e.User().ID())
+func getVoiceChannelID(client bot.Client, guildID discord.Snowflake, userID discord.Snowflake) *discord.Snowflake {
+	voiceState, ok := client.Cache().VoiceState(guildID, userID)
 	if !ok || voiceState.ChannelID == nil {
 		return nil
 	}
@@ -212,7 +223,7 @@ func handleJoin(e *events.ApplicationCommandInteractionCreate) {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Spam detected. " + e.User().Mention() + " Ti sto guardando.\nCooldown: 5.0s").SetEphemeral(true).Build())
 		return
 	}
-	channelID := getUserVoiceChannelID(e)
+	channelID := getVoiceChannelID(e.Client(), e.GuildID(), e.User().ID())
 	if channelID == nil {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Devi essere connesso a un canale vocale per utilizzare questo comando").SetEphemeral(true).Build())
 		return
@@ -256,7 +267,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 	}
 	e.DeferCreateMessage(true)
 
-	channelID := getUserVoiceChannelID(e)
+	channelID := getVoiceChannelID(e.Client(), e.GuildID(), e.User().ID())
 	if channelID == nil {
 		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Devi essere connesso a un canale vocale").SetEphemeral(true).Build())
 		return
@@ -276,7 +287,18 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 
 	filePath := GetAudioFilePath(text, voiceName)
 
-	msg, err := e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(fmt.Sprintf("Inizio a generare l'audio per la frase: **%s**%s", text, getQueueMessage())).SetEphemeral(true).Build())
+	playID := uuid.NewString()
+	audioMessagesMu.Lock()
+	audioMessages[playID] = audioMessageInfo{Text: text, Voice: voiceName}
+	audioMessagesMu.Unlock()
+
+	msg, err := e.CreateFollowupMessage(discord.NewMessageCreateBuilder().
+		SetContent(fmt.Sprintf("Inizio a generare l'audio per la frase: **%s**%s", text, getQueueMessage())).
+		SetComponents(discord.NewActionRow(
+			discord.NewPrimaryButton("Play", "play:"+playID),
+			discord.NewDangerButton("Stop", "stop:"+e.GuildID().String()),
+		)).
+		SetEphemeral(true).Build())
 	if err != nil {
 		log.Printf("Error creating followup message: %v", err)
 		return
@@ -324,6 +346,13 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
 			log.Printf("Error playing audio: %v", err)
 		}
+		_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().
+			SetContent(fmt.Sprintf("Sto riproducendo: %s\nVoce: %s", text, voiceName)).
+			SetComponents(discord.NewActionRow(
+				discord.NewPrimaryButton("Play", "play:"+playID),
+				discord.NewDangerButton("Stop", "stop:"+e.GuildID().String()),
+			)).
+			Build())
 	}(msg.ID)
 }
 
@@ -334,7 +363,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 	}
 	e.DeferCreateMessage(true)
 
-	channelID := getUserVoiceChannelID(e)
+	channelID := getVoiceChannelID(e.Client(), e.GuildID(), e.User().ID())
 	if channelID == nil {
 		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Devi essere connesso a un canale vocale").SetEphemeral(true).Build())
 		return
@@ -369,7 +398,18 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 
 	filePath := GetAudioFilePath(sentence, voiceName)
 
-	msg, err := e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(fmt.Sprintf("Sto cercando una frase casuale%s", getQueueMessage())).SetEphemeral(true).Build())
+	playID := uuid.NewString()
+	audioMessagesMu.Lock()
+	audioMessages[playID] = audioMessageInfo{Text: sentence, Voice: voiceName}
+	audioMessagesMu.Unlock()
+
+	msg, err := e.CreateFollowupMessage(discord.NewMessageCreateBuilder().
+		SetContent(fmt.Sprintf("Sto cercando una frase casuale%s", getQueueMessage())).
+		SetComponents(discord.NewActionRow(
+			discord.NewPrimaryButton("Play", "play:"+playID),
+			discord.NewDangerButton("Stop", "stop:"+e.GuildID().String()),
+		)).
+		SetEphemeral(true).Build())
 	if err != nil {
 		log.Printf("Error creating followup message: %v", err)
 		return
@@ -416,6 +456,13 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
 			log.Printf("Error playing audio: %v", err)
 		}
+		_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().
+			SetContent(fmt.Sprintf("Sto riproducendo: %s\nVoce: %s", sentence, voiceName)).
+			SetComponents(discord.NewActionRow(
+				discord.NewPrimaryButton("Play", "play:"+playID),
+				discord.NewDangerButton("Stop", "stop:"+e.GuildID().String()),
+			)).
+			Build())
 	}(msg.ID)
 }
 
@@ -507,7 +554,7 @@ func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 	}
 	e.DeferCreateMessage(true)
 
-	channelID := getUserVoiceChannelID(e)
+	channelID := getVoiceChannelID(e.Client(), e.GuildID(), e.User().ID())
 	if channelID == nil {
 		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Devi essere connesso a un canale vocale").SetEphemeral(true).Build())
 		return
@@ -561,4 +608,70 @@ func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 	}()
 
 	e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Done! I'm starting the audio playback!").SetEphemeral(true).Build())
+}
+
+func HandleButton(e *events.ButtonInteractionCreate) {
+	customID := e.Data.CustomID()
+	if strings.HasPrefix(customID, "play:") {
+		id := strings.TrimPrefix(customID, "play:")
+		audioMessagesMu.Lock()
+		info, ok := audioMessages[id]
+		audioMessagesMu.Unlock()
+		if !ok {
+			e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Audio non trovato.").SetEphemeral(true).Build())
+			return
+		}
+		e.DeferCreateMessage(true)
+		guildID := e.GuildID()
+		voiceClient, _ := e.Client().Voice().GetOrCreateGuildVoiceClient(guildID)
+		channelID := getVoiceChannelID(e.Client(), guildID, e.User().ID())
+		if channelID != nil {
+			voiceClient.Connect(context.Background(), *channelID, false, false)
+		}
+		filePath := GetAudioFilePath(info.Text, info.Voice)
+		if _, err := os.Stat(filePath); err != nil {
+			var audioData []byte
+			var err error
+			if info.Voice == "Google" {
+				audioData, err = GetTTSGoogle(info.Text)
+			} else {
+				audioData, err = GetTTSFakeYou(info.Text, info.Voice)
+				if err != nil {
+					log.Printf("FakeYou failed, falling back to Google: %v", err)
+					info.Voice = "Google"
+					filePath = GetAudioFilePath(info.Text, info.Voice)
+					audioData, err = GetTTSGoogle(info.Text)
+				}
+			}
+			if err != nil {
+				log.Printf("Error generating audio: %v", err)
+				return
+			}
+			tempPath := filePath + ".tmp"
+			if info.Voice != "Google" {
+				tempPath = filePath + ".wav.tmp"
+			}
+			if err := SaveAudio(tempPath, audioData); err != nil {
+				log.Printf("Error saving audio: %v", err)
+				return
+			}
+			if err := CompressAudio(tempPath, filePath); err != nil {
+				log.Printf("Error compressing audio: %v", err)
+				os.Remove(tempPath)
+				return
+			}
+			os.Remove(tempPath)
+			if info.Voice == "Google" {
+				db.UpdateSentenceHasAudio(info.Text)
+			}
+		}
+		if err := PlayAudio(voiceClient, guildID.String(), filePath); err != nil {
+			log.Printf("Error playing audio: %v", err)
+		}
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Riproduco l'audio.").SetEphemeral(true).Build())
+	} else if strings.HasPrefix(customID, "stop:") {
+		guildID := strings.TrimPrefix(customID, "stop:")
+		StopAudio(guildID)
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent("Interrompo il bot.").SetEphemeral(true).Build())
+	}
 }
