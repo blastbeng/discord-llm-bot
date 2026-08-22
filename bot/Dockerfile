@@ -5,7 +5,7 @@ ENV GOPROXY=https://proxy.golang.org,direct
 COPY go.* ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=1 go build -o /discord-bot .
+RUN CGO_ENABLED=1 go build -mod=mod -o /discord-bot .
 
 FROM alpine:latest
 RUN apk add --no-cache ffmpeg
