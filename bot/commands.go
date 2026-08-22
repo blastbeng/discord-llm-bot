@@ -379,11 +379,11 @@ func handleJoin(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func handleLeave(e *events.ApplicationCommandInteractionCreate) {
-	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
+	if spamMsg := checkCooldown(e.User().ID, e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
-	if _, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID()); errMsg != "" {
+	if _, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID); errMsg != "" {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 		return
 	}
