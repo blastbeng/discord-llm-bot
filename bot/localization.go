@@ -7,9 +7,37 @@ import (
 )
 
 var translations = map[string]map[string]string{
-	"spam_detected": {
+	"spam_detected_1": {
 		"ita": "Spam detected. %s Ti sto guardando.\nCooldown: 5.0s",
 		"eng": "Spam detected. %s I'm watching you.\nCooldown: 5.0s",
+	},
+	"spam_detected_2": {
+		"ita": "Spam detected. %s Questo non ti rende una brava persona.\nCooldown: 5.0s",
+		"eng": "Spam detected. %s This doesn't make you a good person.\nCooldown: 5.0s",
+	},
+	"spam_detected_3": {
+		"ita": "Spam detected. %s Sono stupido ma non noioso.\nCooldown: 5.0s",
+		"eng": "Spam detected. %s I'm stupid but not boring.\nCooldown: 5.0s",
+	},
+	"spam_detected_4": {
+		"ita": "Spam detected. %s Prenditi il tuo tempo.\nCooldown: 5.0s",
+		"eng": "Spam detected. %s Take your time.\nCooldown: 5.0s",
+	},
+	"spam_detected_5": {
+		"ita": "Spam detected. %s Mantieni la calma.\nCooldown: 5.0s",
+		"eng": "Spam detected. %s Keep calm.\nCooldown: 5.0s",
+	},
+	"spam_detected_6": {
+		"ita": "Spam detected. %s Anche a casa tua ti comporti cosí?\nCooldown: 5.0s",
+		"eng": "Spam detected. %s Do you behave like this even at your house?\nCooldown: 5.0s",
+	},
+	"spam_detected_7": {
+		"ita": "Spam detected. %s Perché sei cosí ansioso?\nCooldown: 5.0s",
+		"eng": "Spam detected. %s Why are you so anxious?\nCooldown: 5.0s",
+	},
+	"spam_detected_8": {
+		"ita": "Spam detected. %s Ti aggiungo alla blacklist.\nCooldown: 5.0s",
+		"eng": "Spam detected. %s I'm adding you to the blacklist.\nCooldown: 5.0s",
 	},
 	"must_be_in_voice": {
 		"ita": "Devi essere connesso a un canale vocale per utilizzare questo comando",
