@@ -1,6 +1,6 @@
 module discord-llm-bot
 
-go 1.22
+go 1.24
 
 require (
 	github.com/disgoorg/disgo v0.19.6
