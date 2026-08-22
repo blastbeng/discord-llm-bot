@@ -281,12 +281,17 @@ func HandleAutocomplete(e *events.AutocompleteInteractionCreate) {
 		}
 	}
 
-	e.AutocompleteResult(choices)
+	autocompleteChoices := make([]discord.AutocompleteChoice, 0, len(choices))
+	for _, choice := range choices {
+		autocompleteChoices = append(autocompleteChoices, choice)
+	}
+
+	e.AutocompleteResult(autocompleteChoices)
 }
 
 func HandleCommand(e *events.ApplicationCommandInteractionCreate) {
-	LogDebug("Command %s executed by %s in guild %s", e.Data.CommandName, e.User().ID(), e.GuildID())
-	switch e.Data.CommandName {
+	LogDebug("Command %s executed by %s in guild %s", e.Data.CommandName, e.User().ID, e.GuildID())
+	switch e.Data.CommandName() {
 	case "join":
 		handleJoin(e)
 	case "leave":
@@ -778,7 +783,7 @@ func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 
 func HandleButton(e *events.ComponentInteractionCreate) {
 	customID := e.Data.CustomID()
-	LogDebug("Button %s clicked by %s in guild %s", customID, e.User().ID(), e.GuildID())
+	LogDebug("Button %s clicked by %s in guild %s", customID, e.User().ID, e.GuildID())
 	if strings.HasPrefix(customID, "play:") {
 		id := strings.TrimPrefix(customID, "play:")
 		audioMessagesMu.Lock()
@@ -790,7 +795,7 @@ func HandleButton(e *events.ComponentInteractionCreate) {
 		}
 		e.DeferCreateMessage(true)
 		guildID := e.GuildID()
-		channelID, errMsg := checkVoicePermissions(e.Client(), guildID, e.User().ID())
+		channelID, errMsg := checkVoicePermissions(e.Client(), guildID, e.User().ID)
 		if errMsg != "" {
 			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 			return
