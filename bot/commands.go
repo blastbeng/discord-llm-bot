@@ -17,6 +17,8 @@ import (
 	"github.com/disgoorg/disgo/discord"
 	"github.com/disgoorg/disgo/events"
 	"github.com/google/uuid"
+	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v3/mem"
 )
 
 var (
@@ -37,7 +39,15 @@ func checkCooldown(userID discord.Snowflake) bool {
 }
 
 func getQueueMessage() string {
-	return "\n\nSe il server é sovraccarico, potrebbe volerci un po' di tempo"
+	cpuPercent, _ := cpu.Percent(100*time.Millisecond, false)
+	vmStat, _ := mem.VirtualMemory()
+	swapStat, _ := mem.SwapMemory()
+	ramPercent := (vmStat.UsedPercent + swapStat.UsedPercent) / 2
+	cpuStr := "0.0"
+	if len(cpuPercent) > 0 {
+		cpuStr = fmt.Sprintf("%.1f", cpuPercent[0])
+	}
+	return fmt.Sprintf("\n\nSe il server é sovraccarico, potrebbe volerci un po' di tempo\n*CPU: %s%% - RAM: %.2f%%*", cpuStr, ramPercent)
 }
 
 func RegisterCommands(clientID discord.Snowflake, rest interface {
