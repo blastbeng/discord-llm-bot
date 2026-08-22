@@ -194,27 +194,36 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 	}
 
 	filePath := GetAudioFilePath(text, voiceName)
-	if _, err := os.Stat(filePath); err != nil {
-		var audioData []byte
-		var err error
-		if voiceName == "Google" {
-			audioData, err = GetTTSGoogle(text)
-		} else {
-			audioData, err = GetTTSFakeYou(text, voiceName)
-		}
-		if err != nil {
-			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Errore nella generazione dell'audio").SetEphemeral(true).Build())
-			return
-		}
-		tempPath := filePath + ".tmp"
-		SaveAudio(tempPath, audioData)
-		CompressAudio(tempPath, filePath)
-		os.Remove(tempPath)
-		db.UpdateSentenceHasAudio(text)
-		db.InsertSentence(text)
-	}
 
 	go func() {
+		if _, err := os.Stat(filePath); err != nil {
+			var audioData []byte
+			var err error
+			if voiceName == "Google" {
+				audioData, err = GetTTSGoogle(text)
+			} else {
+				audioData, err = GetTTSFakeYou(text, voiceName)
+			}
+			if err != nil {
+				log.Printf("Error generating audio: %v", err)
+				return
+			}
+			tempPath := filePath + ".tmp"
+			if err := SaveAudio(tempPath, audioData); err != nil {
+				log.Printf("Error saving audio: %v", err)
+				return
+			}
+			if err := CompressAudio(tempPath, filePath); err != nil {
+				log.Printf("Error compressing audio: %v", err)
+				os.Remove(tempPath)
+				return
+			}
+			os.Remove(tempPath)
+			if voiceName == "Google" {
+				db.UpdateSentenceHasAudio(text)
+				db.InsertSentence(text)
+			}
+		}
 		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
 			log.Printf("Error playing audio: %v", err)
 		}
@@ -260,25 +269,35 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 	sentence := sentences[rand.Intn(len(sentences))]
 
 	filePath := GetAudioFilePath(sentence, voiceName)
-	if _, err := os.Stat(filePath); err != nil {
-		var audioData []byte
-		if voiceName == "Google" {
-			audioData, err = GetTTSGoogle(sentence)
-		} else {
-			audioData, err = GetTTSFakeYou(sentence, voiceName)
-		}
-		if err != nil {
-			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Errore nella generazione dell'audio").SetEphemeral(true).Build())
-			return
-		}
-		tempPath := filePath + ".tmp"
-		SaveAudio(tempPath, audioData)
-		CompressAudio(tempPath, filePath)
-		os.Remove(tempPath)
-		db.UpdateSentenceHasAudio(sentence)
-	}
 
 	go func() {
+		if _, err := os.Stat(filePath); err != nil {
+			var audioData []byte
+			var err error
+			if voiceName == "Google" {
+				audioData, err = GetTTSGoogle(sentence)
+			} else {
+				audioData, err = GetTTSFakeYou(sentence, voiceName)
+			}
+			if err != nil {
+				log.Printf("Error generating audio: %v", err)
+				return
+			}
+			tempPath := filePath + ".tmp"
+			if err := SaveAudio(tempPath, audioData); err != nil {
+				log.Printf("Error saving audio: %v", err)
+				return
+			}
+			if err := CompressAudio(tempPath, filePath); err != nil {
+				log.Printf("Error compressing audio: %v", err)
+				os.Remove(tempPath)
+				return
+			}
+			os.Remove(tempPath)
+			if voiceName == "Google" {
+				db.UpdateSentenceHasAudio(sentence)
+			}
+		}
 		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
 			log.Printf("Error playing audio: %v", err)
 		}
@@ -400,12 +419,12 @@ func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 		return
 	}
 	out.Close()
-	defer os.Remove(tempPath)
 
 	go func() {
 		if err := PlayAudio(voiceClient, e.GuildID().String(), tempPath); err != nil {
 			log.Printf("Error playing audio: %v", err)
 		}
+		os.Remove(tempPath)
 	}()
 
 	e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Done! I'm starting the audio playback!").SetEphemeral(true).Build())
