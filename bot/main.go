@@ -46,7 +46,7 @@ func main() {
 		bot.WithEventHandlers(func(e *events.Ready) {
 			log.Printf("Logged in as %s", e.Client().ID())
 			RegisterCommands(e.Client().ID(), e.Client().Rest())
-		}, HandleCommand),
+		}, HandleCommand, HandleAutocomplete),
 	)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)

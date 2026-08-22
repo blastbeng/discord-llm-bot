@@ -44,9 +44,10 @@ func RegisterCommands(clientID discord.Snowflake, rest interface {
 					Required:    true,
 				},
 				discord.ApplicationCommandOptionString{
-					Name:        "voice",
-					Description: "The voice to use",
-					Required:    false,
+					Name:         "voice",
+					Description:  "The voice to use",
+					Required:     false,
+					Autocomplete: true,
 				},
 			},
 		},
@@ -55,9 +56,10 @@ func RegisterCommands(clientID discord.Snowflake, rest interface {
 			Description: "Say a random sentence from the database",
 			Options: []discord.ApplicationCommandOption{
 				discord.ApplicationCommandOptionString{
-					Name:        "voice",
-					Description: "The voice to use",
-					Required:    false,
+					Name:         "voice",
+					Description:  "The voice to use",
+					Required:     false,
+					Autocomplete: true,
 				},
 				discord.ApplicationCommandOptionString{
 					Name:        "text",
@@ -109,6 +111,37 @@ func RegisterCommands(clientID discord.Snowflake, rest interface {
 		log.Fatalf("Failed to register commands: %v", err)
 	}
 	log.Println("Commands registered")
+}
+
+func HandleAutocomplete(e *events.AutocompleteInteractionCreate) {
+	cmdName := e.Data.CommandName()
+	if cmdName != "speak" && cmdName != "random" {
+		return
+	}
+
+	focusedName := e.Data.FocusedName()
+	if focusedName != "voice" {
+		return
+	}
+
+	current := e.Data.String("voice")
+
+	allVoices := []string{"Google", "random"}
+	for voice := range fakeYouVoices {
+		allVoices = append(allVoices, voice)
+	}
+
+	var choices []discord.ApplicationCommandOptionChoiceString
+	for _, voice := range allVoices {
+		if strings.Contains(strings.ToLower(voice), strings.ToLower(current)) {
+			choices = append(choices, discord.ApplicationCommandOptionChoiceString{
+				Name:  voice,
+				Value: voice,
+			})
+		}
+	}
+
+	e.CreateAutocompleteResponse(choices)
 }
 
 func HandleCommand(e *events.ApplicationCommandInteractionCreate) {
@@ -203,12 +236,21 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 				audioData, err = GetTTSGoogle(text)
 			} else {
 				audioData, err = GetTTSFakeYou(text, voiceName)
+				if err != nil {
+					log.Printf("FakeYou failed, falling back to Google: %v", err)
+					voiceName = "Google"
+					filePath = GetAudioFilePath(text, voiceName)
+					audioData, err = GetTTSGoogle(text)
+				}
 			}
 			if err != nil {
 				log.Printf("Error generating audio: %v", err)
 				return
 			}
 			tempPath := filePath + ".tmp"
+			if voiceName != "Google" {
+				tempPath = filePath + ".wav.tmp"
+			}
 			if err := SaveAudio(tempPath, audioData); err != nil {
 				log.Printf("Error saving audio: %v", err)
 				return
@@ -278,12 +320,21 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 				audioData, err = GetTTSGoogle(sentence)
 			} else {
 				audioData, err = GetTTSFakeYou(sentence, voiceName)
+				if err != nil {
+					log.Printf("FakeYou failed, falling back to Google: %v", err)
+					voiceName = "Google"
+					filePath = GetAudioFilePath(sentence, voiceName)
+					audioData, err = GetTTSGoogle(sentence)
+				}
 			}
 			if err != nil {
 				log.Printf("Error generating audio: %v", err)
 				return
 			}
 			tempPath := filePath + ".tmp"
+			if voiceName != "Google" {
+				tempPath = filePath + ".wav.tmp"
+			}
 			if err := SaveAudio(tempPath, audioData); err != nil {
 				log.Printf("Error saving audio: %v", err)
 				return
