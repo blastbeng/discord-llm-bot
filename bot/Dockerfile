@@ -8,6 +8,7 @@ RUN apt-get update && \
     cmake \
     make \
     git \
+    binutils \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -19,11 +20,13 @@ ENV CARGO_BUILD_JOBS=4
 COPY Cargo.toml ./
 RUN mkdir src && echo 'fn main() { eprintln!("DUMMY BINARY - this means the real build was skipped!"); }' > src/main.rs
 RUN cargo build --release || true
-RUN rm -rf src
+RUN rm -rf src target/release/discord-llm-bot
 
 # Copy the actual source code and build
 COPY src ./src
+RUN touch src/main.rs
 RUN cargo build --release
+RUN test -f target/release/discord-llm-bot && ! strings target/release/discord-llm-bot | grep -q "DUMMY BINARY" || (echo "ERROR: Dummy binary was not replaced!" && exit 1)
 
 FROM debian:bookworm-slim
 
