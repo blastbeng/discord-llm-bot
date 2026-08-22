@@ -211,6 +211,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 		CompressAudio(tempPath, filePath)
 		os.Remove(tempPath)
 		db.UpdateSentenceHasAudio(text)
+		db.InsertSentence(text)
 	}
 
 	go func() {
@@ -370,6 +371,12 @@ func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 	attachment, ok := e.Data.Resolved.Attachments[attachmentID]
 	if !ok {
 		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("Errore durante il recupero dell'allegato.").SetEphemeral(true).Build())
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(attachment.Filename))
+	if ext != ".mp3" && ext != ".wav" {
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent("The file extension is not valid. Only mp3 or wav are allowed.").SetEphemeral(true).Build())
 		return
 	}
 
