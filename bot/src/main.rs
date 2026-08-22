@@ -641,6 +641,16 @@ async fn main() {
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![join(), leave(), stop(), speak(), random(), audio(), restart(), rename(), avatar()],
+            pre_command: |ctx| {
+                Box::pin(async move {
+                    let allowed_guild_id = env::var("GUILD_ID").unwrap_or_default();
+                    if ctx.guild_id().map(|g| g.to_string()) != Some(allowed_guild_id) {
+                        ctx.say(&ctx.data().lang.wrong_guild).await?;
+                        return Err("Bot can only be used in the parent server".into());
+                    }
+                    Ok(())
+                })
+            },
             on_error: |error| {
                 Box::pin(async move {
                     if let poise::FrameworkError::CooldownHit { remaining_cooldown, ctx, .. } = error {

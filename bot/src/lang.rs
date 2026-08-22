@@ -33,6 +33,7 @@ pub struct Lang {
     pub bot_not_ready: String,
     pub initializing_connection: String,
     pub invalid_voice: String,
+    pub wrong_guild: String,
 }
 
 impl Lang {
@@ -80,6 +81,7 @@ impl Lang {
                 bot_not_ready: "The bot is not ready yet or another user is using a command.\nPlease try again later or use the /stop command".to_string(),
                 initializing_connection: "Please try again later, I'm initializing the connection...".to_string(),
                 invalid_voice: "Invalid voice selected.".to_string(),
+                wrong_guild: "This bot can only be used in the parent server".to_string(),
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
@@ -122,6 +124,7 @@ impl Lang {
                 bot_not_ready: "Il bot non é ancora pronto opppure un altro user sta usando qualche altro comando.\nPer favore riprova piú tardi o utilizza il comando /stop".to_string(),
                 initializing_connection: "Per favore riprova piú tardi, Sto inizializzando la connessione...".to_string(),
                 invalid_voice: "Voce non valida selezionata.".to_string(),
+                wrong_guild: "Questo bot può essere utilizzato solo nel server padre".to_string(),
             }
         }
     }
