@@ -314,7 +314,7 @@ func HandleCommand(e *events.ApplicationCommandInteractionCreate) {
 }
 
 func getVoiceChannelID(client *bot.Client, guildID snowflake.ID, userID snowflake.ID) *snowflake.ID {
-	voiceState, ok := client.Caches().VoiceState(guildID, userID)
+	voiceState, ok := client.Caches.VoiceState(guildID, userID)
 	if !ok || voiceState.ChannelID == nil {
 		return nil
 	}
@@ -330,19 +330,19 @@ func checkVoicePermissions(client *bot.Client, guildID snowflake.ID, userID snow
 		return nil, T("must_be_in_voice")
 	}
 
-	guild := client.Caches().Guild(guildID)
+	guild := client.Caches.Guild(guildID)
 	if guild == nil {
 		return channelID, ""
 	}
-	channel := client.Caches().Channel(*channelID)
+	channel := client.Caches.Channel(*channelID)
 	if channel == nil {
 		return channelID, ""
 	}
-	selfMember := client.Caches().Member(guildID, client.ID())
+	selfMember := client.Caches.Member(guildID, client.ID())
 	if selfMember == nil {
 		return channelID, ""
 	}
-	perms := discord.CalcOverwrites(guild, channel, selfMember)
+	perms := client.Caches.MemberPermissionsInChannel(channel, selfMember)
 	if !perms.Has(discord.PermissionSpeak) {
 		return nil, T("no_permissions_channel")
 	}
@@ -355,7 +355,7 @@ func handleJoin(e *events.ApplicationCommandInteractionCreate) {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
-	channelID, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID)
+	channelID, errMsg := checkVoicePermissions(e.Client(), *e.GuildID(), e.User().ID)
 	if errMsg != "" {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 		return
@@ -383,7 +383,7 @@ func handleLeave(e *events.ApplicationCommandInteractionCreate) {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
-	if _, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID); errMsg != "" {
+	if _, errMsg := checkVoicePermissions(e.Client(), *e.GuildID(), e.User().ID); errMsg != "" {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 		return
 	}
@@ -402,7 +402,7 @@ func handleStop(e *events.ApplicationCommandInteractionCreate) {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
-	if _, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID); errMsg != "" {
+	if _, errMsg := checkVoicePermissions(e.Client(), *e.GuildID(), e.User().ID); errMsg != "" {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 		return
 	}
@@ -417,7 +417,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 	}
 	e.DeferCreateMessage(true)
 
-	channelID, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID)
+	channelID, errMsg := checkVoicePermissions(e.Client(), *e.GuildID(), e.User().ID)
 	if errMsg != "" {
 		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 		return
@@ -506,7 +506,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 	}
 	e.DeferCreateMessage(true)
 
-	channelID, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID)
+	channelID, errMsg := checkVoicePermissions(e.Client(), *e.GuildID(), e.User().ID)
 	if errMsg != "" {
 		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 		return
@@ -701,7 +701,7 @@ func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 	}
 	e.DeferCreateMessage(true)
 
-	channelID, errMsg := checkVoicePermissions(e.Client(), e.GuildID(), e.User().ID)
+	channelID, errMsg := checkVoicePermissions(e.Client(), *e.GuildID(), e.User().ID)
 	if errMsg != "" {
 		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 		return
@@ -795,7 +795,7 @@ func HandleButton(e *events.ComponentInteractionCreate) {
 		}
 		e.DeferCreateMessage(true)
 		guildID := e.GuildID()
-		channelID, errMsg := checkVoicePermissions(e.Client(), guildID, e.User().ID)
+		channelID, errMsg := checkVoicePermissions(e.Client(), *guildID, e.User().ID)
 		if errMsg != "" {
 			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(errMsg).SetEphemeral(true).Build())
 			return
