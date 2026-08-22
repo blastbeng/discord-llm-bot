@@ -611,7 +611,7 @@ async fn avatar(
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().ok();
-    env_logger::Builder::from_env(env_logger::Env::default().filter_or("LOG_LEVEL", "info")).init();
+    env_logger::Builder::from_env(env_logger::Env::default().filter_or("LOG_LEVEL", "info,tracing=warn")).init();
 
     let token = env::var("BOT_TOKEN").expect("BOT_TOKEN must be set");
     let guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set")
