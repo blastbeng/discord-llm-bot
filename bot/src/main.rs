@@ -69,6 +69,7 @@ async fn get_queue_message(lang: &lang::Lang) -> String {
 
 async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
     let lang = &ctx.data().lang;
+    let guild_id = ctx.guild_id().unwrap();
     let channel_id = {
         let guild = ctx.guild().ok_or(lang.guild_not_found.as_str())?;
         guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(lang.must_be_in_voice.as_str())?
@@ -77,8 +78,11 @@ async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
     
     let channel = channel_id.to_channel(ctx.http()).await?;
     if let serenity::Channel::Guild(guild_channel) = channel {
-        let guild = ctx.cache().guild(guild_channel.guild_id).ok_or("Guild not found")?;
-        let perms = guild.user_permissions_in(&guild_channel, ctx.cache().current_user().id);
+        let perms = {
+            let guild = ctx.cache().guild(guild_id).ok_or("Guild not in cache")?;
+            let bot_member = guild.members.get(&ctx.cache().current_user().id).ok_or("Bot member not in cache")?;
+            guild.user_permissions_in(&guild_channel, bot_member)
+        };
         if !perms.speak() || !perms.connect() {
             log::warn!("check_permissions: user {} lacks speak/connect permission in channel {}", ctx.author().id, channel_id);
             return Err(lang.no_speak_permission.as_str().into());
@@ -553,8 +557,11 @@ async fn restart(ctx: Context<'_>) -> Result<(), Error> {
         return Ok(());
     }
     let guild_id = ctx.guild_id().unwrap();
-    let guild = ctx.cache().guild(guild_id).ok_or("Guild not found")?;
-    let perms = guild.member_permissions(ctx.author().id);
+    let perms = {
+        let guild = ctx.cache().guild(guild_id).ok_or("Guild not in cache")?;
+        let member = guild.members.get(&ctx.author().id).ok_or("Member not in cache")?;
+        guild.member_permissions(member)
+    };
     if !perms.administrator() {
         ctx.say(&ctx.data().lang.admin_only).await?;
         return Ok(());
@@ -678,8 +685,10 @@ async fn main() {
                                         if let Some(guild) = ctx.cache.guild(guild_id) {
                                             if let Some(channel_id) = guild.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id) {
                                                 if let Some(guild_channel) = guild.channels.get(&channel_id) {
-                                                    let perms = guild.user_permissions_in(guild_channel, ctx.cache.current_user().id);
-                                                    perms.speak() && perms.connect()
+                                                    if let Some(bot_member) = guild.members.get(&ctx.cache.current_user().id) {
+                                                        let perms = guild.user_permissions_in(guild_channel, bot_member);
+                                                        perms.speak() && perms.connect()
+                                                    } else { false }
                                                 } else { false }
                                             } else { false }
                                         } else { false }
