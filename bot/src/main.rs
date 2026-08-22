@@ -93,7 +93,7 @@ async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::Cha
     
     // If bot is already in a channel, check if the user is there too
     if let Some(handler_lock) = manager.get(guild.id) {
-        let handler = handler_lock.lock().await;
+        let mut handler = handler_lock.lock().await;
         if let Some(current_channel) = handler.current_channel() {
             if current_channel.0.get() == channel_id.get() {
                 // Already in the right channel, no need to reconnect
