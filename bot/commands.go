@@ -491,7 +491,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 				discord.NewDangerButton(T("button_stop"), "stop:"+e.GuildID().String()),
 			)).
 			Build())
-		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
+		if err := PlayAudio(conn, e.GuildID().String(), filePath); err != nil {
 			LogError("Error playing audio: %v", err)
 		}
 		if os.Getenv("SAVE_AUDIO") != "true" {
@@ -590,7 +590,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 				discord.NewDangerButton(T("button_stop"), "stop:"+e.GuildID().String()),
 			)).
 			Build())
-		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
+		if err := PlayAudio(conn, e.GuildID().String(), filePath); err != nil {
 			LogError("Error playing audio: %v", err)
 		}
 		if os.Getenv("SAVE_AUDIO") != "true" {
