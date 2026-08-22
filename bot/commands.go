@@ -712,7 +712,10 @@ func HandleButton(e *events.ButtonInteractionCreate) {
 				return
 			}
 			voiceClient, _ = e.Client().Voice().GetOrCreateGuildVoiceClient(guildID)
-			voiceClient.Connect(context.Background(), *channelID, false, false)
+			if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
+				e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
+				return
+			}
 		}
 		go func() {
 			filePath, finalVoice, err := getOrGenerateAudio(info.Text, info.Voice)

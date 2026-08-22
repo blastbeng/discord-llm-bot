@@ -8,6 +8,8 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/disgoorg/disgo/bot"
@@ -63,8 +65,11 @@ func main() {
 	}
 	defer client.Close(context.Background())
 
-	// Block forever
-	select {}
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	<-stop
+
+	log.Println("Shutting down...")
 }
 
 func backgroundGenerator() {
