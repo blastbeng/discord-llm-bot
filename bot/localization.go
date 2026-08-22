@@ -135,8 +135,16 @@ var translations = map[string]map[string]string{
 		"ita": "L'immagine è stata modificata",
 		"eng": "The image has been changed",
 	},
+	"button_play": {
+		"ita": "Play",
+		"eng": "Play",
+	},
+	"button_stop": {
+		"ita": "Stop",
+		"eng": "Stop",
+	},
 	"invalid_audio_ext": {
-		"ita": "The file extension is not valid. Only mp3 or wav are allowed.",
+		"ita": "L'estensione del file non è valida. Solo mp3 o wav sono permessi.",
 		"eng": "The file extension is not valid. Only mp3 or wav are allowed.",
 	},
 	"error_download_audio": {

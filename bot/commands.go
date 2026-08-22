@@ -308,8 +308,8 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 	msg, err := e.CreateFollowupMessage(discord.NewMessageCreateBuilder().
 		SetContent(T("generating_audio", text, getQueueMessage())).
 		SetComponents(discord.NewActionRow(
-			discord.NewPrimaryButton("Play", "play:"+playID),
-			discord.NewDangerButton("Stop", "stop:"+e.GuildID().String()),
+			discord.NewPrimaryButton(T("button_play"), "play:"+playID),
+			discord.NewDangerButton(T("button_stop"), "stop:"+e.GuildID().String()),
 		)).
 		SetEphemeral(true).Build())
 	if err != nil {
@@ -363,8 +363,8 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 		_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().
 			SetContent(T("playing_audio", text, voiceName)).
 			SetComponents(discord.NewActionRow(
-				discord.NewPrimaryButton("Play", "play:"+playID),
-				discord.NewDangerButton("Stop", "stop:"+e.GuildID().String()),
+				discord.NewPrimaryButton(T("button_play"), "play:"+playID),
+				discord.NewDangerButton(T("button_stop"), "stop:"+e.GuildID().String()),
 			)).
 			Build())
 	}(msg.ID)
@@ -424,8 +424,8 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 	msg, err := e.CreateFollowupMessage(discord.NewMessageCreateBuilder().
 		SetContent(T("searching_random", getQueueMessage())).
 		SetComponents(discord.NewActionRow(
-			discord.NewPrimaryButton("Play", "play:"+playID),
-			discord.NewDangerButton("Stop", "stop:"+e.GuildID().String()),
+			discord.NewPrimaryButton(T("button_play"), "play:"+playID),
+			discord.NewDangerButton(T("button_stop"), "stop:"+e.GuildID().String()),
 		)).
 		SetEphemeral(true).Build())
 	if err != nil {
@@ -478,8 +478,8 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 		_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().
 			SetContent(T("playing_audio", sentence, voiceName)).
 			SetComponents(discord.NewActionRow(
-				discord.NewPrimaryButton("Play", "play:"+playID),
-				discord.NewDangerButton("Stop", "stop:"+e.GuildID().String()),
+				discord.NewPrimaryButton(T("button_play"), "play:"+playID),
+				discord.NewDangerButton(T("button_stop"), "stop:"+e.GuildID().String()),
 			)).
 			Build())
 	}(msg.ID)
