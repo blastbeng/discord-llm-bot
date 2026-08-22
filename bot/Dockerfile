@@ -1,18 +1,28 @@
+# syntax=docker/dockerfile:1
+
 FROM golang:1.24-alpine AS builder
+
 RUN apk add --no-cache gcc musl-dev ffmpeg git
+
 WORKDIR /app
 
-# Copy go.mod first to leverage Docker cache
 COPY go.mod ./
-RUN go mod download
 
-# Copy the rest of the project sources
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
 COPY . .
 
-RUN CGO_ENABLED=1 go build -mod=mod -o /discord-bot .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 go build -mod=mod -o /discord-bot .
 
 FROM alpine:latest
+
 RUN apk add --no-cache ffmpeg
+
 WORKDIR /app
+
 COPY --from=builder /discord-bot .
+
 CMD ["./discord-bot"]
