@@ -144,7 +144,6 @@ func doPresence(client bot.Client) {
 		return
 	}
 
-	rand.Seed(time.Now().UnixNano())
 	game := gameNames[rand.Intn(len(gameNames))]
 
 	if err := client.SetPresence(context.Background(), discord.NewPlayingActivity(game)); err != nil {

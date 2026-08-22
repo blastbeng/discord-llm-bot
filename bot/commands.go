@@ -37,6 +37,51 @@ var (
 	audioMessagesMu sync.Mutex
 )
 
+func getOrGenerateAudio(text string, voiceName string) (filePath string, finalVoice string, err error) {
+	filePath = GetAudioFilePath(text, voiceName)
+	if _, err := os.Stat(filePath); err == nil {
+		return filePath, voiceName, nil
+	}
+
+	var audioData []byte
+	if voiceName == "Google" {
+		audioData, err = GetTTSGoogle(text)
+	} else {
+		audioData, err = GetTTSFakeYou(text, voiceName)
+		if err != nil {
+			log.Printf("FakeYou failed, falling back to Google: %v", err)
+			voiceName = "Google"
+			filePath = GetAudioFilePath(text, voiceName)
+			if _, err := os.Stat(filePath); err == nil {
+				return filePath, voiceName, nil
+			}
+			audioData, err = GetTTSGoogle(text)
+		}
+	}
+	if err != nil {
+		return "", voiceName, err
+	}
+
+	tempPath := filePath + ".tmp"
+	if voiceName != "Google" {
+		tempPath = filePath + ".wav.tmp"
+	}
+	if err := SaveAudio(tempPath, audioData); err != nil {
+		return "", voiceName, err
+	}
+	if err := CompressAudio(tempPath, filePath); err != nil {
+		os.Remove(tempPath)
+		return "", voiceName, err
+	}
+	os.Remove(tempPath)
+
+	if voiceName == "Google" {
+		db.InsertSentence(text)
+		db.UpdateSentenceHasAudio(text)
+	}
+	return filePath, voiceName, nil
+}
+
 func checkCooldown(userID discord.Snowflake, mention string, commandName string) string {
 	cooldownsMu.Lock()
 	defer cooldownsMu.Unlock()
@@ -54,7 +99,6 @@ func checkCooldown(userID discord.Snowflake, mention string, commandName string)
 				T("spam_detected_7", mention, cooldownStr),
 				T("spam_detected_8", mention, cooldownStr),
 			}
-			rand.Seed(time.Now().UnixNano())
 			return msgs[rand.Intn(len(msgs))]
 		}
 	}
@@ -298,8 +342,6 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 		voiceName = GetRandomVoice()
 	}
 
-	filePath := GetAudioFilePath(text, voiceName)
-
 	playID := uuid.NewString()
 	audioMessagesMu.Lock()
 	audioMessages[playID] = audioMessageInfo{Text: text, Voice: voiceName}
@@ -318,44 +360,15 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 	}
 
 	go func(messageID discord.Snowflake) {
-		if _, err := os.Stat(filePath); err != nil {
-			var audioData []byte
-			var err error
-			if voiceName == "Google" {
-				audioData, err = GetTTSGoogle(text)
-			} else {
-				audioData, err = GetTTSFakeYou(text, voiceName)
-				if err != nil {
-					log.Printf("FakeYou failed, falling back to Google: %v", err)
-					voiceName = "Google"
-					filePath = GetAudioFilePath(text, voiceName)
-					audioData, err = GetTTSGoogle(text)
-					_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(T("fakeyou_fallback", text, voiceName)).Build())
-				}
-			}
-			if err != nil {
-				log.Printf("Error generating audio: %v", err)
-				_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(text + "\nVoce: " + voiceName + T("error_audio_generation_retry")).Build())
-				return
-			}
-			tempPath := filePath + ".tmp"
-			if voiceName != "Google" {
-				tempPath = filePath + ".wav.tmp"
-			}
-			if err := SaveAudio(tempPath, audioData); err != nil {
-				log.Printf("Error saving audio: %v", err)
-				return
-			}
-			if err := CompressAudio(tempPath, filePath); err != nil {
-				log.Printf("Error compressing audio: %v", err)
-				os.Remove(tempPath)
-				return
-			}
-			os.Remove(tempPath)
-			if voiceName == "Google" {
-				db.UpdateSentenceHasAudio(text)
-				db.InsertSentence(text)
-			}
+		filePath, finalVoice, err := getOrGenerateAudio(text, voiceName)
+		if finalVoice != voiceName {
+			voiceName = finalVoice
+			_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(T("fakeyou_fallback", text, voiceName)).Build())
+		}
+		if err != nil {
+			log.Printf("Error generating audio: %v", err)
+			_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(text + "\nVoce: " + voiceName + T("error_audio_generation_retry")).Build())
+			return
 		}
 		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
 			log.Printf("Error playing audio: %v", err)
@@ -411,10 +424,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 		return
 	}
 
-	rand.Seed(time.Now().UnixNano())
 	sentence := sentences[rand.Intn(len(sentences))]
-
-	filePath := GetAudioFilePath(sentence, voiceName)
 
 	playID := uuid.NewString()
 	audioMessagesMu.Lock()
@@ -434,43 +444,15 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 	}
 
 	go func(messageID discord.Snowflake) {
-		if _, err := os.Stat(filePath); err != nil {
-			var audioData []byte
-			var err error
-			if voiceName == "Google" {
-				audioData, err = GetTTSGoogle(sentence)
-			} else {
-				audioData, err = GetTTSFakeYou(sentence, voiceName)
-				if err != nil {
-					log.Printf("FakeYou failed, falling back to Google: %v", err)
-					voiceName = "Google"
-					filePath = GetAudioFilePath(sentence, voiceName)
-					audioData, err = GetTTSGoogle(sentence)
-					_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(T("fakeyou_fallback", sentence, voiceName)).Build())
-				}
-			}
-			if err != nil {
-				log.Printf("Error generating audio: %v", err)
-				_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(sentence + "\nVoce: " + voiceName + T("error_audio_generation_retry")).Build())
-				return
-			}
-			tempPath := filePath + ".tmp"
-			if voiceName != "Google" {
-				tempPath = filePath + ".wav.tmp"
-			}
-			if err := SaveAudio(tempPath, audioData); err != nil {
-				log.Printf("Error saving audio: %v", err)
-				return
-			}
-			if err := CompressAudio(tempPath, filePath); err != nil {
-				log.Printf("Error compressing audio: %v", err)
-				os.Remove(tempPath)
-				return
-			}
-			os.Remove(tempPath)
-			if voiceName == "Google" {
-				db.UpdateSentenceHasAudio(sentence)
-			}
+		filePath, finalVoice, err := getOrGenerateAudio(sentence, voiceName)
+		if finalVoice != voiceName {
+			voiceName = finalVoice
+			_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(T("fakeyou_fallback", sentence, voiceName)).Build())
+		}
+		if err != nil {
+			log.Printf("Error generating audio: %v", err)
+			_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(sentence + "\nVoce: " + voiceName + T("error_audio_generation_retry")).Build())
+			return
 		}
 		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
 			log.Printf("Error playing audio: %v", err)
@@ -647,43 +629,14 @@ func HandleButton(e *events.ButtonInteractionCreate) {
 		if channelID != nil {
 			voiceClient.Connect(context.Background(), *channelID, false, false)
 		}
-		filePath := GetAudioFilePath(info.Text, info.Voice)
-		if _, err := os.Stat(filePath); err != nil {
-			var audioData []byte
-			var err error
-			if info.Voice == "Google" {
-				audioData, err = GetTTSGoogle(info.Text)
-			} else {
-				audioData, err = GetTTSFakeYou(info.Text, info.Voice)
-				if err != nil {
-					log.Printf("FakeYou failed, falling back to Google: %v", err)
-					info.Voice = "Google"
-					filePath = GetAudioFilePath(info.Text, info.Voice)
-					audioData, err = GetTTSGoogle(info.Text)
-				}
-			}
-			if err != nil {
-				log.Printf("Error generating audio: %v", err)
-				_ = e.UpdateMessage(discord.NewMessageUpdateBuilder().SetContent(info.Text + "\nVoce: " + info.Voice + T("error_audio_generation_retry")).Build())
-				return
-			}
-			tempPath := filePath + ".tmp"
-			if info.Voice != "Google" {
-				tempPath = filePath + ".wav.tmp"
-			}
-			if err := SaveAudio(tempPath, audioData); err != nil {
-				log.Printf("Error saving audio: %v", err)
-				return
-			}
-			if err := CompressAudio(tempPath, filePath); err != nil {
-				log.Printf("Error compressing audio: %v", err)
-				os.Remove(tempPath)
-				return
-			}
-			os.Remove(tempPath)
-			if info.Voice == "Google" {
-				db.UpdateSentenceHasAudio(info.Text)
-			}
+		filePath, finalVoice, err := getOrGenerateAudio(info.Text, info.Voice)
+		if finalVoice != info.Voice {
+			info.Voice = finalVoice
+		}
+		if err != nil {
+			log.Printf("Error generating audio: %v", err)
+			_ = e.UpdateMessage(discord.NewMessageUpdateBuilder().SetContent(info.Text + "\nVoce: " + info.Voice + T("error_audio_generation_retry")).Build())
+			return
 		}
 		if err := PlayAudio(voiceClient, guildID.String(), filePath); err != nil {
 			log.Printf("Error playing audio: %v", err)
