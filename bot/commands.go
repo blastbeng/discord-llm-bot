@@ -314,7 +314,16 @@ func handleJoin(e *events.ApplicationCommandInteractionCreate) {
 		return
 	}
 
-	voiceClient, _ := e.Client().Voice().GetOrCreateGuildVoiceClient(e.GuildID())
+	voiceClient, ok := e.Client().Voice().GetGuildVoiceClient(e.GuildID())
+	if ok && voiceClient.Connected() {
+		currentChannelID, _ := voiceClient.ChannelID()
+		if currentChannelID != nil && *currentChannelID == *channelID {
+			e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("already_connected")).SetEphemeral(true).Build())
+			return
+		}
+	}
+
+	voiceClient, _ = e.Client().Voice().GetOrCreateGuildVoiceClient(e.GuildID())
 	if err := voiceClient.Connect(context.Background(), *channelID, false, false); err != nil {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("error_connecting")).SetEphemeral(true).Build())
 		return
@@ -408,12 +417,6 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 			_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(fmt.Sprintf("%s\nVoce: %s\n%s", text, voiceName, errMsg)).Build())
 			return
 		}
-		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
-			log.Printf("Error playing audio: %v", err)
-		}
-		if os.Getenv("SAVE_AUDIO") != "true" {
-			os.Remove(filePath)
-		}
 		_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().
 			SetContent(T("playing_audio", text, voiceName)).
 			SetComponents(discord.NewActionRow(
@@ -421,6 +424,12 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 				discord.NewDangerButton(T("button_stop"), "stop:"+e.GuildID().String()),
 			)).
 			Build())
+		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
+			log.Printf("Error playing audio: %v", err)
+		}
+		if os.Getenv("SAVE_AUDIO") != "true" {
+			os.Remove(filePath)
+		}
 	}(msg.ID)
 }
 
@@ -496,12 +505,6 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 			_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(fmt.Sprintf("%s\nVoce: %s\n%s", sentence, voiceName, errMsg)).Build())
 			return
 		}
-		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
-			log.Printf("Error playing audio: %v", err)
-		}
-		if os.Getenv("SAVE_AUDIO") != "true" {
-			os.Remove(filePath)
-		}
 		_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().
 			SetContent(T("playing_audio", sentence, voiceName)).
 			SetComponents(discord.NewActionRow(
@@ -509,6 +512,12 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 				discord.NewDangerButton(T("button_stop"), "stop:"+e.GuildID().String()),
 			)).
 			Build())
+		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
+			log.Printf("Error playing audio: %v", err)
+		}
+		if os.Getenv("SAVE_AUDIO") != "true" {
+			os.Remove(filePath)
+		}
 	}(msg.ID)
 }
 
@@ -695,6 +704,7 @@ func HandleButton(e *events.ButtonInteractionCreate) {
 		}
 		e.DeferCreateMessage(true)
 		guildID := e.GuildID()
+		channelID := getVoiceChannelID(e.Client(), guildID, e.User().ID())
 		voiceClient, ok := e.Client().Voice().GetGuildVoiceClient(guildID)
 		if !ok || !voiceClient.Connected() {
 			if channelID == nil {
@@ -704,7 +714,6 @@ func HandleButton(e *events.ButtonInteractionCreate) {
 			voiceClient, _ = e.Client().Voice().GetOrCreateGuildVoiceClient(guildID)
 			voiceClient.Connect(context.Background(), *channelID, false, false)
 		}
-		channelID := getVoiceChannelID(e.Client(), guildID, e.User().ID())
 		go func() {
 			filePath, finalVoice, err := getOrGenerateAudio(info.Text, info.Voice)
 			if finalVoice != info.Voice {
@@ -712,7 +721,7 @@ func HandleButton(e *events.ButtonInteractionCreate) {
 			}
 			if err != nil {
 				log.Printf("Error generating audio: %v", err)
-				_ = e.UpdateMessage(discord.NewMessageUpdateBuilder().SetContent(info.Text + "\nVoce: " + info.Voice + T("error_audio_generation_retry")).Build())
+				_ = e.UpdateMessage(discord.NewMessageUpdateBuilder().SetContent(fmt.Sprintf("%s\nVoce: %s%s", info.Text, info.Voice, T("error_audio_generation_retry"))).Build())
 				return
 			}
 			if err := PlayAudio(voiceClient, guildID.String(), filePath); err != nil {
