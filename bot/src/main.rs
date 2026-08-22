@@ -3,13 +3,11 @@ mod generator;
 mod lang;
 mod tts;
 use poise::serenity_prelude as serenity;
-use base64::{engine::general_purpose, Engine as _};
 use rand::seq::SliceRandom;
 use std::env;
 use sysinfo::System;
 use songbird::SerenityInit;
 use serenity::CacheHttp;
-use serenity::model::user::CurrentUser;
 
 #[derive(Debug)]
 // Data stored in the bot's context
@@ -35,7 +33,7 @@ async fn change_presence_loop(ctx: serenity::Context) {
                             let games: Vec<String> = obj.values().filter_map(|v| v["name"].as_str().map(|s| s.to_string())).collect();
                             if let Some(game) = games.choose(&mut rand::thread_rng()) {
                                 log::info!("change_presence_loop - setting game: {}", game);
-                                let activity = serenity::gateway::Activity::playing(game.clone());
+                                let activity = serenity::ActivityData::playing(game.clone());
                                 ctx.set_activity(Some(activity));
                             }
                         }
@@ -72,13 +70,15 @@ async fn get_queue_message(lang: &lang::Lang) -> String {
 
 async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
     let lang = &ctx.data().lang;
-    let guild = ctx.guild().ok_or(lang.guild_not_found.as_str())?;
-    let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(lang.must_be_in_voice.as_str())?;
+    let channel_id = {
+        let guild = ctx.guild().ok_or(lang.guild_not_found.as_str())?;
+        guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(lang.must_be_in_voice.as_str())?
+    };
     log::debug!("check_permissions: user {} in channel {}", ctx.author().id, channel_id);
     
     let channel = channel_id.to_channel(ctx.http()).await?;
     if let serenity::Channel::Guild(guild_channel) = channel {
-        let perms = guild_channel.permissions_for_user(&ctx.cache, &ctx.cache.current_user)?;
+        let perms = guild_channel.permissions_for_user(ctx.cache(), &ctx.cache().current_user())?;
         if !perms.speak() || !perms.connect() {
             log::warn!("check_permissions: user {} lacks speak/connect permission in channel {}", ctx.author().id, channel_id);
             return Err(lang.no_speak_permission.as_str().into());
@@ -88,20 +88,18 @@ async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::ChannelId) -> Result<(), Error> {
-    let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
-    let manager = songbird::get(ctx.serenity_context()).await.unwrap();
+    let guild_id = ctx.guild_id().unwrap();
+    let manager = songbird::get(ctx.serenity_context()).await
+        .ok_or("Songbird not registered")?;
     
-    // If bot is already in a channel, check if the user is there too
-    if let Some(handler_lock) = manager.get(guild.id) {
+    if let Some(handler_lock) = manager.get(guild_id) {
         let mut handler = handler_lock.lock().await;
         if let Some(current_channel) = handler.current_channel() {
             if current_channel.0.get() == channel_id.get() {
-                // Already in the right channel, no need to reconnect
                 log::info!("connect_bot_by_voice_client: bot already in channel {}", channel_id);
                 return Ok(());
             }
         }
-        // Bot is in a different channel, leave first
         log::info!("connect_bot_by_voice_client: leaving current channel to join {}", channel_id);
         handler.leave().await;
         drop(handler);
@@ -109,7 +107,7 @@ async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::Cha
     }
     
     log::info!("connect_bot_by_voice_client: joining channel {}", channel_id);
-    let _handler_lock = manager.join(guild.id, channel_id).await?;
+    let _handler_lock = manager.join(guild_id, channel_id).await?;
     Ok(())
 }
 
@@ -140,20 +138,23 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     log::info!("[GUILDID : {}] join command invoked by user {}", get_current_guild_id(ctx.guild_id().unwrap()), ctx.author().id);
     check_permissions(ctx).await?;
-    let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
-    let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?;
+    let channel_id = {
+        let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
+        guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
+    };
+    let guild_id = ctx.guild_id().unwrap();
     
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
     
     // Disconnect existing connection first (matches Python behavior)
-    if let Some(handler_lock) = manager.get(guild.id) {
+    if let Some(handler_lock) = manager.get(guild_id) {
         let mut handler = handler_lock.lock().await;
         handler.leave().await;
         drop(handler);
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     }
     
-    let handler = manager.join(guild.id, channel_id).await;
+    let handler = manager.join(guild_id, channel_id).await;
     if handler.is_ok() {
         ctx.say(&ctx.data().lang.join_success).await?;
     } else {
@@ -232,12 +233,15 @@ async fn speak(
     ctx.defer_ephemeral().await?;
     check_permissions(ctx).await?;
 
-    let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
-    log::info!("[GUILDID : {}] speak - text: {}, voice: {}", get_current_guild_id(guild.id), text, actual_voice);
-    let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?;
+    let guild_id = ctx.guild_id().unwrap();
+    let channel_id = {
+        let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
+        log::info!("[GUILDID : {}] speak - text: {}, voice: {}", get_current_guild_id(guild.id), text, actual_voice);
+        guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
+    };
     connect_bot_by_voice_client(ctx, channel_id).await?;
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
-    let handler_lock = match manager.get(guild.id) {
+    let handler_lock = match manager.get(guild_id) {
         Some(h) => h,
         None => {
             ctx.say(&ctx.data().lang.bot_not_ready).await?;
@@ -351,12 +355,15 @@ async fn random(
     ctx.defer_ephemeral().await?;
     check_permissions(ctx).await?;
 
-    let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
-    log::info!("[GUILDID : {}] random - voice: {}, text: {:?}", get_current_guild_id(guild.id), actual_voice, text);
-    let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?;
+    let guild_id = ctx.guild_id().unwrap();
+    let channel_id = {
+        let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
+        log::info!("[GUILDID : {}] random - voice: {}, text: {:?}", get_current_guild_id(guild.id), actual_voice, text);
+        guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
+    };
     connect_bot_by_voice_client(ctx, channel_id).await?;
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
-    let handler_lock = match manager.get(guild.id) {
+    let handler_lock = match manager.get(guild_id) {
         Some(h) => h,
         None => {
             ctx.say(&ctx.data().lang.bot_not_ready).await?;
@@ -395,8 +402,10 @@ async fn random(
         return Ok(());
     }
 
-    let mut rng = rand::thread_rng();
-    let random_sentence = sentences.choose(&mut rng).unwrap().to_string();
+    let random_sentence = {
+        let mut rng = rand::thread_rng();
+        sentences.choose(&mut rng).unwrap().to_string()
+    };
 
     let queue_msg = get_queue_message(&ctx.data().lang).await;
     let initial_msg = ctx.data().lang.searching_random.replacen("{}", &queue_msg, 1);
@@ -476,12 +485,15 @@ async fn audio(
         return Ok(());
     }
 
-    let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
-    let channel_id = guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?;
+    let guild_id = ctx.guild_id().unwrap();
+    let channel_id = {
+        let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
+        guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
+    };
 
     connect_bot_by_voice_client(ctx, channel_id).await?;
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
-    let handler_lock = match manager.get(guild.id) {
+    let handler_lock = match manager.get(guild_id) {
         Some(h) => h,
         None => {
             ctx.say(&ctx.data().lang.bot_not_ready).await?;
@@ -496,7 +508,7 @@ async fn audio(
         }
     }
 
-    log::info!("[GUILDID : {}] audio - filename: {}", get_current_guild_id(guild.id), audio.filename);
+    log::info!("[GUILDID : {}] audio - filename: {}", get_current_guild_id(guild_id), audio.filename);
 
     let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
     let safe_filename = std::path::Path::new(&audio.filename)
@@ -540,7 +552,8 @@ async fn restart(ctx: Context<'_>) -> Result<(), Error> {
         ctx.say(&ctx.data().lang.admin_parent_server).await?;
         return Ok(());
     }
-    let member = ctx.guild().unwrap().member(ctx.http(), ctx.author().id).await?;
+    let guild_id = ctx.guild_id().unwrap();
+    let member = guild_id.member(ctx.http(), ctx.author().id).await?;
     if !member.permissions(ctx)?.administrator() {
         ctx.say(&ctx.data().lang.admin_only).await?;
         return Ok(());
@@ -561,8 +574,8 @@ async fn rename(
         ctx.say(&ctx.data().lang.nickname_too_long).await?;
         return Ok(());
     }
-    let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
-    guild.edit_nickname(ctx.http(), Some(&name)).await?;
+    let guild_id = ctx.guild_id().unwrap();
+    guild_id.edit_nickname(ctx.http(), Some(&name)).await?;
     ctx.say(ctx.data().lang.nickname_changed.replacen("{}", &name, 1)).await?;
     Ok(())
 }
@@ -588,8 +601,8 @@ async fn avatar(
     }
 
     let bytes = reqwest::get(&image.url).await?.bytes().await?.to_vec();
-    let avatar = serenity::builder::CreateAttachment::data(bytes, image.filename.clone());
-    let current_user = ctx.cache.current_user.clone();
+    let avatar = serenity::builder::CreateAttachment::bytes(bytes, image.filename.clone());
+    let current_user = ctx.cache().current_user().clone();
     current_user.edit(ctx.http(), serenity::builder::EditProfile::new().avatar(&avatar)).await?;
     ctx.say(&ctx.data().lang.avatar_changed).await?;
     Ok(())
@@ -624,7 +637,10 @@ async fn main() {
                 Box::pin(async move {
                     if let poise::FrameworkError::CooldownHit { remaining_cooldown, ctx, .. } = error {
                         let spam_msgs = &ctx.data().lang.spam_messages;
-                        let random_msg = spam_msgs.choose(&mut rand::thread_rng()).unwrap();
+                        let random_msg = {
+                            let mut rng = rand::thread_rng();
+                            spam_msgs.choose(&mut rng).unwrap()
+                        };
                         let user_id = ctx.author().id.to_string();
                         let random_msg_filled = random_msg.replace("{}", &user_id);
                         let msg = format!("{}\nCooldown: {:.2}s", random_msg_filled, remaining_cooldown.as_secs_f32());
@@ -647,7 +663,7 @@ async fn main() {
                                 // Check if user is in a voice channel
                                 if let Some(guild_id) = component.guild_id {
                                     log::info!("Component interaction: stop button pressed by user {} in guild {}", component.user.id, guild_id);
-                                    let user_in_voice = ctx.cache.guild(guild_id)
+                                    let user_in_voice = ctx.cache().guild(guild_id)
                                         .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id))
                                         .is_some();
                                     if !user_in_voice {
@@ -657,20 +673,22 @@ async fn main() {
                                         return Ok(());
                                     }
                                     // Check bot permissions in the user's channel
-                                    if let Some(user_channel) = ctx.cache.guild(guild_id)
-                                        .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id)) {
-                                        if let Some(channel) = user_channel.to_channel_cached(&ctx.cache) {
-                                            if let serenity::Channel::Guild(guild_channel) = channel {
-                                                if let Ok(perms) = guild_channel.permissions_for_user(&ctx.cache, &ctx.cache.current_user) {
-                                                    if !perms.speak() || !perms.connect() {
-                                                        component.create_response(ctx, serenity::CreateInteractionResponse::Message(
-                                                            serenity::CreateInteractionResponseMessage::new().content(&data.lang.no_speak_permission).ephemeral(true)
-                                                        )).await?;
-                                                        return Ok(());
-                                                    }
-                                                }
-                                            }
-                                        }
+                                    let has_perms = {
+                                        if let Some(guild) = ctx.cache().guild(guild_id) {
+                                            if let Some(channel_id) = guild.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id) {
+                                                if let Some(guild_channel) = guild.channels.get(&channel_id) {
+                                                    if let Ok(perms) = guild_channel.permissions_for_user(ctx.cache(), &ctx.cache().current_user()) {
+                                                        perms.speak() && perms.connect()
+                                                    } else { false }
+                                                } else { false }
+                                            } else { false }
+                                        } else { false }
+                                    };
+                                    if !has_perms {
+                                        component.create_response(ctx, serenity::CreateInteractionResponse::Message(
+                                            serenity::CreateInteractionResponseMessage::new().content(&data.lang.no_speak_permission).ephemeral(true)
+                                        )).await?;
+                                        return Ok(());
                                     }
                                     let manager = songbird::get(ctx).await.unwrap();
                                     if let Some(handler) = manager.get(guild_id) {
@@ -689,7 +707,7 @@ async fn main() {
                                         serenity::CreateInteractionResponseMessage::new().ephemeral(true)
                                     )).await;
                                     // Check if user is in a voice channel
-                                    let user_in_voice = ctx.cache.guild(guild_id)
+                                    let user_in_voice = ctx.cache().guild(guild_id)
                                         .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id))
                                         .is_some();
                                     if !user_in_voice {
@@ -702,26 +720,26 @@ async fn main() {
                                         // Check if bot is still connected
                                         if handler.current_channel().is_none() {
                                             // Bot disconnected, try to rejoin user's channel
-                                            if let Some(user_channel) = ctx.cache.guild(guild_id)
+                                            if let Some(user_channel) = ctx.cache().guild(guild_id)
                                                 .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id)) {
                                                 drop(handler);
                                                 let _ = manager.join(guild_id, user_channel).await;
                                                 let handler_lock = manager.get(guild_id).unwrap();
                                                 let mut handler = handler_lock.lock().await;
-                                                let source = songbird::input::File::new(std::path::PathBuf::from(file_path));
+                                                let source = songbird::input::File::new(file_path.to_string());
                                                 handler.play_only(source.into());
                                             }
                                         } else {
-                                            let source = songbird::input::File::new(std::path::PathBuf::from(file_path));
+                                            let source = songbird::input::File::new(file_path.to_string());
                                             handler.play_only(source.into());
                                         }
                                     } else {
                                         // Bot not in manager, try to join and play
-                                        if let Some(user_channel) = ctx.cache.guild(guild_id)
+                                        if let Some(user_channel) = ctx.cache().guild(guild_id)
                                             .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id)) {
                                             if let Ok(handler_lock) = manager.join(guild_id, user_channel).await {
                                                 let mut handler = handler_lock.lock().await;
-                                                let source = songbird::input::File::new(std::path::PathBuf::from(file_path));
+                                                let source = songbird::input::File::new(file_path.to_string());
                                                 handler.play_only(source.into());
                                             }
                                         }

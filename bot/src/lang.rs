@@ -1,5 +1,6 @@
 use std::env;
 
+#[derive(Debug)]
 pub struct Lang {
     pub join_success: String,
     pub join_error: String,
