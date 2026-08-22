@@ -97,11 +97,13 @@ async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::Cha
         log::info!("connect_bot_by_voice_client: leaving current channel to join {}", channel_id);
         let _ = handler.leave().await;
         drop(handler);
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
     
     log::info!("connect_bot_by_voice_client: joining channel {}", channel_id);
     let _handler_lock = manager.join(guild_id, channel_id).await?;
+    // Wait for connection to establish
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     Ok(())
 }
 
@@ -145,7 +147,7 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
         let mut handler = handler_lock.lock().await;
         let _ = handler.leave().await;
         drop(handler);
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
     
     let handler = manager.join(guild_id, channel_id).await;
@@ -235,24 +237,35 @@ async fn speak(
         guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
     };
     connect_bot_by_voice_client(ctx, channel_id).await?;
+    let queue_msg = get_queue_message(&ctx.data().lang).await;
+    let initial_msg = ctx.data().lang.generating_audio.replacen("{}", &text, 1).replacen("{}", &queue_msg, 1);
+    let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
+
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
     let handler_lock = match manager.get(guild_id) {
         Some(h) => h,
         None => {
-            ctx.say(&ctx.data().lang.bot_not_ready).await?;
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
             return Ok(());
         }
     };
     {
-        let handler = handler_lock.lock().await;
-        if handler.current_channel().is_none() {
-            ctx.say(&ctx.data().lang.initializing_connection).await?;
+        // Wait for connection to establish with retry
+        let mut connected = false;
+        for _ in 0..5 {
+            let handler = handler_lock.lock().await;
+            if handler.current_channel().is_some() {
+                connected = true;
+                break;
+            }
+            drop(handler);
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        if !connected {
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
             return Ok(());
         }
     }
-    let queue_msg = get_queue_message(&ctx.data().lang).await;
-    let initial_msg = ctx.data().lang.generating_audio.replacen("{}", &text, 1).replacen("{}", &queue_msg, 1);
-    let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
 
     let tts_result = match tts::get_or_generate_tts(&text, &actual_voice).await {
         Ok(result) => result,
@@ -277,8 +290,17 @@ async fn speak(
         reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
         return Ok(());
     }
+    
+    log::info!("TTS file path: {}", tts_result.file_path);
+    if !std::path::Path::new(&tts_result.file_path).exists() {
+        log::error!("TTS file does not exist: {}", tts_result.file_path);
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.tts_error).ephemeral(true)).await?;
+        return Ok(());
+    }
+    log::info!("Playing audio file: {}", tts_result.file_path);
     let source = songbird::input::File::new(tts_result.file_path.clone());
     handler.play_only(source.into());
+    log::info!("Audio playback started in guild {}", guild_id);
 
     let warning = if tts_result.fallback {
         &ctx.data().lang.fakeyou_warning
@@ -348,21 +370,6 @@ async fn random(
         guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
     };
     connect_bot_by_voice_client(ctx, channel_id).await?;
-    let manager = songbird::get(ctx.serenity_context()).await.unwrap();
-    let handler_lock = match manager.get(guild_id) {
-        Some(h) => h,
-        None => {
-            ctx.say(&ctx.data().lang.bot_not_ready).await?;
-            return Ok(());
-        }
-    };
-    {
-        let handler = handler_lock.lock().await;
-        if handler.current_channel().is_none() {
-            ctx.say(&ctx.data().lang.initializing_connection).await?;
-            return Ok(());
-        }
-    }
 
     let sentences = if let Some(t) = &text {
         if !t.trim().is_empty() {
@@ -397,6 +404,32 @@ async fn random(
     let initial_msg = ctx.data().lang.searching_random.replacen("{}", &queue_msg, 1);
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
 
+    let manager = songbird::get(ctx.serenity_context()).await.unwrap();
+    let handler_lock = match manager.get(guild_id) {
+        Some(h) => h,
+        None => {
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
+    {
+        // Wait for connection to establish with retry
+        let mut connected = false;
+        for _ in 0..5 {
+            let handler = handler_lock.lock().await;
+            if handler.current_channel().is_some() {
+                connected = true;
+                break;
+            }
+            drop(handler);
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        if !connected {
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            return Ok(());
+        }
+    }
+
     let tts_result = match tts::get_or_generate_tts(&random_sentence, &actual_voice).await {
         Ok(result) => result,
         Err(e) => {
@@ -416,8 +449,17 @@ async fn random(
         reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
         return Ok(());
     }
+    
+    log::info!("TTS file path: {}", tts_result.file_path);
+    if !std::path::Path::new(&tts_result.file_path).exists() {
+        log::error!("TTS file does not exist: {}", tts_result.file_path);
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.tts_error).ephemeral(true)).await?;
+        return Ok(());
+    }
+    log::info!("Playing audio file: {}", tts_result.file_path);
     let source = songbird::input::File::new(tts_result.file_path.clone());
     handler.play_only(source.into());
+    log::info!("Audio playback started in guild {}", guild_id);
 
     let warning = if tts_result.fallback {
         &ctx.data().lang.fakeyou_warning
@@ -504,8 +546,10 @@ async fn audio(
         ctx.say(&ctx.data().lang.bot_not_ready).await?;
         return Ok(());
     }
+    log::info!("Playing audio file: {}", file_path);
     let source = songbird::input::File::new(file_path.clone());
     handler.play_only(source.into());
+    log::info!("Audio playback started in guild {}", guild_id);
 
     // Wait longer (5 minutes) to ensure playback completes
     let file_path_clone = file_path.clone();
@@ -716,12 +760,16 @@ async fn main() {
                                                 let _ = manager.join(guild_id, user_channel).await;
                                                 let handler_lock = manager.get(guild_id).unwrap();
                                                 let mut handler = handler_lock.lock().await;
+                                                log::info!("Playing audio file: {}", file_path);
                                                 let source = songbird::input::File::new(file_path.to_string());
                                                 handler.play_only(source.into());
+                                                log::info!("Audio playback started in guild {}", guild_id);
                                             }
                                         } else {
+                                            log::info!("Playing audio file: {}", file_path);
                                             let source = songbird::input::File::new(file_path.to_string());
                                             handler.play_only(source.into());
+                                            log::info!("Audio playback started in guild {}", guild_id);
                                         }
                                     } else {
                                         // Bot not in manager, try to join and play
@@ -729,8 +777,10 @@ async fn main() {
                                             .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id)) {
                                             if let Ok(handler_lock) = manager.join(guild_id, user_channel).await {
                                                 let mut handler = handler_lock.lock().await;
+                                                log::info!("Playing audio file: {}", file_path);
                                                 let source = songbird::input::File::new(file_path.to_string());
                                                 handler.play_only(source.into());
+                                                log::info!("Audio playback started in guild {}", guild_id);
                                             }
                                         }
                                     }
