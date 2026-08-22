@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"github.com/disgoorg/disgo/voice"
-	"github.com/disgoorg/ogg"
 )
 
 var (
@@ -39,8 +38,7 @@ func PlayAudio(voiceClient voice.Client, guildID string, filePath string) error 
 	audioCmds[guildID] = cmd
 	audioCmdsMu.Unlock()
 
-	oggReader := ogg.NewDecodeReader(out)
-	voiceClient.SetAudioProvider(voice.NewOggOpusProvider(oggReader))
+	voiceClient.SetAudioProvider(voice.NewOggOpusProvider(out))
 	LogDebug("Streaming audio to Discord for guild %s", guildID)
 
 	err := cmd.Wait()
