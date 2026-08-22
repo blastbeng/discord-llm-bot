@@ -45,6 +45,9 @@ func getOrGenerateAudio(text string, voiceName string) (filePath string, finalVo
 
 	var audioData []byte
 	if voiceName == "Google" {
+		if len(text) > 200 {
+			return "", voiceName, fmt.Errorf("text too long")
+		}
 		audioData, err = GetTTSGoogle(text)
 	} else {
 		audioData, err = GetTTSFakeYou(text, voiceName)
@@ -54,6 +57,9 @@ func getOrGenerateAudio(text string, voiceName string) (filePath string, finalVo
 			filePath = GetAudioFilePath(text, voiceName)
 			if _, err := os.Stat(filePath); err == nil {
 				return filePath, voiceName, nil
+			}
+			if len(text) > 200 {
+				return "", voiceName, fmt.Errorf("text too long")
 			}
 			audioData, err = GetTTSGoogle(text)
 		}
@@ -304,6 +310,7 @@ func handleLeave(e *events.ApplicationCommandInteractionCreate) {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("not_connected")).SetEphemeral(true).Build())
 		return
 	}
+	StopAudio(e.GuildID().String())
 	voiceClient.Disconnect(context.Background())
 	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("leaving_channel")).SetEphemeral(true).Build())
 }
@@ -367,7 +374,11 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 		}
 		if err != nil {
 			log.Printf("Error generating audio: %v", err)
-			_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(text + "\nVoce: " + voiceName + T("error_audio_generation_retry")).Build())
+			errMsg := T("error_audio_generation_retry")
+			if err.Error() == "text too long" {
+				errMsg = T("error_text_too_long")
+			}
+			_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(text + "\nVoce: " + voiceName + errMsg).Build())
 			return
 		}
 		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
@@ -451,7 +462,11 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 		}
 		if err != nil {
 			log.Printf("Error generating audio: %v", err)
-			_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(sentence + "\nVoce: " + voiceName + T("error_audio_generation_retry")).Build())
+			errMsg := T("error_audio_generation_retry")
+			if err.Error() == "text too long" {
+				errMsg = T("error_text_too_long")
+			}
+			_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(sentence + "\nVoce: " + voiceName + errMsg).Build())
 			return
 		}
 		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
@@ -490,6 +505,10 @@ func handleRestart(e *events.ApplicationCommandInteractionCreate) {
 func handleRename(e *events.ApplicationCommandInteractionCreate) {
 	if spamMsg := checkCooldown(e.User().ID(), e.User().Mention(), e.Data.CommandName()); spamMsg != "" {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
+		return
+	}
+	if e.Member() == nil || !e.Member().Permissions.Has(discord.PermissionAdministrator) {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("admin_only")).SetEphemeral(true).Build())
 		return
 	}
 	name := e.Data.String("name")
@@ -588,7 +607,15 @@ func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 	}
 	defer resp.Body.Close()
 
-	tempPath := filepath.Join(os.Getenv("TMP_DIR"), "audio_"+uuid.NewString()+filepath.Ext(attachment.Filename))
+	tmpDir := os.Getenv("TMP_DIR")
+	if tmpDir == "" {
+		tmpDir = os.TempDir()
+	}
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_create_temp")).SetEphemeral(true).Build())
+		return
+	}
+	tempPath := filepath.Join(tmpDir, "audio_"+uuid.NewString()+filepath.Ext(attachment.Filename))
 	out, err := os.Create(tempPath)
 	if err != nil {
 		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_create_temp")).SetEphemeral(true).Build())

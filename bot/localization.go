@@ -215,6 +215,10 @@ var translations = map[string]map[string]string{
 		"ita": "\n\nERROR: Errore nella generazione dell'audio, riprovare fra qualche istante.",
 		"eng": "\n\nERROR: Error generating audio, please try again in a few moments.",
 	},
+	"error_text_too_long": {
+		"ita": "Il testo è troppo lungo per la voce di Google (massimo 200 caratteri).",
+		"eng": "The text is too long for Google voice (maximum 200 characters).",
+	},
 }
 
 // T translates a key to the language specified in the LANG environment variable.

@@ -84,6 +84,11 @@ func backgroundGenerator() {
 			continue // File already exists, skip
 		}
 
+		if len(sentence) > 200 {
+			log.Printf("Background generator: skipping sentence '%s' (too long for Google TTS)", sentence)
+			continue
+		}
+
 		log.Printf("Background generator: processing sentence '%s'", sentence)
 		audioData, err := GetTTSGoogle(sentence)
 		if err != nil {
