@@ -73,6 +73,17 @@ func (d *Database) SelectAllSentence() ([]string, error) {
 	return sentences, nil
 }
 
+func (d *Database) SelectRandomSentence(text string) (string, error) {
+	var sentence string
+	var err error
+	if text != "" {
+		err = d.db.QueryRow("SELECT sentence FROM sentences WHERE sentence LIKE ? ORDER BY RANDOM() LIMIT 1", "%"+text+"%").Scan(&sentence)
+	} else {
+		err = d.db.QueryRow("SELECT sentence FROM sentences ORDER BY RANDOM() LIMIT 1").Scan(&sentence)
+	}
+	return sentence, err
+}
+
 // SelectRandomSentenceWithoutAudio will be used by the background generator
 func (d *Database) SelectRandomSentenceWithoutAudio() (string, error) {
 	var sentence string

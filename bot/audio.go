@@ -2,6 +2,7 @@ package main
 
 import (
 	"os/exec"
+	"strings"
 	"sync"
 
 	"github.com/disgoorg/disgo/voice"
@@ -40,7 +41,11 @@ func PlayAudio(voiceClient voice.Client, guildID string, filePath string) error 
 	oggReader := ogg.NewDecodeReader(out)
 	voiceClient.SetAudioProvider(voice.NewOggOpusProvider(oggReader))
 
-	return cmd.Wait()
+	err := cmd.Wait()
+	if err != nil && !strings.Contains(err.Error(), "signal: killed") {
+		return err
+	}
+	return nil
 }
 
 // StopAudio stops the current audio playback for a guild.

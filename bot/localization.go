@@ -223,6 +223,10 @@ var translations = map[string]map[string]string{
 		"ita": "Sono già connesso a questo canale",
 		"eng": "I'm already connected to this channel",
 	},
+	"error_file_too_large": {
+		"ita": "Il file è troppo grande.",
+		"eng": "The file is too large.",
+	},
 }
 
 // T translates a key to the language specified in the LANG environment variable.

@@ -122,6 +122,11 @@ func checkCooldown(userID discord.Snowflake, mention string, commandName string)
 			return msgs[rand.Intn(len(msgs))]
 		}
 	}
+	for id, t := range cooldowns {
+		if time.Since(t) > 10*time.Second {
+			delete(cooldowns, id)
+		}
+	}
 	cooldowns[userID] = time.Now()
 	return ""
 }
@@ -253,6 +258,9 @@ func HandleAutocomplete(e *events.AutocompleteInteractionCreate) {
 
 	var choices []discord.ApplicationCommandOptionChoiceString
 	for _, voice := range allVoices {
+		if len(choices) >= 25 {
+			break
+		}
 		if strings.Contains(strings.ToLower(voice), strings.ToLower(current)) {
 			choices = append(choices, discord.ApplicationCommandOptionChoiceString{
 				Name:  voice,
@@ -381,6 +389,11 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 	}
 
 	go func(messageID discord.Snowflake) {
+		defer func() {
+			audioMessagesMu.Lock()
+			delete(audioMessages, playID)
+			audioMessagesMu.Unlock()
+		}()
 		filePath, finalVoice, err := getOrGenerateAudio(text, voiceName)
 		if finalVoice != voiceName {
 			voiceName = finalVoice
@@ -392,7 +405,7 @@ func handleSpeak(e *events.ApplicationCommandInteractionCreate) {
 			if err.Error() == "text too long" {
 				errMsg = T("error_text_too_long")
 			}
-			_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(text + "\nVoce: " + voiceName + errMsg).Build())
+			_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(fmt.Sprintf("%s\nVoce: %s\n%s", text, voiceName, errMsg)).Build())
 			return
 		}
 		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
@@ -436,14 +449,8 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 	}
 
 	text := e.Data.String("text")
-	var sentences []string
-	var err error
-	if text != "" {
-		sentences, err = db.SelectLikeSentence(text)
-	} else {
-		sentences, err = db.SelectAllSentence()
-	}
-	if err != nil || len(sentences) == 0 {
+	sentence, err := db.SelectRandomSentence(text)
+	if err != nil || sentence == "" {
 		if text != "" {
 			e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("no_sentence_found_with_text", text)).SetEphemeral(true).Build())
 		} else {
@@ -451,8 +458,6 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 		}
 		return
 	}
-
-	sentence := sentences[rand.Intn(len(sentences))]
 
 	playID := uuid.NewString()
 	audioMessagesMu.Lock()
@@ -472,6 +477,11 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 	}
 
 	go func(messageID discord.Snowflake) {
+		defer func() {
+			audioMessagesMu.Lock()
+			delete(audioMessages, playID)
+			audioMessagesMu.Unlock()
+		}()
 		filePath, finalVoice, err := getOrGenerateAudio(sentence, voiceName)
 		if finalVoice != voiceName {
 			voiceName = finalVoice
@@ -483,7 +493,7 @@ func handleRandom(e *events.ApplicationCommandInteractionCreate) {
 			if err.Error() == "text too long" {
 				errMsg = T("error_text_too_long")
 			}
-			_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(sentence + "\nVoce: " + voiceName + errMsg).Build())
+			_, _ = e.Client().Rest().UpdateFollowupMessage(e.ApplicationID(), e.Token(), messageID, discord.NewMessageUpdateBuilder().SetContent(fmt.Sprintf("%s\nVoce: %s\n%s", sentence, voiceName, errMsg)).Build())
 			return
 		}
 		if err := PlayAudio(voiceClient, e.GuildID().String(), filePath); err != nil {
@@ -507,17 +517,16 @@ func handleRestart(e *events.ApplicationCommandInteractionCreate) {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(spamMsg).SetEphemeral(true).Build())
 		return
 	}
-	if e.GuildID().String() != os.Getenv("GUILD_ID") || e.User().ID().String() != os.Getenv("ADMIN_ID") {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("no_permissions")).SetEphemeral(true).Build())
-		return
-	}
-	if e.Member() == nil || !e.Member().Permissions.Has(discord.PermissionAdministrator) {
-		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("admin_only")).SetEphemeral(true).Build())
-		return
+	if e.User().ID().String() != os.Getenv("ADMIN_ID") {
+		if e.GuildID().String() != os.Getenv("GUILD_ID") || e.Member() == nil || !e.Member().Permissions.Has(discord.PermissionAdministrator) {
+			e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("no_permissions")).SetEphemeral(true).Build())
+			return
+		}
 	}
 	e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("restarting_bot")).SetEphemeral(true).Build())
 	go func() {
 		time.Sleep(1 * time.Second)
+		db.db.Close()
 		os.Exit(0)
 	}()
 }
@@ -554,6 +563,11 @@ func handleAvatar(e *events.ApplicationCommandInteractionCreate) {
 		return
 	}
 
+	if e.User().ID().String() != os.Getenv("ADMIN_ID") && (e.Member() == nil || !e.Member().Permissions.Has(discord.PermissionAdministrator)) {
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("admin_only")).SetEphemeral(true).Build())
+		return
+	}
+
 	attachmentID := e.Data.Options.Attachment("image").Value
 	attachment, ok := e.Data.Resolved.Attachments[attachmentID]
 	if !ok {
@@ -563,6 +577,11 @@ func handleAvatar(e *events.ApplicationCommandInteractionCreate) {
 
 	if !strings.HasPrefix(attachment.ContentType, "image/") {
 		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("unsupported_file")).SetEphemeral(true).Build())
+		return
+	}
+
+	if attachment.Size > 8*1024*1024 { // 8MB limit
+		e.CreateMessage(discord.NewMessageCreateBuilder().SetContent(T("error_file_too_large")).SetEphemeral(true).Build())
 		return
 	}
 
@@ -619,6 +638,11 @@ func handleAudio(e *events.ApplicationCommandInteractionCreate) {
 		return
 	}
 
+	if attachment.Size > 10*1024*1024 { // 10MB limit
+		e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("error_file_too_large")).SetEphemeral(true).Build())
+		return
+	}
+
 	// Download the audio file
 	resp, err := http.Get(attachment.URL)
 	if err != nil {
@@ -671,11 +695,16 @@ func HandleButton(e *events.ButtonInteractionCreate) {
 		}
 		e.DeferCreateMessage(true)
 		guildID := e.GuildID()
-		voiceClient, _ := e.Client().Voice().GetOrCreateGuildVoiceClient(guildID)
-		channelID := getVoiceChannelID(e.Client(), guildID, e.User().ID())
-		if channelID != nil {
+		voiceClient, ok := e.Client().Voice().GetGuildVoiceClient(guildID)
+		if !ok || !voiceClient.Connected() {
+			if channelID == nil {
+				e.CreateFollowupMessage(discord.NewMessageCreateBuilder().SetContent(T("must_be_in_voice")).SetEphemeral(true).Build())
+				return
+			}
+			voiceClient, _ = e.Client().Voice().GetOrCreateGuildVoiceClient(guildID)
 			voiceClient.Connect(context.Background(), *channelID, false, false)
 		}
+		channelID := getVoiceChannelID(e.Client(), guildID, e.User().ID())
 		go func() {
 			filePath, finalVoice, err := getOrGenerateAudio(info.Text, info.Voice)
 			if finalVoice != info.Voice {
