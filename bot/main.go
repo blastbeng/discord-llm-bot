@@ -38,13 +38,12 @@ func main() {
 		bot.WithIntents(discord.IntentGuilds, discord.IntentGuildVoiceStates),
 		bot.WithEventHandlers(func(e *events.Ready) {
 			log.Printf("Logged in as %s", e.Client().ID())
-		}),
+			RegisterCommands(e.Client().ID(), e.Client().Rest())
+		}, HandleCommand),
 	)
 	if err != nil {
 		log.Fatalf("Failed to create bot: %v", err)
 	}
-
-	// TODO: Register commands here
 
 	if err = client.OpenGateway(context.Background()); err != nil {
 		log.Fatalf("Failed to open gateway: %v", err)
