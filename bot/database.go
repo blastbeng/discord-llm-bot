@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"database/sql"
 	"log"
+	"os"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -81,4 +83,36 @@ func (d *Database) SelectRandomSentenceWithoutAudio() (string, error) {
 func (d *Database) UpdateSentenceHasAudio(sentence string) error {
 	_, err := d.db.Exec("UPDATE sentences SET has_audio = 1 WHERE sentence = ?", sentence)
 	return err
+}
+
+// PopulateDatabase reads sentences from a text file (one per line) and inserts them into the database.
+// If the file does not exist, it returns nil without error.
+func (d *Database) PopulateDatabase(filePath string) error {
+	file, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Printf("Population file '%s' not found, skipping database population", filePath)
+			return nil
+		}
+		return err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			continue
+		}
+		if err := d.InsertSentence(line); err != nil {
+			log.Printf("Failed to insert sentence '%s': %v", line, err)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+
+	log.Println("Database population completed")
+	return nil
 }

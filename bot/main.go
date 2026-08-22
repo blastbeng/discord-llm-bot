@@ -34,6 +34,10 @@ func main() {
 		log.Fatalf("Failed to create tables: %v", err)
 	}
 
+	if err := db.PopulateDatabase("config/sentences.txt"); err != nil {
+		log.Printf("Failed to populate database: %v", err)
+	}
+
 	// Start background generator
 	go backgroundGenerator()
 
