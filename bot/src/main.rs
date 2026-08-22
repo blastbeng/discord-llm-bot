@@ -634,10 +634,8 @@ async fn main() {
                 Box::pin(async move {
                     let allowed_guild_id = env::var("GUILD_ID").unwrap_or_default();
                     if ctx.guild_id().map(|g| g.to_string()) != Some(allowed_guild_id) {
-                        ctx.say(&ctx.data().lang.wrong_guild).await?;
-                        return Err("Bot can only be used in the parent server".into());
+                        let _ = ctx.say(&ctx.data().lang.wrong_guild).await;
                     }
-                    Ok(())
                 })
             },
             on_error: |error| {
