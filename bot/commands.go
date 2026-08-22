@@ -244,7 +244,7 @@ func RegisterCommands(clientID discord.Snowflake, rest interface {
 }
 
 func HandleAutocomplete(e *events.AutocompleteInteractionCreate) {
-	cmdName := e.Data.CommandName()
+	cmdName := e.Data.CommandName
 	if cmdName != "speak" && cmdName != "random" {
 		return
 	}
