@@ -1,4 +1,4 @@
-use id3::{Tag, Version};
+use id3::{Tag, TagLike, Version};
 use md5::compute as md5_compute;
 use std::path::Path;
 use tokio::io::AsyncWriteExt;
@@ -23,7 +23,7 @@ pub fn write_id3_tags(file_path: &str, artist: &str, title: &str, lyrics: &str) 
     tag.add_frame(id3::frame::Lyrics {
         lang: "ita".to_string(),
         description: String::new(),
-        content: lyrics.to_string(),
+        text: lyrics.to_string(),
     });
     if let Err(e) = tag.write_to_path(file_path, Version::Id3v24) {
         log::warn!("write_id3_tags: failed to write tags to {}: {}", file_path, e);

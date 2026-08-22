@@ -62,7 +62,7 @@ async fn get_queue_message(lang: &lang::Lang) -> String {
 
 async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
     let lang = &ctx.data().lang;
-    let guild_id = ctx.guild_id().unwrap();
+    let _guild_id = ctx.guild_id().unwrap();
     let channel_id = {
         let guild = ctx.guild().ok_or(lang.guild_not_found.as_str())?;
         guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(lang.must_be_in_voice.as_str())?
@@ -573,9 +573,9 @@ async fn restart(ctx: Context<'_>) -> Result<(), Error> {
         ctx.say(&ctx.data().lang.admin_parent_server).await?;
         return Ok(());
     }
+    let _guild_id = ctx.guild_id().unwrap();
     let guild_id = ctx.guild_id().unwrap();
-    let guild = ctx.guild().unwrap();
-    let member = guild.member(ctx, ctx.author().id).await?;
+    let member = guild_id.member(ctx.http(), ctx.author().id).await?;
     #[allow(deprecated)]
     if !member.permissions(ctx)?.administrator() {
         ctx.say(&ctx.data().lang.admin_only).await?;
@@ -714,7 +714,11 @@ async fn main() {
                                                 if let Some(guild_channel) = guild.channels.get(&channel_id) {
                                                     #[allow(deprecated)]
                                                     let perms = guild_channel.permissions_for_user(&ctx.cache, ctx.cache.current_user().id);
-                                                    perms.speak() && perms.connect()
+                                                    if let Ok(p) = perms {
+                                                        p.speak() && p.connect()
+                                                    } else {
+                                                        false
+                                                    }
                                                 } else { false }
                                             } else { false }
                                         } else { false }
