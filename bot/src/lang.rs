@@ -3,6 +3,7 @@ use std::env;
 #[derive(Debug)]
 pub struct Lang {
     pub join_success: String,
+    pub join_success_to_self: String,
     pub join_error: String,
     pub leave_success: String,
     pub not_connected: String,
@@ -44,6 +45,7 @@ impl Lang {
         match lang.as_str() {
             "eng" => Self {
                 join_success: "I'm joining the channel".to_string(),
+                join_success_to_self: "I'm joining your channel, <@{}>".to_string(),
                 join_error: "Error joining the channel".to_string(),
                 leave_success: "I'm leaving the channel".to_string(),
                 not_connected: "I'm not connected to any channel".to_string(),
@@ -89,6 +91,7 @@ impl Lang {
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
+                join_success_to_self: "Sto entrando nel tuo canale, <@{}>".to_string(),
                 join_error: "Errore nell'entrare nel canale".to_string(),
                 leave_success: "Sto lasciando il canale".to_string(),
                 not_connected: "Non sono connesso a nessun canale".to_string(),

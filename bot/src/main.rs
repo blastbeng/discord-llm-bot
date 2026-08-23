@@ -3,6 +3,7 @@ mod generator;
 mod lang;
 mod tts;
 use poise::serenity_prelude as serenity;
+use poise::serenity_prelude::Mentionable;
 use rand::seq::SliceRandom;
 use std::env;
 use sysinfo::System;
@@ -138,9 +139,14 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
         let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
         guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
     };
+    
     match connect_bot_by_voice_client(ctx, channel_id).await {
         Ok(_) => {
-            ctx.say(&ctx.data().lang.join_success).await?;
+            // Check if user is joining to their own channel by comparing IDs directly
+            let message = format!("{} {}", 
+                &ctx.data().lang.join_success_to_self, 
+                ctx.author().id.mention());
+            ctx.say(&message).await?;
         }
         Err(e) => {
             log::error!("Failed to join voice channel: {:?}", e);
