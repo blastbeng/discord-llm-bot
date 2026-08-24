@@ -233,19 +233,19 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
     // Use a shared client with a generous timeout (FakeYou jobs can take a while)
     let client = fakeyou_client();
 
-    let idempotency_token = uuid::Uuid::new_v4().to_string();
-    let body = serde_json::json!({
-        "uuid_idempotency_token": idempotency_token,
-        "tts_model_token": voice_token,
-        "inference_text": text
-    });
-
     log::info!("get_tts_fakeyou: submitting inference job for voice {}", voice);
 
     // Submit the inference job, with one retry on rate limit (429).
+    // Regenerate the idempotency token on each attempt so retries aren't
+    // rejected as duplicate requests by FakeYou's deduplication logic.
     let mut attempts = 0;
     let resp_json = loop {
         attempts += 1;
+        let body = serde_json::json!({
+            "uuid_idempotency_token": uuid::Uuid::new_v4().to_string(),
+            "tts_model_token": voice_token,
+            "inference_text": text
+        });
         let resp = client.post("https://api.fakeyou.com/tts/inference")
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
