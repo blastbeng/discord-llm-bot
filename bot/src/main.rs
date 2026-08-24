@@ -1191,6 +1191,42 @@ async fn translate(
     Ok(())
 }
 
+/// Show help for all bot commands with interactive category buttons.
+#[poise::command(slash_command, user_cooldown = 5)]
+async fn help(ctx: Context<'_>) -> Result<(), Error> {
+    let lang = &ctx.data().lang;
+
+    let embed = serenity::CreateEmbed::new()
+        .title(&lang.help_title)
+        .description(&lang.help_description)
+        .color(0x5865F2);
+
+    let components = vec![
+        serenity::CreateActionRow::Buttons(vec![
+            serenity::CreateButton::new("help:voice")
+                .label(&lang.help_button_voice)
+                .style(serenity::ButtonStyle::Primary),
+            serenity::CreateButton::new("help:ai")
+                .label(&lang.help_button_ai)
+                .style(serenity::ButtonStyle::Primary),
+            serenity::CreateButton::new("help:admin")
+                .label(&lang.help_button_admin)
+                .style(serenity::ButtonStyle::Secondary),
+            serenity::CreateButton::new("help:all")
+                .label(&lang.help_button_all)
+                .style(serenity::ButtonStyle::Success),
+        ])
+    ];
+
+    ctx.send(poise::CreateReply::default()
+        .embed(embed)
+        .components(components)
+        .ephemeral(true)
+    ).await?;
+
+    Ok(())
+}
+
 /// Set the bot's playback volume (0-100)
 #[poise::command(slash_command, user_cooldown = 5)]
 async fn volume(
@@ -1636,7 +1672,7 @@ async fn main() {
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![join(), leave(), stop(), speak(), random(), ask(), translate(), volume(), audio(), restart(), rename(), avatar()],
+            commands: vec![join(), leave(), stop(), speak(), random(), ask(), translate(), volume(), audio(), restart(), rename(), avatar(), help()],
             pre_command: |ctx| {
                 Box::pin(async move {
                     let command_name = ctx.command().name.as_str();
@@ -1735,6 +1771,53 @@ async fn main() {
                         }
                     }
                     if let serenity::FullEvent::InteractionCreate { interaction: serenity::Interaction::Component(component) } = event {
+                            // Help button handler — shows command lists by category
+                            if let Some(category) = component.data.custom_id.strip_prefix("help:") {
+                                let lang = &data.lang;
+                                let embed = match category {
+                                    "voice" => serenity::CreateEmbed::new()
+                                        .title(&lang.help_title)
+                                        .color(0x5865F2)
+                                        .field("🎤 /join", "Join the voice channel you're in", false)
+                                        .field("👋 /leave", "Leave the voice channel", false)
+                                        .field("⏹️ /stop", "Stop current audio playback", false)
+                                        .field("🗣️ /speak", "Speak text with TTS (Google/FakeYou). Optional: voice, effect", false)
+                                        .field("🎲 /random", "Play a random sentence from the database. Optional: voice, text search", false)
+                                        .field("🔊 /volume", "Set playback volume (0-100). Default: 100", false)
+                                        .field("🎵 /audio", "Play an uploaded audio file in voice chat", false),
+                                    "ai" => serenity::CreateEmbed::new()
+                                        .title(&lang.help_title)
+                                        .color(0x99AAB5)
+                                        .field("🤔 /ask", "Ask the AI a question. Uses database sentences as personality. Requires LLM config. Optional: voice, effect", false)
+                                        .field("🌐 /translate", "Translate text to another language via LLM, then speak it. Optional: voice, effect", false),
+                                    "admin" => serenity::CreateEmbed::new()
+                                        .title(&lang.help_title)
+                                        .color(0xED4245)
+                                        .field("🔄 /restart", "Restart the bot (admin only, parent server only)", false)
+                                        .field("✏️ /rename", "Change the bot's nickname (admin only, parent server only)", false)
+                                        .field("🖼️ /avatar", "Change the bot's avatar image (admin only, parent server only)", false),
+                                    "all" => serenity::CreateEmbed::new()
+                                        .title(&lang.help_title)
+                                        .color(0x57F287)
+                                        .field("🎤 /join", "Join the voice channel", false)
+                                        .field("👋 /leave", "Leave the voice channel", false)
+                                        .field("⏹️ /stop", "Stop current playback", false)
+                                        .field("🗣️ /speak", "Speak text with TTS. Optional: voice, effect", false)
+                                        .field("🎲 /random", "Random sentence from database. Optional: voice, text", false)
+                                        .field("🔊 /volume", "Set playback volume (0-100)", false)
+                                        .field("🎵 /audio", "Play an uploaded audio file", false)
+                                        .field("🤔 /ask", "Ask the AI a question. Optional: voice, effect", false)
+                                        .field("🌐 /translate", "Translate text via LLM. Optional: voice, effect", false)
+                                        .field("❓ /help", "Show this help message", false)
+                                        .field("🔄 /restart", "Restart bot (admin)", false)
+                                        .field("✏️ /rename", "Change bot nickname (admin)", false)
+                                        .field("🖼️ /avatar", "Change bot avatar (admin)", false),
+                                    _ => return Ok(()),
+                                };
+                                component.edit_response(ctx, serenity::EditInteractionResponse::new().embed(embed)).await?;
+                                return Ok(());
+                            }
+
                             if component.data.custom_id == "stop" {
                                 // Check if user is in a voice channel
                                 if let Some(guild_id) = component.guild_id {

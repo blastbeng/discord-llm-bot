@@ -51,6 +51,12 @@ pub struct Lang {
     pub invalid_effect: String,
     pub volume_set: String,
     pub translating: String,
+    pub help_title: String,
+    pub help_description: String,
+    pub help_button_voice: String,
+    pub help_button_ai: String,
+    pub help_button_admin: String,
+    pub help_button_all: String,
 }
 
 impl Lang {
@@ -116,6 +122,12 @@ impl Lang {
                 invalid_effect: "Invalid audio effect selected.".to_string(),
                 volume_set: "Volume set to {}%".to_string(),
                 translating: "🌐 Translating: **{}** to {}{}".to_string(),
+                help_title: "🤖 Bot Commands".to_string(),
+                help_description: "Click a button below to browse commands by category.".to_string(),
+                help_button_voice: "🎵 Voice & Audio".to_string(),
+                help_button_ai: "🤖 AI & LLM".to_string(),
+                help_button_admin: "🔧 Admin".to_string(),
+                help_button_all: "📋 All Commands".to_string(),
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
@@ -176,6 +188,12 @@ impl Lang {
                 invalid_effect: "Effetto audio non valido selezionato.".to_string(),
                 volume_set: "Volume impostato a {}%".to_string(),
                 translating: "🌐 Traduzione di: **{}** in {}{}".to_string(),
+                help_title: "🤖 Comandi del Bot".to_string(),
+                help_description: "Clicca un pulsante qui sotto per sfogliare i comandi per categoria.".to_string(),
+                help_button_voice: "🎵 Voce & Audio".to_string(),
+                help_button_ai: "🤖 IA & LLM".to_string(),
+                help_button_admin: "🔧 Admin".to_string(),
+                help_button_all: "📋 Tutti i Comandi".to_string(),
             }
         }
     }
