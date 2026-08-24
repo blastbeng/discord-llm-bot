@@ -44,6 +44,7 @@ pub struct Lang {
     pub file_expired: String,
     pub audio_download_failed: String,
     pub image_too_small: String,
+    pub processing: String,
 }
 
 impl Lang {
@@ -102,6 +103,7 @@ impl Lang {
                 file_expired: "This audio file has expired. Please generate it again.".to_string(),
                 audio_download_failed: "Failed to download the audio file. Please try again.".to_string(),
                 image_too_small: "The image is too small. Minimum size is 128x128 pixels.".to_string(),
+                processing: "⏳ Processing...".to_string(),
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
@@ -155,6 +157,7 @@ impl Lang {
                 file_expired: "Questo file audio é scaduto. Generalo di nuovo.".to_string(),
                 audio_download_failed: "Impossibile scaricare il file audio. Riprova.".to_string(),
                 image_too_small: "L'immagine é troppo piccola. La dimensione minima é 128x128 pixel.".to_string(),
+                processing: "⏳ Elaborazione in corso...".to_string(),
             }
         }
     }

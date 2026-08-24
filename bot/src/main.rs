@@ -781,7 +781,7 @@ async fn audio(
     // Create the reply early so all subsequent messages edit the deferred response
     // instead of creating followup messages (cleaner UX, avoids "already
     // acknowledged" errors if the on_error handler also tries to send).
-    let reply = ctx.send(poise::CreateReply::default().content("...").ephemeral(true)).await?;
+    let reply = ctx.send(poise::CreateReply::default().content(&ctx.data().lang.processing).ephemeral(true)).await?;
 
     check_permissions(ctx).await?;
 
@@ -950,7 +950,7 @@ async fn restart(ctx: Context<'_>) -> Result<(), Error> {
     let env_guild_id = env::var("GUILD_ID").unwrap_or_default();
 
     // Create reply early so all subsequent messages edit the deferred response
-    let reply = ctx.send(poise::CreateReply::default().content("...").ephemeral(true)).await?;
+    let reply = ctx.send(poise::CreateReply::default().content(&ctx.data().lang.processing).ephemeral(true)).await?;
 
     if ctx.guild_id().unwrap().to_string() != env_guild_id || ctx.author().id.to_string() != admin_id {
         reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.admin_parent_server).ephemeral(true)).await?;
@@ -981,7 +981,7 @@ async fn rename(
     log::info!("[GUILDID : {}] rename command invoked by user {} with name: {}", ctx.guild_id().unwrap(), ctx.author().id, name);
 
     // Create reply early so all subsequent messages edit the deferred response
-    let reply = ctx.send(poise::CreateReply::default().content("...").ephemeral(true)).await?;
+    let reply = ctx.send(poise::CreateReply::default().content(&ctx.data().lang.processing).ephemeral(true)).await?;
 
     // Verify admin permissions (same check as /restart and /avatar)
     let admin_id = env::var("ADMIN_ID").unwrap_or_default();
@@ -1028,7 +1028,7 @@ async fn avatar(
     // Create reply early so all subsequent messages edit the deferred response
     // instead of creating followup messages (cleaner UX, avoids "already
     // acknowledged" errors if the on_error handler also tries to send).
-    let reply = ctx.send(poise::CreateReply::default().content("...").ephemeral(true)).await?;
+    let reply = ctx.send(poise::CreateReply::default().content(&ctx.data().lang.processing).ephemeral(true)).await?;
 
     // Verify admin permissions and guild restrictions first (like Python's flow)
     if ctx.guild_id().unwrap().to_string() != env_guild_id || ctx.author().id.to_string() != admin_id {
