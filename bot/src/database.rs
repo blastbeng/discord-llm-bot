@@ -1,5 +1,4 @@
 use sqlx::SqlitePool;
-use std::path::Path;
 
 pub async fn init_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     log::debug!("init_db: creating tables if not exists");
@@ -175,13 +174,13 @@ pub async fn populate_db_if_empty(pool: &SqlitePool) -> Result<(), sqlx::Error> 
 
 /// Populate database from config/sentences.txt file
 async fn populate_from_file(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    if !Path::new("config/sentences.txt").exists() {
+    if !tokio::fs::try_exists("config/sentences.txt").await.unwrap_or(false) {
         log::warn!("populate_db_if_empty: no sentences.txt file found for population");
         return Ok(());
     }
 
     log::info!("Populating database from config/sentences.txt...");
-    let contents = std::fs::read_to_string("config/sentences.txt").unwrap_or_default();
+    let contents = tokio::fs::read_to_string("config/sentences.txt").await.unwrap_or_default();
     
     if contents.is_empty() {
         log::warn!("populate_db_if_empty: sentences.txt file is empty");
@@ -203,7 +202,7 @@ async fn populate_from_file(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
 /// Update existing database with new or modified sentences from file
 async fn update_existing_database(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    let contents = std::fs::read_to_string("config/sentences.txt").unwrap_or_default();
+    let contents = tokio::fs::read_to_string("config/sentences.txt").await.unwrap_or_default();
     
     if contents.is_empty() {
         log::debug!("update_existing_database: no sentences file content available");
