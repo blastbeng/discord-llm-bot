@@ -13,36 +13,33 @@ use sysinfo::System;
 use songbird::SerenityInit;
 use image::GenericImageView;
 
-/// Enhanced audio playback with FFmpeg pipe support (like Python's FFmpegPCMAudioBytesIO)
+/// Play an audio file through Songbird's built-in FFmpeg decoder.
+/// Returns an error string if the bot is not connected or no handler is found,
+/// so callers can inform the user instead of silently failing.
 async fn play_audio_with_ffmpeg_pipe(
     ctx: &Context<'_>,
     file_path: &str,
     _voice: &str,
 ) -> Result<(), Error> {
-    log::info!("play_audio_with_ffmpeg_pipe: playing {} with FFmpeg", file_path);
-    
-    // Create FFmpeg-compatible audio source
+    log::info!("play_audio_with_ffmpeg_pipe: playing {}", file_path);
+
     let source = songbird::input::File::new(file_path.to_string());
-    
+
     let guild_id = ctx.guild_id().unwrap();
-    let manager = songbird::get(ctx.serenity_context()).await.unwrap();
-    
-    if let Some(handler_lock) = manager.get(guild_id) {
-        let mut handler = handler_lock.lock().await;
-        
-        // Check if bot is connected to a voice channel
-        if handler.current_channel().is_none() {
-            log::warn!("Bot not connected to any channel");
-            return Ok(());
-        }
-        
-        // Play the audio file using FFmpeg
-        handler.play_only(source.into());
-        log::info!("Audio playback started for guild {}", guild_id);
-    } else {
-        log::error!("No voice handler found for guild {}", guild_id);
+    let manager = songbird::get(ctx.serenity_context()).await
+        .ok_or("Songbird not registered")?;
+
+    let handler_lock = manager.get(guild_id)
+        .ok_or("No voice handler found for guild")?;
+    let mut handler = handler_lock.lock().await;
+
+    if handler.current_channel().is_none() {
+        log::warn!("play_audio_with_ffmpeg_pipe: bot not connected to any channel");
+        return Err("Bot not connected to any channel".into());
     }
-    
+
+    handler.play_only(source.into());
+    log::info!("Audio playback started for guild {}", guild_id);
     Ok(())
 }
 
@@ -803,9 +800,13 @@ async fn audio(
     tokio::fs::create_dir_all(&temp_dir).await?;
     tokio::fs::write(&file_path, &bytes).await?;
 
-    // Play audio using FFmpeg pipe (like Python's FFmpegPCMAudioBytesIO with pipe=True)
-    play_audio_with_ffmpeg_pipe(&ctx, &file_path, "Custom Audio").await?;
-    
+    // Play audio using Songbird's built-in FFmpeg decoder
+    if let Err(e) = play_audio_with_ffmpeg_pipe(&ctx, &file_path, "Custom Audio").await {
+        log::error!("[GUILDID : {}] audio - playback failed: {}", guild_id, e);
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+        return Ok(());
+    }
+
     log::info!("Audio playback started in guild {}", guild_id);
 
     // Display queue status message with Play/Stop buttons (like speak/random commands)
