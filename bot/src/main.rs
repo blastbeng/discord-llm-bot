@@ -50,33 +50,16 @@ async fn play_audio_with_ffmpeg_pipe(
 // Enhanced File Validation (like Python's check_image_with_pil)
 // ============================================================================
 
-/// Validates image files using metadata (mimics PIL validation in Python bot)
-async fn validate_and_process_image(
-    _ctx: &Context<'_>,
-    attachment: serenity::Attachment,
-) -> Result<bool, Error> {
-    // Check file type support
-    let is_valid = match attachment.content_type.as_deref() {
-        Some(ct) => ct.starts_with("image/"),
-        None => false,
-    };
-    
-    if !is_valid {
-        log::warn!("Unsupported image format: {:?}", attachment.filename);
-        return Ok(false);
-    }
-    
-    // Download and validate image metadata (like Python's PIL check)
-    let bytes = reqwest::get(&attachment.url).await?.bytes().await?.to_vec();
-    
-    // Validate using the image crate (similar to PIL in Python)
-    if let Ok(image) = image::load_from_memory(&bytes) {
+/// Validates image bytes using the image crate (mimics Python's check_image_with_pil)
+fn validate_image_bytes(bytes: &[u8]) -> bool {
+    if let Ok(image) = image::load_from_memory(bytes) {
         let dimensions = image.dimensions();
         log::info!("Image validated: {}x{} pixels", dimensions.0, dimensions.1);
-        return Ok(true);
+        true
+    } else {
+        log::warn!("Image validation failed: could not decode image");
+        false
     }
-    
-    Err("Image validation failed".into())
 }
 
 // ============================================================================
@@ -794,70 +777,50 @@ async fn avatar(
     #[description = "Nuovo avatar del bot"] image: serenity::Attachment,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    
-    // Validate and process the uploaded image with comprehensive error handling (like Python's check_image_with_pil)
-    let validation_result = validate_and_process_image(&ctx, image.clone()).await?;
-    
-    log::info!("[GUILDID : {}] avatar command invoked by user {} with image: {}", 
-        ctx.guild_id().unwrap(), 
-        ctx.author().id, 
-        image.filename);
-    
-    // Apply enhanced validation similar to Python's PIL image verification and metadata extraction
-    if !validation_result {
-        return Err("Image validation failed".into());
-    }
 
     let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
     let guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
-    
-    // Verify administrative permissions and guild restrictions (like Python's admin_parent_server checks)
+
+    // Verify admin permissions and guild restrictions first (like Python's flow)
     if ctx.guild_id().unwrap().to_string() != guild_id || ctx.author().id.to_string() != admin_id {
         log::info!("Avatar update restricted to parent server administrators only");
         ctx.say(&ctx.data().lang.admin_parent_server).await?;
         return Ok(());
     }
 
-    // Validate image content type and dimensions (like Python's check_image_with_pil with metadata validation)
+    log::info!("[GUILDID : {}] avatar command invoked by user {} with image: {}",
+        ctx.guild_id().unwrap(), ctx.author().id, image.filename);
+
+    // Check content type (like Python's check_image_with_pil)
     if !image.content_type.as_deref().map_or(false, |ct| ct.starts_with("image/")) {
         ctx.say(&ctx.data().lang.unsupported_file).await?;
         return Ok(());
     }
 
-    // Download and process the image bytes with comprehensive error handling (like Python's image.to_file())
+    // Download image bytes (single download, like Python's image.to_file())
     let bytes = reqwest::get(&image.url).await?.bytes().await?.to_vec();
-    
-    // Validate using the image crate for PIL-like verification (like Python's Image.open() and verify())
-    if let Ok(image_data) = image::load_from_memory(&bytes) {
-        let dimensions = image_data.dimensions();
-        
-        // Apply additional metadata extraction similar to Python's eyed3 library for audio files
-        log::info!("Avatar validated: {}x{} pixels", 
-            dimensions.0, 
-            dimensions.1);
-    } else {
+
+    // Validate image using the image crate (like Python's check_image_with_pil)
+    if !validate_image_bytes(&bytes) {
         ctx.say(&ctx.data().lang.unsupported_file).await?;
         return Ok(());
     }
-    
-    // Update bot avatar with enhanced error handling and user feedback (like Python's client.user.edit())
+
+    // Update bot avatar (like Python's client.user.edit(avatar=image))
     let avatar = serenity::builder::CreateAttachment::bytes(bytes, image.filename.clone());
     let mut current_user = ctx.cache().current_user().clone();
-    
-    // Apply avatar update with comprehensive validation similar to Python's admin_parent_server checks
-    if current_user.edit(ctx.http(), serenity::builder::EditProfile::new().avatar(&avatar)).await.is_ok() {
-        log::info!("Bot avatar updated successfully");
-        
-        // Provide enhanced user feedback with detailed status information (like Python's success messages)
-        let response = ctx.data().lang.avatar_changed.clone() + 
-            "\n\n*Avatar Update Complete*\nYour bot's visual identity has been refreshed.";
-        
-        ctx.say(response).await?;
-    } else {
-        log::warn!("Failed to update bot avatar - partial success");
-        ctx.say(&ctx.data().lang.unsupported_file).await?;
+
+    match current_user.edit(ctx.http(), serenity::builder::EditProfile::new().avatar(&avatar)).await {
+        Ok(_) => {
+            log::info!("Bot avatar updated successfully");
+            ctx.say(&ctx.data().lang.avatar_changed).await?;
+        }
+        Err(e) => {
+            log::error!("Failed to update bot avatar: {}", e);
+            ctx.say(&ctx.data().lang.discord_api_error).await?;
+        }
     }
-    
+
     Ok(())
 }
 
