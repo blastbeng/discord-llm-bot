@@ -55,6 +55,22 @@ pub fn is_valid_voice(voice: &str) -> bool {
     voice == "random" || AVAILABLE_VOICES.contains(&voice)
 }
 
+/// Reverse-lookup a voice name from its token.
+/// Used to display human-readable voice names for cached MP3 files
+/// whose filenames contain the voice token (e.g. "weight_abc123_hash.mp3").
+pub fn get_voice_name_from_token(token: &str) -> &'static str {
+    match token {
+        "weight_gc8gsr41974q5ax35gvttr85v" => "Papa Francesco (FakeYou.com)",
+        "weight_324nvat7xvaawe146na154gwh" => "Silvio Berlusconi (FakeYou.com)",
+        "weight_wn689844yyr08jny6jyyvkwcp" => "Goku (FakeYou.com)",
+        "weight_ms1kzt5m09cfw1yn666cxhy88" => "Gerry Scotti (FakeYou.com)",
+        "weight_t0y9rpba3qjnq02da44ynfs45" => "Peter Griffin (FakeYou.com)",
+        "weight_zw97bw3hbtm07qwkd2exna15b" => "Homer Simpson (FakeYou.com)",
+        "Google" => "Google",
+        _ => "Unknown",
+    }
+}
+
 pub fn write_id3_tags(file_path: &str, artist: &str, title: &str, lyrics: &str) {
     let mut tag = Tag::new();
     tag.set_artist(artist);

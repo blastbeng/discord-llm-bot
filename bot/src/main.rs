@@ -611,12 +611,20 @@ async fn random(
             ])
         ];
 
-        let display_name = std::path::Path::new(audio_path)
+        // Derive a human-readable voice name from the filename token.
+        // Filenames follow the pattern {voice_token}_{hash}.mp3 — extract
+        // the token and reverse-lookup the voice name for display.
+        let file_stem = std::path::Path::new(audio_path)
             .file_stem()
             .and_then(|s| s.to_str())
-            .unwrap_or("cached audio");
+            .unwrap_or("cached");
+        let voice_name = file_stem
+            .split('_')
+            .next()
+            .map(tts::get_voice_name_from_token)
+            .unwrap_or("Unknown");
         reply.edit(ctx, poise::CreateReply::default()
-            .content(ctx.data().lang.playing.replacen("{}", display_name, 1).replacen("{}", "cached", 1))
+            .content(ctx.data().lang.playing.replacen("{}", file_stem, 1).replacen("{}", voice_name, 1))
             .components(components)
             .ephemeral(true)
         ).await?;
