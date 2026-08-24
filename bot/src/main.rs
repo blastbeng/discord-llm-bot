@@ -1017,10 +1017,15 @@ async fn avatar(
     let admin_id = env::var("ADMIN_ID").unwrap_or_default();
     let env_guild_id = env::var("GUILD_ID").unwrap_or_default();
 
+    // Create reply early so all subsequent messages edit the deferred response
+    // instead of creating followup messages (cleaner UX, avoids "already
+    // acknowledged" errors if the on_error handler also tries to send).
+    let reply = ctx.send(poise::CreateReply::default().content("...").ephemeral(true)).await?;
+
     // Verify admin permissions and guild restrictions first (like Python's flow)
     if ctx.guild_id().unwrap().to_string() != env_guild_id || ctx.author().id.to_string() != admin_id {
         log::info!("Avatar update restricted to parent server administrators only");
-        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.admin_parent_server).ephemeral(true)).await?;
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.admin_parent_server).ephemeral(true)).await?;
         return Ok(());
     }
 
@@ -1032,13 +1037,13 @@ async fn avatar(
     let member = guild_id.member(ctx.http(), ctx.author().id).await?;
     #[allow(deprecated)]
     if !member.permissions(ctx)?.administrator() {
-        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.admin_only).ephemeral(true)).await?;
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.admin_only).ephemeral(true)).await?;
         return Ok(());
     }
 
     // Check content type (like Python's check_image_with_pil)
     if !image.content_type.as_deref().is_some_and(|ct| ct.starts_with("image/")) {
-        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.unsupported_file).ephemeral(true)).await?;
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.unsupported_file).ephemeral(true)).await?;
         return Ok(());
     }
 
@@ -1048,20 +1053,20 @@ async fn avatar(
             Ok(b) => b.to_vec(),
             Err(e) => {
                 log::error!("[GUILDID : {}] avatar - failed to read image bytes: {}", ctx.guild_id().unwrap(), e);
-                ctx.send(poise::CreateReply::default().content(&ctx.data().lang.discord_api_error).ephemeral(true)).await?;
+                reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.discord_api_error).ephemeral(true)).await?;
                 return Ok(());
             }
         },
         Err(e) => {
             log::error!("[GUILDID : {}] avatar - failed to download image: {}", ctx.guild_id().unwrap(), e);
-            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.discord_api_error).ephemeral(true)).await?;
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.discord_api_error).ephemeral(true)).await?;
             return Ok(());
         }
     };
 
     if bytes.is_empty() {
         log::warn!("[GUILDID : {}] avatar - downloaded image is empty", ctx.guild_id().unwrap());
-        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.unsupported_file).ephemeral(true)).await?;
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.unsupported_file).ephemeral(true)).await?;
         return Ok(());
     }
 
@@ -1072,12 +1077,12 @@ async fn avatar(
         }
         Err("too_small") => {
             log::warn!("[GUILDID : {}] avatar - image too small (minimum 128x128)", ctx.guild_id().unwrap());
-            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.image_too_small).ephemeral(true)).await?;
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.image_too_small).ephemeral(true)).await?;
             return Ok(());
         }
         Err(_) => {
             log::warn!("[GUILDID : {}] avatar - invalid image file", ctx.guild_id().unwrap());
-            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.unsupported_file).ephemeral(true)).await?;
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.unsupported_file).ephemeral(true)).await?;
             return Ok(());
         }
     }
@@ -1089,11 +1094,11 @@ async fn avatar(
     match current_user.edit(ctx.http(), serenity::builder::EditProfile::new().avatar(&avatar)).await {
         Ok(_) => {
             log::info!("Bot avatar updated successfully");
-            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.avatar_changed).ephemeral(true)).await?;
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.avatar_changed).ephemeral(true)).await?;
         }
         Err(e) => {
             log::error!("Failed to update bot avatar: {}", e);
-            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.discord_api_error).ephemeral(true)).await?;
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.discord_api_error).ephemeral(true)).await?;
         }
     }
 
