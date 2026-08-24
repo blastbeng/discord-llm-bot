@@ -2,6 +2,7 @@ mod database;
 mod error;
 mod generator;
 mod lang;
+mod llm;
 mod tts;
 
 use error::{ErrorTracker, Logger};
@@ -767,6 +768,187 @@ async fn random(
     Ok(())
 }
 
+/// Ask the AI a question
+#[poise::command(slash_command, user_cooldown = 10)]
+async fn ask(
+    ctx: Context<'_>,
+    #[description = "La domanda da fare"] text: String,
+    #[description = "La voce da usare (default: Google)"]
+    #[autocomplete = "voice_autocomplete"]
+    voice: Option<String>,
+) -> Result<(), Error> {
+    log::info!("[GUILDID : {}] ask command invoked by user {} with text: {:?}", ctx.guild_id().unwrap(), ctx.author().id, text);
+
+    // Check if LLM is configured before doing anything else
+    if !llm::is_configured() {
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.ask_not_configured).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    let voice = voice.unwrap_or_else(|| "Google".to_string());
+    let actual_voice = if voice == "random" {
+        let mut rng = rand::thread_rng();
+        tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
+    } else {
+        voice
+    };
+
+    if !tts::is_valid_voice(&actual_voice) {
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_voice).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    if text.chars().count() > 500 {
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.text_too_long).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    ctx.defer_ephemeral().await?;
+    check_permissions(ctx).await?;
+
+    let guild_id = ctx.guild_id().unwrap();
+    let channel_id = {
+        let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
+        guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
+    };
+    connect_bot_by_voice_client(ctx, channel_id, ctx.author().id).await?;
+
+    // Get the bot's current nickname for the LLM system prompt
+    let bot_nickname = ctx.guild()
+        .and_then(|g| {
+            g.members.get(&ctx.cache().current_user().id)
+                .and_then(|m| m.nick.clone())
+        })
+        .unwrap_or_else(|| "Bot".to_string());
+
+    // Fetch database sentences to use as personality context for the LLM
+    let db_sentences = database::select_all_sentence(&ctx.data().db_pool).await.unwrap_or_default();
+
+    let queue_msg = get_queue_message(&ctx.data().lang).await;
+    let initial_msg = ctx.data().lang.ask_generating
+        .replacen("{}", &text, 1)
+        .replacen("{}", &queue_msg, 1)
+        .replacen("{}", "", 1); // third {} reserved for future use
+    let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
+
+    // Query the LLM with database context
+    let llm_response = match llm::ask(&text, &db_sentences, &bot_nickname).await {
+        Ok(response) => response,
+        Err(e) => {
+            log::error!("[GUILDID : {}] ask - LLM failed: {}", guild_id, e);
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.ask_error).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
+
+    log::info!("[GUILDID : {}] ask - LLM response: {:?}", guild_id, llm_response);
+
+    // Save the LLM response as a sentence in the database (like /speak does)
+    if let Err(e) = database::insert_sentence(&ctx.data().db_pool, &llm_response).await {
+        log::error!("Failed to insert LLM response into database: {}", e);
+    }
+
+    // Generate TTS for the LLM response (same flow as /speak)
+    let manager = match songbird::get(ctx.serenity_context()).await {
+        Some(m) => m,
+        None => {
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
+    let handler_lock = match manager.get(guild_id) {
+        Some(h) => h,
+        None => {
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
+    {
+        let mut connected = false;
+        for _ in 0..5 {
+            let handler = handler_lock.lock().await;
+            if handler.current_channel().is_some() {
+                connected = true;
+                break;
+            }
+            drop(handler);
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        if !connected {
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            return Ok(());
+        }
+    }
+
+    let tts_result = match tts::get_or_generate_tts(&llm_response, &actual_voice).await {
+        Ok(result) => result,
+        Err(e) => {
+            log::error!("ask: TTS generation failed: {}", e);
+            let error_msg = if actual_voice == "Google" {
+                &ctx.data().lang.tts_error_google
+            } else {
+                &ctx.data().lang.tts_error_fakeyou
+            };
+            reply.edit(ctx, poise::CreateReply::default().content(error_msg).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
+
+    let mut handler = handler_lock.lock().await;
+    if handler.current_channel().is_none() {
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    log::info!("ask: TTS file path: {}", tts_result.file_path);
+    if !tokio::fs::try_exists(&tts_result.file_path).await.unwrap_or(false) {
+        log::error!("ask: TTS file does not exist: {}", tts_result.file_path);
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.tts_error).ephemeral(true)).await?;
+        return Ok(());
+    }
+    log::info!("ask: Playing audio file: {}", tts_result.file_path);
+    let source = songbird::input::File::new(tts_result.file_path.clone());
+    handler.play_only(source.into());
+    log::info!("ask: Audio playback started in guild {}", guild_id);
+
+    let warning = if tts_result.fallback {
+        &ctx.data().lang.fakeyou_warning
+    } else {
+        ""
+    };
+
+    let components = vec![
+        serenity::CreateActionRow::Buttons(vec![
+            serenity::CreateButton::new(format!("play:{}", tts_result.file_path))
+                .label("Play")
+                .style(serenity::ButtonStyle::Success),
+            serenity::CreateButton::new("stop")
+                .label("Stop")
+                .style(serenity::ButtonStyle::Danger)
+        ])
+    ];
+
+    // Use match instead of ? so expired interaction tokens don't propagate
+    // to on_error — the audio already played successfully.
+    match reply.edit(ctx, poise::CreateReply::default()
+        .content(ctx.data().lang.playing.replacen("{}", &llm_response, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
+        .components(components)
+        .ephemeral(true)
+    ).await {
+        Ok(_) => {}
+        Err(e) => {
+            let e_str = e.to_string();
+            if e_str.contains("Unknown interaction") || e_str.contains("already been acknowledged") {
+                log::debug!("ask: reply.edit failed (interaction expired, audio already played): {}", e_str);
+            } else {
+                log::warn!("ask: reply.edit failed: {}", e_str);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Audio playback from the input audio
 #[poise::command(slash_command, user_cooldown = 5)]
 async fn audio(
@@ -1171,7 +1353,7 @@ async fn main() {
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![join(), leave(), stop(), speak(), random(), audio(), restart(), rename(), avatar()],
+            commands: vec![join(), leave(), stop(), speak(), random(), ask(), audio(), restart(), rename(), avatar()],
             pre_command: |ctx| {
                 Box::pin(async move {
                     let command_name = ctx.command().name.as_str();
