@@ -1135,12 +1135,12 @@ async fn main() {
     let db_url = env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:config/discord-bot.sqlite3".to_string());
     
     // Create config directory if it doesn't exist
-    std::fs::create_dir_all("config").expect("Failed to create config directory");
+    tokio::fs::create_dir_all("config").await.expect("Failed to create config directory");
 
     // Also create the database file if it doesn't exist
     let db_path = db_url.strip_prefix("sqlite:").unwrap_or(&db_url);
-    if !std::path::Path::new(db_path).exists() {
-        std::fs::File::create(db_path).expect("Failed to create database file");
+    if !tokio::fs::try_exists(db_path).await.unwrap_or(false) {
+        tokio::fs::File::create(db_path).await.expect("Failed to create database file");
     }
 
     // Connect to SQLite database with proper error handling
@@ -1237,30 +1237,23 @@ async fn main() {
             },
             event_handler: |ctx, event, framework, data| {
                 Box::pin(async move {
-                    // Clear ALL global slash commands on startup. If any were left from
-                    // a previous build that used register_globally(), they would
-                    // appear as duplicates alongside the per-guild commands we set
-                    // below. Setting an empty list removes them.
-                    if let serenity::FullEvent::CacheReady { .. } = event {
+                    // On CacheReady: clear all global slash commands and sync per-guild.
+                    // Clearing global commands is critical — if any were left from a
+                    // previous build that used register_globally(), they would appear as
+                    // duplicates alongside the per-guild commands we set below.
+                    if let serenity::FullEvent::CacheReady { guilds, .. } = event {
                         log::info!("Cache ready, clearing global commands and syncing per-guild");
                         let http = ctx.http.clone();
                         // Remove all global commands (sets to empty list).
-                        // If any were left from a previous build that used
-                        // register_globally(), they would appear as duplicates
-                        // alongside the per-guild commands we set below.
                         if let Err(e) = serenity::Command::set_global_commands(&http, Vec::new()).await {
                             log::warn!("Failed to clear global commands: {}", e);
                         } else {
                             log::info!("Global commands cleared successfully");
                         }
-                    }
-                    // Sync commands per-guild when the cache is ready (all guilds at once).
-                    // This makes slash commands available instantly in each guild,
-                    // instead of waiting up to 1 hour for global registration to roll out.
-                    if let serenity::FullEvent::CacheReady { guilds, .. } = event {
+                        // Sync commands to each guild — makes slash commands available
+                        // instantly instead of waiting up to 1 hour for global registration.
                         log::info!("Syncing commands to {} guild(s)", guilds.len());
                         let commands = poise::builtins::create_application_commands(&framework.options().commands);
-                        let http = ctx.http.clone();
                         for guild_id in guilds {
                             if let Err(e) = guild_id.set_commands(&http, commands.clone()).await {
                                 log::error!("Failed to sync commands for guild {}: {}", guild_id, e);
