@@ -120,7 +120,11 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
         _ => return Err("Invalid voice".into()),
     };
 
-    let client = reqwest::Client::new();
+    // Build client with a generous timeout (FakeYou jobs can take a while)
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()?;
+
     let idempotency_token = uuid::Uuid::new_v4().to_string();
     let body = serde_json::json!({
         "uuid_idempotency_token": idempotency_token,
@@ -128,11 +132,37 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
         "inference_text": text
     });
 
+    log::info!("get_tts_fakeyou: submitting inference job for voice {}", voice);
     let resp = client.post("https://api.fakeyou.com/tts/inference")
         .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
         .json(&body)
         .send()
         .await?;
+
+    // Handle rate limiting with one retry after a backoff
+    if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        log::warn!("get_tts_fakeyou: rate limited on inference, waiting 10s and retrying once");
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        let resp = client.post("https://api.fakeyou.com/tts/inference")
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await?;
+        if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err("FakeYou rate limited (429), try again later".into());
+        }
+        if !resp.status().is_success() {
+            return Err(format!("FakeYou API returned status: {}", resp.status()).into());
+        }
+        let resp_json = resp.json::<FakeYouJobResponse>().await?;
+        if !resp_json.success {
+            return Err("FakeYou API failed to start job".into());
+        }
+        let job_token = resp_json.inference_job_token.ok_or("No inference job token received")?;
+        return poll_fakeyou_job(&client, &job_token).await;
+    }
 
     if !resp.status().is_success() {
         return Err(format!("FakeYou API returned status: {}", resp.status()).into());
@@ -147,23 +177,39 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
     let job_token = resp_json.inference_job_token.ok_or("No inference job token received")?;
     log::debug!("get_tts_fakeyou: inference job token {}", job_token);
 
-    let max_retries = 30; // 60 seconds max (2s per retry)
+    poll_fakeyou_job(&client, &job_token).await
+}
+
+/// Poll a FakeYou inference job until completion, then download the audio.
+async fn poll_fakeyou_job(
+    client: &reqwest::Client,
+    job_token: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    let max_retries = 60; // 120 seconds max (2s per poll)
     let mut retries = 0;
 
     loop {
         if retries >= max_retries {
-            return Err("FakeYou job timed out after 60 seconds".into());
+            return Err("FakeYou job timed out after 120 seconds".into());
         }
         retries += 1;
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         log::debug!("get_tts_fakeyou: polling status (attempt {})", retries);
+
         let status_resp = client.get(format!("https://api.fakeyou.com/tts/job/{}", job_token))
             .header("Accept", "application/json")
             .send()
             .await?;
 
-    if !status_resp.status().is_success() {
+        // Handle rate limiting on polling with a backoff
+        if status_resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            log::warn!("get_tts_fakeyou: rate limited on polling, waiting 10s");
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            continue;
+        }
+
+        if !status_resp.status().is_success() {
             return Err(format!("FakeYou polling returned status: {}", status_resp.status()).into());
         }
 
@@ -179,13 +225,18 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
                 match status_str.as_str() {
                     "complete_success" => {
                         if let Some(wav_path) = &state.maybe_public_bucket_wav_audio_path {
-                            let media_url = format!("https://storage.googleapis.com/vocodes-public/{}", wav_path);
-                            log::debug!("get_tts_fakeyou: downloading from {}", media_url);
+                            // The Python library (fakeyou.py v1.3.0) constructs the
+                            // download URL as: https://cdn-2.fakeyou.com + wav_path
+                            let media_url = format!("https://cdn-2.fakeyou.com{}", wav_path);
+                            log::info!("get_tts_fakeyou: downloading from {}", media_url);
                             let media_resp = client.get(&media_url).send().await?;
                             if !media_resp.status().is_success() {
                                 return Err(format!("Failed to download audio: status {}", media_resp.status()).into());
                             }
                             let bytes = media_resp.bytes().await?.to_vec();
+                            if bytes.len() < 100 {
+                                return Err(format!("Downloaded audio too small: {} bytes", bytes.len()).into());
+                            }
                             log::info!("get_tts_fakeyou: downloaded {} bytes", bytes.len());
                             return Ok(bytes);
                         } else {
@@ -196,8 +247,9 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
                         return Err(format!("FakeYou job failed with status: {}", status_str).into());
                     }
                     "attempt_failed" => {
-                        log::warn!("get_tts_fakeyou: attempt failed, will retry");
-                        // Continue polling — FakeYou may retry the job
+                        // The Python library raises an exception immediately on attempt_failed.
+                        // FakeYou does not retry after this status.
+                        return Err("FakeYou job attempt failed".into());
                     }
                     _ => {
                         // "pending" or "started" — keep polling
