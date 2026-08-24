@@ -880,6 +880,10 @@ async fn restart(ctx: Context<'_>) -> Result<(), Error> {
         return Ok(());
     }
     ctx.send(poise::CreateReply::default().content(&ctx.data().lang.restarting).ephemeral(true)).await?;
+    // Give Discord time to deliver the interaction response before exiting.
+    // Without this delay, std::process::exit(0) may kill the process before
+    // the HTTP response reaches Discord, and the user never sees the message.
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     std::process::exit(0);
 }
 
