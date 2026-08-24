@@ -355,7 +355,7 @@ async fn speak(
     };
 
     if !tts::is_valid_voice(&actual_voice) {
-        ctx.say(&ctx.data().lang.invalid_voice).await?;
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_voice).ephemeral(true)).await?;
         return Ok(());
     }
 
@@ -482,7 +482,7 @@ async fn random(
     };
 
     if !tts::is_valid_voice(&actual_voice) {
-        ctx.say(&ctx.data().lang.invalid_voice).await?;
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_voice).ephemeral(true)).await?;
         return Ok(());
     }
 
@@ -744,11 +744,26 @@ async fn audio(
     
     log::info!("Audio playback started in guild {}", guild_id);
 
-    // Display queue status message (like Python's get_queue_message)
+    // Display queue status message with Play/Stop buttons (like speak/random commands)
     let queue_status = get_queue_message(&ctx.data().lang).await;
     let response_content = format!("{}{}", ctx.data().lang.audio_playback, queue_status);
-    
-    ctx.say(response_content).await?;
+
+    let components = vec![
+        serenity::CreateActionRow::Buttons(vec![
+            serenity::CreateButton::new(format!("play:{}", file_path))
+                .label("Play")
+                .style(serenity::ButtonStyle::Success),
+            serenity::CreateButton::new("stop")
+                .label("Stop")
+                .style(serenity::ButtonStyle::Danger)
+        ])
+    ];
+
+    ctx.send(poise::CreateReply::default()
+        .content(response_content)
+        .components(components)
+        .ephemeral(true)
+    ).await?;
 
     // Clean up temp file after 5 minutes to ensure playback completes
     let file_path_clone = file_path.clone();
