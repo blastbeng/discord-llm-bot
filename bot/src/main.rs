@@ -76,11 +76,22 @@ fn validate_image_bytes(bytes: &[u8]) -> Result<(u32, u32), &'static str> {
 
 #[derive(Debug)]
 // Data stored in the bot's context
+/// A single message in the conversation history.
+#[derive(Clone)]
+pub struct ConversationMessage {
+    role: String,      // "user" or "assistant"
+    content: String,
+}
+
 pub struct Data {
     pub db_pool: sqlx::SqlitePool,
     pub lang: lang::Lang,
     pub error_tracker: ErrorTracker,
     pub volume: std::sync::Arc<std::sync::Mutex<f32>>,
+    /// Per-guild conversation history for /ask. Stores the last N messages
+    /// so the LLM can have a back-and-forth conversation instead of one-off
+    /// questions. Keyed by guild ID.
+    pub conversations: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, Vec<ConversationMessage>>>>,
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -901,14 +912,24 @@ async fn ask(
     // Fetch database sentences to use as personality context for the LLM
     let db_sentences = database::select_all_sentence(&ctx.data().db_pool).await.unwrap_or_default();
 
+    // Fetch conversation history for this guild so the LLM has context
+    let history: Vec<ConversationMessage> = {
+        let conversations = ctx.data().conversations.lock().unwrap();
+        conversations.get(&guild_id.get()).cloned().unwrap_or_default()
+    };
+
     let queue_msg = get_queue_message(&ctx.data().lang).await;
     let initial_msg = ctx.data().lang.ask_generating
         .replacen("{}", &text, 1)
         .replacen("{}", &queue_msg, 1);
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
 
-    // Query the LLM with database context
-    let llm_response = match llm::ask(&text, &db_sentences, &bot_nickname).await {
+    // Query the LLM with database context and conversation history
+    let llm_history: Vec<llm::ConversationMessage> = history
+        .iter()
+        .map(|m| llm::ConversationMessage { role: m.role.clone(), content: m.content.clone() })
+        .collect();
+    let llm_response = match llm::ask(&text, &db_sentences, &bot_nickname, &llm_history).await {
         Ok(response) => response,
         Err(e) => {
             log::error!("[GUILDID : {}] ask - LLM failed: {}", guild_id, e);
@@ -922,6 +943,21 @@ async fn ask(
     // Save the LLM response as a sentence in the database (like /speak does)
     if let Err(e) = database::insert_sentence(&ctx.data().db_pool, &llm_response).await {
         log::error!("Failed to insert LLM response into database: {}", e);
+    }
+
+    // Store the user question and LLM response in conversation history
+    // so the LLM can have context of previous questions in this guild.
+    // Keep only the last 20 messages to prevent unbounded memory growth.
+    {
+        let mut conversations = ctx.data().conversations.lock().unwrap();
+        let guild_history = conversations.entry(guild_id.get()).or_insert_with(Vec::new);
+        guild_history.push(ConversationMessage { role: "user".to_string(), content: text.clone() });
+        guild_history.push(ConversationMessage { role: "assistant".to_string(), content: llm_response.clone() });
+        // Trim to last 20 messages (10 user + 10 assistant exchanges)
+        if guild_history.len() > 20 {
+            let start = guild_history.len() - 20;
+            guild_history.drain(0..start);
+        }
     }
 
     // Generate TTS for the LLM response (same flow as /speak)
@@ -2301,6 +2337,7 @@ async fn main() {
                     lang,
                     error_tracker,
                     volume: std::sync::Arc::new(std::sync::Mutex::new(1.0)),
+                    conversations: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                 })
             })
         })

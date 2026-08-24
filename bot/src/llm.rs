@@ -67,10 +67,18 @@ fn get_endpoint_configs() -> Vec<LlmEndpoint> {
 /// that speaks in the style of the sentences stored in the database,
 /// and to keep responses short (one line, max 200 chars) since they
 /// will be converted to speech via TTS.
+/// A conversation message for the LLM (role + content).
+#[derive(Clone)]
+pub struct ConversationMessage {
+    pub role: String,
+    pub content: String,
+}
+
 pub async fn ask(
     question: &str,
     db_sentences: &[String],
     bot_nickname: &str,
+    history: &[ConversationMessage],
 ) -> Result<String, String> {
     let endpoints = get_endpoint_configs();
     if endpoints.is_empty() {
@@ -108,6 +116,22 @@ pub async fn ask(
         Just give the spoken answer text."
     );
 
+    // Build the messages array: system prompt, conversation history, then
+    // the current question. The history allows the LLM to have context of
+    // previous questions and answers in this guild.
+    let mut messages: Vec<serde_json::Value> = vec![
+        serde_json::json!({"role": "system", "content": system_prompt})
+    ];
+    // Add conversation history (last 10 messages from this guild)
+    // to keep the prompt size manageable.
+    let history_len = history.len();
+    let start = if history_len > 10 { history_len - 10 } else { 0 };
+    for msg in &history[start..] {
+        messages.push(serde_json::json!({"role": msg.role, "content": msg.content}));
+    }
+    // Add the current question
+    messages.push(serde_json::json!({"role": "user", "content": question}));
+
     let client = llm_client();
     let mut last_error = String::new();
 
@@ -116,10 +140,7 @@ pub async fn ask(
 
         let body = serde_json::json!({
             "model": endpoint.model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": question}
-            ],
+            "messages": messages,
             "stream": false,
             "temperature": 0.7,
             "max_tokens": 150
