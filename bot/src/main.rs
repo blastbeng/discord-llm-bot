@@ -1,7 +1,10 @@
 mod database;
+mod error;
 mod generator;
 mod lang;
 mod tts;
+
+use error::{BotError, ErrorTracker, Logger};
 use poise::serenity_prelude as serenity;
 use poise::serenity_prelude::Mentionable;
 use rand::seq::SliceRandom;
@@ -10,10 +13,11 @@ use sysinfo::System;
 use songbird::SerenityInit;
 
 #[derive(Debug)]
-// Data stored in the bot's context
+// Data stored in the bot's context with enhanced tracking capabilities
 pub struct Data {
     pub db_pool: sqlx::SqlitePool,
     pub lang: lang::Lang,
+    pub error_tracker: ErrorTracker,
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -816,9 +820,19 @@ async fn main() {
                 tokio::spawn(async move {
                     change_presence_loop(ctx_clone).await;
                 });
+                
+                // Initialize error tracker and language settings
                 let lang = lang::Lang::new();
-                log::info!("Framework setup complete");
-                Ok(Data { db_pool, lang })
+                let error_tracker = ErrorTracker::new();
+                
+                log::info!("Framework setup complete with enhanced error tracking");
+                Logger::info("INIT", "Error tracking system initialized successfully");
+                
+                Ok(Data { 
+                    db_pool, 
+                    lang,
+                    error_tracker,
+                })
             })
         })
         .build();
