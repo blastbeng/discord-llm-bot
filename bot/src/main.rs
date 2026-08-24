@@ -945,8 +945,8 @@ async fn audio(
 async fn restart(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     log::info!("[GUILDID : {}] restart command invoked by user {}", ctx.guild_id().unwrap(), ctx.author().id);
-    let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
-    let env_guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
+    let admin_id = env::var("ADMIN_ID").unwrap_or_default();
+    let env_guild_id = env::var("GUILD_ID").unwrap_or_default();
     if ctx.guild_id().unwrap().to_string() != env_guild_id || ctx.author().id.to_string() != admin_id {
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.admin_parent_server).ephemeral(true)).await?;
         return Ok(());
@@ -976,8 +976,8 @@ async fn rename(
     log::info!("[GUILDID : {}] rename command invoked by user {} with name: {}", ctx.guild_id().unwrap(), ctx.author().id, name);
 
     // Verify admin permissions (same check as /restart and /avatar)
-    let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
-    let env_guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
+    let admin_id = env::var("ADMIN_ID").unwrap_or_default();
+    let env_guild_id = env::var("GUILD_ID").unwrap_or_default();
     if ctx.guild_id().unwrap().to_string() != env_guild_id || ctx.author().id.to_string() != admin_id {
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.admin_parent_server).ephemeral(true)).await?;
         return Ok(());
@@ -1014,8 +1014,8 @@ async fn avatar(
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
 
-    let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
-    let env_guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
+    let admin_id = env::var("ADMIN_ID").unwrap_or_default();
+    let env_guild_id = env::var("GUILD_ID").unwrap_or_default();
 
     // Verify admin permissions and guild restrictions first (like Python's flow)
     if ctx.guild_id().unwrap().to_string() != env_guild_id || ctx.author().id.to_string() != admin_id {
