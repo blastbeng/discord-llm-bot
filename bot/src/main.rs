@@ -706,11 +706,8 @@ async fn random(
         ];
 
         // Derive a human-readable voice name from the filename token.
-        // Filenames follow the pattern {voice_token}_{hash}.mp3 — extract
-        // the token and reverse-lookup the voice name for display.
-        // The original sentence text isn't recoverable from the filename,
-        // so show "Cached audio" as the sentence label instead of the
-        // opaque hash.
+        // Filenames follow the pattern {voice_token}_[effect_]_{hash}.mp3
+        // — extract the token and reverse-lookup the voice name for display.
         let voice_name = std::path::Path::new(audio_path)
             .file_stem()
             .and_then(|s| s.to_str())
@@ -719,10 +716,14 @@ async fn random(
             .next()
             .map(tts::get_voice_name_from_token)
             .unwrap_or("Unknown");
+        // Try to recover the original sentence text from ID3 tags.
+        // Falls back to "Cached audio" if the file has no ID3 lyrics
+        // (e.g., generated before ID3 tagging was added, or corrupted).
+        let sentence_label = tts::read_id3_lyrics(audio_path).unwrap_or_else(|| "Cached audio".to_string());
         // Use match instead of ? so expired interaction tokens don't propagate
         // to on_error — the audio already started playing on the line above.
         match reply.edit(ctx, poise::CreateReply::default()
-            .content(ctx.data().lang.playing.replacen("{}", "Cached audio", 1).replacen("{}", voice_name, 1))
+            .content(ctx.data().lang.playing.replacen("{}", &sentence_label, 1).replacen("{}", voice_name, 1))
             .components(components)
             .ephemeral(true)
         ).await {

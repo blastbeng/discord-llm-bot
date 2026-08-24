@@ -142,6 +142,19 @@ pub fn get_voice_name_from_token(token: &str) -> &'static str {
     }
 }
 
+/// Read the lyrics (sentence text) from an MP3 file's ID3 tags.
+/// Returns None if the file doesn't exist, has no ID3 tags, or has no lyrics frame.
+/// Used by /random to recover the original sentence text from cached MP3 files.
+pub fn read_id3_lyrics(file_path: &str) -> Option<String> {
+    match Tag::read_from_path(file_path) {
+        Ok(tag) => {
+            // Look for a USLT (unsynchronized lyrics) frame
+            tag.get("USLT")?.content().text().map(|s| s.to_string())
+        }
+        Err(_) => None,
+    }
+}
+
 pub fn write_id3_tags(file_path: &str, artist: &str, title: &str, lyrics: &str) {
     // Use the configured language for the ID3 lyrics frame instead of
     // hardcoding "ita" — when LANG=eng the lyrics are in English.
