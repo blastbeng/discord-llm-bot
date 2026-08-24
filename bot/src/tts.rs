@@ -201,7 +201,9 @@ pub async fn get_tts_google(text: &str) -> Result<Vec<u8>, Box<dyn std::error::E
         return Ok(bytes);
     }
 
-    // Should never reach here, but satisfy the compiler
+    // Unreachable: every loop iteration either returns Ok/Err or continues.
+    // Kept to satisfy the compiler's exhaustiveness check.
+    #[allow(unreachable_code)]
     Err(last_error.unwrap_or_else(|| "Google TTS: all attempts failed".to_string()).into())
 }
 
