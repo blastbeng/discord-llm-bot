@@ -907,8 +907,28 @@ async fn avatar(
         return Ok(());
     }
 
-    // Download image bytes (single download, like Python's image.to_file())
-    let bytes = reqwest::get(&image.url).await?.bytes().await?.to_vec();
+    // Download image bytes with proper error handling
+    let bytes = match reqwest::get(&image.url).await {
+        Ok(resp) => match resp.bytes().await {
+            Ok(b) => b.to_vec(),
+            Err(e) => {
+                log::error!("[GUILDID : {}] avatar - failed to read image bytes: {}", ctx.guild_id().unwrap(), e);
+                ctx.send(poise::CreateReply::default().content(&ctx.data().lang.discord_api_error).ephemeral(true)).await?;
+                return Ok(());
+            }
+        },
+        Err(e) => {
+            log::error!("[GUILDID : {}] avatar - failed to download image: {}", ctx.guild_id().unwrap(), e);
+            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.discord_api_error).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
+
+    if bytes.is_empty() {
+        log::warn!("[GUILDID : {}] avatar - downloaded image is empty", ctx.guild_id().unwrap());
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.unsupported_file).ephemeral(true)).await?;
+        return Ok(());
+    }
 
     // Validate image using the image crate (like Python's check_image_with_pil)
     if !validate_image_bytes(&bytes) {
