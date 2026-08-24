@@ -473,11 +473,25 @@ async fn speak(
         ])
     ];
 
-    reply.edit(ctx, poise::CreateReply::default()
+    // Update the message with Play/Stop buttons. Use match instead of ? so
+    // that an expired/invalid interaction token doesn't propagate to on_error
+    // as "Unknown interaction" — the audio already played successfully, so
+    // a failed message update is cosmetic, not a real failure.
+    match reply.edit(ctx, poise::CreateReply::default()
         .content(ctx.data().lang.playing.replacen("{}", &text, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
         .components(components)
         .ephemeral(true)
-    ).await?;
+    ).await {
+        Ok(_) => {}
+        Err(e) => {
+            let e_str = e.to_string();
+            if e_str.contains("Unknown interaction") || e_str.contains("already been acknowledged") {
+                log::debug!("speak: reply.edit failed (interaction expired, audio already played): {}", e_str);
+            } else {
+                log::warn!("speak: reply.edit failed: {}", e_str);
+            }
+        }
+    }
 
     Ok(())
 }
@@ -722,11 +736,23 @@ async fn random(
         ])
     ];
 
-    reply.edit(ctx, poise::CreateReply::default()
+    // Same pattern as speak: don't propagate reply.edit errors to on_error
+    // since the audio already played successfully.
+    match reply.edit(ctx, poise::CreateReply::default()
         .content(ctx.data().lang.playing.replacen("{}", &random_sentence, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
         .components(components)
         .ephemeral(true)
-    ).await?;
+    ).await {
+        Ok(_) => {}
+        Err(e) => {
+            let e_str = e.to_string();
+            if e_str.contains("Unknown interaction") || e_str.contains("already been acknowledged") {
+                log::debug!("random: reply.edit failed (interaction expired, audio already played): {}", e_str);
+            } else {
+                log::warn!("random: reply.edit failed: {}", e_str);
+            }
+        }
+    }
 
     Ok(())
 }
