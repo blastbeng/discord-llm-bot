@@ -40,7 +40,7 @@ async fn play_audio_with_ffmpeg_pipe(
     // Create the audio source only after confirming the bot is connected,
     // so we don't open a file handle that's immediately dropped on error.
     let source = songbird::input::File::new(file_path.to_string());
-    handler.play_only(source.into());
+    play_with_volume(&mut handler, source.into(), ctx.data());
     log::info!("Audio playback started for guild {}", guild_id);
     Ok(())
 }
@@ -2131,6 +2131,7 @@ async fn main() {
                                     "admin" => serenity::CreateEmbed::new()
                                         .title(&lang.help_title)
                                         .color(0xED4245)
+                                        .field("📊 /stats", "Show bot statistics (database, cache, CPU, RAM, uptime)", false)
                                         .field("🔄 /restart", "Restart the bot (admin only, parent server only)", false)
                                         .field("✏️ /rename", "Change the bot's nickname (admin only, parent server only)", false)
                                         .field("🖼️ /avatar", "Change the bot's avatar image (admin only, parent server only)", false),
@@ -2278,13 +2279,13 @@ async fn main() {
                                                 let mut handler = handler_lock.lock().await;
                                                 log::info!("Playing audio file: {}", playback_path);
                                                 let source = songbird::input::File::new(playback_path.clone());
-                                                handler.play_only(source.into());
+                                                play_with_volume(&mut handler, source.into(), data);
                                                 log::info!("Audio playback started in guild {}", guild_id);
                                             }
                                         } else {
                                             log::info!("Playing audio file: {}", playback_path);
                                             let source = songbird::input::File::new(playback_path.clone());
-                                            handler.play_only(source.into());
+                                            play_with_volume(&mut handler, source.into(), data);
                                             log::info!("Audio playback started in guild {}", guild_id);
                                         }
                                     } else {
@@ -2295,7 +2296,7 @@ async fn main() {
                                                 let mut handler = handler_lock.lock().await;
                                                 log::info!("Playing audio file: {}", playback_path);
                                                 let source = songbird::input::File::new(playback_path.clone());
-                                                handler.play_only(source.into());
+                                                play_with_volume(&mut handler, source.into(), data);
                                                 log::info!("Audio playback started in guild {}", guild_id);
                                             }
                                         }
