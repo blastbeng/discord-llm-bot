@@ -718,9 +718,19 @@ async fn audio(
         }
     };
     {
-        let handler = handler_lock.lock().await;
-        if handler.current_channel().is_none() {
-            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.initializing_connection).ephemeral(true)).await?;
+        // Wait for connection to establish with retry (same as speak/random)
+        let mut connected = false;
+        for _ in 0..5 {
+            let handler = handler_lock.lock().await;
+            if handler.current_channel().is_some() {
+                connected = true;
+                break;
+            }
+            drop(handler);
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        if !connected {
+            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
             return Ok(());
         }
     }
