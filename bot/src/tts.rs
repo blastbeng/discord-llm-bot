@@ -86,24 +86,57 @@ pub async fn get_tts_google(text: &str) -> Result<Vec<u8>, Box<dyn std::error::E
         tts_lang
     );
     let client = reqwest::Client::new();
-    let resp = client
-        .get(&url)
-        .header("User-Agent", "Mozilla/5.0")
-        .send()
-        .await?;
 
-    if !resp.status().is_success() {
-        return Err(format!("Google TTS returned status: {}", resp.status()).into());
+    // Retry up to 3 times with short backoff to handle transient network errors
+    let max_attempts = 3;
+    let mut last_error: Option<String> = None;
+    for attempt in 1..=max_attempts {
+        let resp = match client
+            .get(&url)
+            .header("User-Agent", "Mozilla/5.0")
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                log::warn!("get_tts_google: attempt {}/{} failed: {}", attempt, max_attempts, e);
+                last_error = Some(e.to_string());
+                if attempt < max_attempts {
+                    tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
+                    continue;
+                }
+                return Err(last_error.unwrap().into());
+            }
+        };
+
+        if !resp.status().is_success() {
+            log::warn!("get_tts_google: attempt {}/{} returned status {}", attempt, max_attempts, resp.status());
+            last_error = Some(format!("Google TTS returned status: {}", resp.status()));
+            if attempt < max_attempts {
+                tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
+                continue;
+            }
+            return Err(last_error.unwrap().into());
+        }
+
+        let bytes = resp.bytes().await?.to_vec();
+
+        if bytes.len() < 100 {
+            log::warn!("get_tts_google: attempt {}/{} returned only {} bytes", attempt, max_attempts, bytes.len());
+            last_error = Some("Google TTS returned too few bytes, possibly an error page".to_string());
+            if attempt < max_attempts {
+                tokio::time::sleep(std::time::Duration::from_millis(500 * attempt as u64)).await;
+                continue;
+            }
+            return Err(last_error.unwrap().into());
+        }
+
+        log::debug!("get_tts_google: received {} bytes", bytes.len());
+        return Ok(bytes);
     }
 
-    let bytes = resp.bytes().await?.to_vec();
-
-    if bytes.len() < 100 {
-        return Err("Google TTS returned too few bytes, possibly an error page".into());
-    }
-
-    log::debug!("get_tts_google: received {} bytes", bytes.len());
-    Ok(bytes)
+    // Should never reach here, but satisfy the compiler
+    Err(last_error.unwrap_or_else(|| "Google TTS: all attempts failed".to_string()).into())
 }
 
 #[derive(serde::Deserialize)]
