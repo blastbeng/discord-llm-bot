@@ -33,7 +33,12 @@ pub async fn init_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     
     if !existing.contains("created_at") {
         log::info!("init_db: migrating legacy table — adding created_at column");
-        sqlx::query("ALTER TABLE sentences ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        // SQLite does not allow non-constant defaults like CURRENT_TIMESTAMP
+        // in ALTER TABLE ADD COLUMN. Add the column without a default, then
+        // backfill existing rows so they have a valid timestamp.
+        sqlx::query("ALTER TABLE sentences ADD COLUMN created_at TIMESTAMP")
+            .execute(pool).await?;
+        sqlx::query("UPDATE sentences SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL")
             .execute(pool).await?;
     }
     if !existing.contains("usage_count") {
