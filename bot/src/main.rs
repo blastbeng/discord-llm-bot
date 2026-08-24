@@ -1222,11 +1222,28 @@ async fn main() {
             },
             event_handler: |ctx, event, framework, data| {
                 Box::pin(async move {
+                    // Clear ALL global slash commands on startup. If any were left from
+                    // a previous build that used register_globally(), they would
+                    // appear as duplicates alongside the per-guild commands we set
+                    // below. Setting an empty list removes them.
+                    if let serenity::FullEvent::CacheReady { .. } = event {
+                        log::info!("Cache ready, clearing global commands and syncing per-guild");
+                        let http = ctx.http.clone();
+                        // Remove all global commands (sets to empty list).
+                        // If any were left from a previous build that used
+                        // register_globally(), they would appear as duplicates
+                        // alongside the per-guild commands we set below.
+                        if let Err(e) = serenity::Command::set_global_commands(&http, Vec::new()).await {
+                            log::warn!("Failed to clear global commands: {}", e);
+                        } else {
+                            log::info!("Global commands cleared successfully");
+                        }
+                    }
                     // Sync commands per-guild when the cache is ready (all guilds at once).
                     // This makes slash commands available instantly in each guild,
                     // instead of waiting up to 1 hour for global registration to roll out.
                     if let serenity::FullEvent::CacheReady { guilds, .. } = event {
-                        log::info!("Cache ready, syncing commands to {} guild(s)", guilds.len());
+                        log::info!("Syncing commands to {} guild(s)", guilds.len());
                         let commands = poise::builtins::create_application_commands(&framework.options().commands);
                         let http = ctx.http.clone();
                         for guild_id in guilds {
