@@ -71,20 +71,23 @@ pub async fn select_all_sentence(pool: &SqlitePool) -> Result<Vec<String>, sqlx:
 pub async fn select_like_sentence(pool: &SqlitePool, text: &str) -> Result<Vec<String>, sqlx::Error> {
     log::debug!("select_like_sentence: searching for pattern '%{}%'", text);
     
-    // Search sentences with case-insensitive LIKE query and ordering by relevance
+    // Search sentences with case-insensitive LIKE query and ordering by relevance.
+    // The CASE differentiates exact matches (rank 0) from partial matches (rank 1),
+    // so sentences equal to the search text appear first, followed by those that
+    // merely contain it as a substring.
     let pattern = format!("%{}%", text);
     let rows = sqlx::query_scalar::<_, String>(
         "SELECT sentence FROM sentences 
          WHERE sentence LIKE ? COLLATE NOCASE
          ORDER BY 
             CASE 
-                WHEN sentence LIKE ? THEN 0 
+                WHEN sentence = ? COLLATE NOCASE THEN 0 
                 ELSE 1 
             END,
             usage_count DESC, created_at ASC"
     )
     .bind(&pattern)
-    .bind(&pattern)
+    .bind(text)
     .fetch_all(pool)
     .await?;
 
