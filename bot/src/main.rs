@@ -1130,17 +1130,27 @@ async fn main() {
                         log::error!("Error: {}", error);
                         if let poise::FrameworkError::Command { ctx, error, .. } = error {
                             log::error!("Command error: {}", error);
-                            // Show the actual error message to the user (e.g. "Devi essere
-                            // connesso a un canale vocale" or "Non hai i permessi").
-                            // Only fall back to the generic API error message if the
-                            // error string is empty or looks like an internal Rust panic.
                             let error_str = error.to_string();
                             let msg = if error_str.is_empty() {
                                 ctx.data().lang.discord_api_error.clone()
                             } else {
                                 error_str
                             };
-                            let _ = ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await;
+                            // If the command already sent a reply (e.g. via ctx.send after
+                            // defer_ephemeral), attempting ctx.send again causes "Interaction
+                            // has already been acknowledged". Wrap in match and silently
+                            // ignore that specific error instead of crashing.
+                            match ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await {
+                                Ok(_) => {}
+                                Err(e) => {
+                                    let e_str = e.to_string();
+                                    if e_str.contains("already been acknowledged") || e_str.contains("Unknown interaction") {
+                                        log::debug!("on_error: could not send error message (interaction already acknowledged): {}", e_str);
+                                    } else {
+                                        log::error!("on_error: failed to send error message: {}", e_str);
+                                    }
+                                }
+                            }
                         }
                     }
                 })
