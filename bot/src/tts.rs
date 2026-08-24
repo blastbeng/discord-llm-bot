@@ -131,6 +131,11 @@ pub async fn compress_and_save_mp3(input_bytes: Vec<u8>, file_path: &str) -> std
                 file_path,
                 buf.trim()
             );
+            return Err(std::io::Error::other(format!(
+                "ffmpeg exited with code {:?}: {}",
+                exit_code,
+                buf.trim()
+            )));
         } else {
             log::debug!("compress_and_save_mp3: completed for {}", file_path);
         }
@@ -140,6 +145,10 @@ pub async fn compress_and_save_mp3(input_bytes: Vec<u8>, file_path: &str) -> std
             exit_code,
             file_path
         );
+        return Err(std::io::Error::other(format!(
+            "ffmpeg exited with code {:?} (no stderr captured)",
+            exit_code
+        )));
     } else {
         log::debug!("compress_and_save_mp3: completed for {}", file_path);
     }
