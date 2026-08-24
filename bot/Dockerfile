@@ -24,7 +24,8 @@ RUN rm -rf src target/release/discord-llm-bot
 
 # Copy the actual source code and build
 COPY src ./src
-RUN cargo build --release
+# Touch source files to force cargo to recompile (bypass fingerprint cache)
+RUN find src -name "*.rs" -exec touch {} + && cargo build --release
 RUN test -f target/release/discord-llm-bot && ! strings target/release/discord-llm-bot | grep -q "DUMMY BINARY" || (echo "ERROR: Dummy binary was not replaced!" && exit 1)
 
 FROM debian:bookworm-slim
