@@ -246,13 +246,9 @@ async fn voice_autocomplete(
 
     voices.into_iter()
         .filter(|v| {
-            let voice_lower = v.to_lowercase();
-            let current_lower = current.to_lowercase();
-            
-            // Multi-level filtering: exact match, prefix match, and substring match (like Python's choice value matching)
-            voice_lower.contains(&current_lower) || 
-                voice_lower.starts_with(&current_lower) ||
-                current_lower.is_empty()
+            // Substring match (case-insensitive). When the current input is empty,
+            // every voice matches because every string contains the empty string.
+            v.to_lowercase().contains(&current.to_lowercase())
         })
         .map(|v| {
             let name = v.to_string();

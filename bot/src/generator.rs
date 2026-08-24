@@ -17,15 +17,7 @@ pub async fn run_background_generator(pool: SqlitePool) {
         return;
     }
 
-    let voices = [
-        "Google",
-        "Goku (FakeYou.com)",
-        "Gerry Scotti (FakeYou.com)",
-        "Homer Simpson (FakeYou.com)",
-        "Peter Griffin (FakeYou.com)",
-        "Papa Francesco (FakeYou.com)",
-        "Silvio Berlusconi (FakeYou.com)",
-    ];
+    let voices = tts::AVAILABLE_VOICES;
 
     log::info!("Background generator started");
     
@@ -123,11 +115,14 @@ pub async fn run_background_generator(pool: SqlitePool) {
     }
 }
 
-/// Truncate long strings for better logging readability
+/// Truncate long strings for better logging readability.
+/// Uses char-boundary-safe truncation to avoid panicking on multibyte
+/// UTF-8 characters (e.g., Italian accented letters à, è, ì, ò, ù).
 fn truncate_string(s: &str, max_length: usize) -> String {
     if s.len() <= max_length {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_length])
+        let truncated: String = s.chars().take(max_length).collect();
+        format!("{truncated}...")
     }
 }
