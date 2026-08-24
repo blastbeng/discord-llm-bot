@@ -86,6 +86,28 @@ async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
+/// Check only speak permission (for stop/leave commands that don't need to connect)
+async fn check_speak_permission(ctx: Context<'_>) -> Result<(), Error> {
+    let lang = &ctx.data().lang;
+    let _guild_id = ctx.guild_id().unwrap();
+    let channel_id = {
+        let guild = ctx.guild().ok_or(lang.guild_not_found.as_str())?;
+        guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(lang.must_be_in_voice.as_str())?
+    };
+    log::debug!("check_speak_permission: user {} in channel {}", ctx.author().id, channel_id);
+
+    let channel = channel_id.to_channel(ctx.http()).await?;
+    if let serenity::Channel::Guild(guild_channel) = channel {
+        #[allow(deprecated)]
+        let perms = guild_channel.permissions_for_user(ctx.cache(), ctx.cache().current_user().id)?;
+        if !perms.speak() {
+            log::warn!("check_speak_permission: user {} lacks speak permission in channel {}", ctx.author().id, channel_id);
+            return Err(lang.no_speak_permission.as_str().into());
+        }
+    }
+    Ok(())
+}
+
 async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::ChannelId) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap();
     let manager = songbird::get(ctx.serenity_context()).await
@@ -165,7 +187,7 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
 async fn leave(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     log::info!("[GUILDID : {}] leave command invoked by user {}", ctx.guild_id().unwrap(), ctx.author().id);
-    check_permissions(ctx).await?;
+    check_speak_permission(ctx).await?;
     let guild_id = ctx.guild_id().unwrap();
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
     if manager.get(guild_id).is_some() {
@@ -182,7 +204,7 @@ async fn leave(ctx: Context<'_>) -> Result<(), Error> {
 async fn stop(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     log::info!("[GUILDID : {}] stop command invoked by user {}", ctx.guild_id().unwrap(), ctx.author().id);
-    check_permissions(ctx).await?;
+    check_speak_permission(ctx).await?;
     let guild_id = ctx.guild_id().unwrap();
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
     if let Some(handler) = manager.get(guild_id) {
