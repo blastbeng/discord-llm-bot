@@ -896,11 +896,26 @@ async fn rename(
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     log::info!("[GUILDID : {}] rename command invoked by user {} with name: {}", ctx.guild_id().unwrap(), ctx.author().id, name);
+
+    // Verify admin permissions (same check as /restart and /avatar)
+    let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
+    let env_guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
+    if ctx.guild_id().unwrap().to_string() != env_guild_id || ctx.author().id.to_string() != admin_id {
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.admin_parent_server).ephemeral(true)).await?;
+        return Ok(());
+    }
+    let guild_id = ctx.guild_id().unwrap();
+    let member = guild_id.member(ctx.http(), ctx.author().id).await?;
+    #[allow(deprecated)]
+    if !member.permissions(ctx)?.administrator() {
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.admin_only).ephemeral(true)).await?;
+        return Ok(());
+    }
+
     if name.chars().count() > 32 {
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.nickname_too_long).ephemeral(true)).await?;
         return Ok(());
     }
-    let guild_id = ctx.guild_id().unwrap();
     match guild_id.edit_nickname(ctx.http(), Some(&name)).await {
         Ok(_) => {
             ctx.send(poise::CreateReply::default().content(ctx.data().lang.nickname_changed.replacen("{}", &name, 1)).ephemeral(true)).await?;
