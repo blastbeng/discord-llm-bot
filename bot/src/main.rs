@@ -23,8 +23,6 @@ async fn play_audio_with_ffmpeg_pipe(
 ) -> Result<(), Error> {
     log::info!("play_audio_with_ffmpeg_pipe: playing {}", file_path);
 
-    let source = songbird::input::File::new(file_path.to_string());
-
     let guild_id = ctx.guild_id().unwrap();
     let manager = songbird::get(ctx.serenity_context()).await
         .ok_or("Songbird not registered")?;
@@ -38,6 +36,9 @@ async fn play_audio_with_ffmpeg_pipe(
         return Err("Bot not connected to any channel".into());
     }
 
+    // Create the audio source only after confirming the bot is connected,
+    // so we don't open a file handle that's immediately dropped on error.
+    let source = songbird::input::File::new(file_path.to_string());
     handler.play_only(source.into());
     log::info!("Audio playback started for guild {}", guild_id);
     Ok(())
