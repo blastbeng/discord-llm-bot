@@ -323,6 +323,27 @@ pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<TtsResult, B
             log::debug!("get_or_generate_tts: cache hit for {}", file_path);
             return Ok(TtsResult { file_path, actual_voice: voice.to_string(), fallback: false });
         }
+
+        // If the requested voice is a FakeYou voice and its specific file doesn't
+        // exist, check whether a Google fallback was previously cached for the
+        // same text.  When FakeYou fails and falls back to Google, the file is
+        // saved as Google_{hash}.mp3 — so on the next request for the same
+        // FakeYou voice we should reuse that cached fallback instead of
+        // retrying FakeYou (which will likely fail again) every time.
+        if voice != "Google" {
+            let google_fallback_path = get_file_path("Google", text);
+            if Path::new(&google_fallback_path).exists() {
+                log::info!(
+                    "get_or_generate_tts: FakeYou cache miss, but Google fallback exists — reusing {}",
+                    google_fallback_path
+                );
+                return Ok(TtsResult {
+                    file_path: google_fallback_path,
+                    actual_voice: "Google".to_string(),
+                    fallback: true,
+                });
+            }
+        }
     }
 
     log::info!("get_or_generate_tts: generating TTS for voice {}", voice);
