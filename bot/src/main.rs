@@ -973,8 +973,30 @@ async fn main() {
                     }
                 })
             },
-            event_handler: |ctx, event, _framework, data| {
+            event_handler: |ctx, event, framework, data| {
                 Box::pin(async move {
+                    // Sync commands per-guild when the cache is ready (all guilds at once).
+                    // This makes slash commands available instantly in each guild,
+                    // instead of waiting up to 1 hour for global registration to roll out.
+                    if let serenity::FullEvent::CacheReady { guilds, .. } = event {
+                        log::info!("Cache ready, syncing commands to {} guild(s)", guilds.len());
+                        let commands = poise::builtins::create_application_commands(&framework.options().commands);
+                        let http = ctx.http.clone();
+                        for guild_id in guilds {
+                            if let Err(e) = guild_id.set_commands(&http, commands.clone()).await {
+                                log::error!("Failed to sync commands for guild {}: {}", guild_id, e);
+                            }
+                        }
+                    }
+                    // Sync commands when the bot joins a new guild
+                    if let serenity::FullEvent::GuildCreate { guild, .. } = event {
+                        log::info!("Guild joined (ID: {}, NAME: {}), syncing commands", guild.id, guild.name);
+                        let commands = poise::builtins::create_application_commands(&framework.options().commands);
+                        let http = ctx.http.clone();
+                        if let Err(e) = guild.id.set_commands(&http, commands).await {
+                            log::error!("Failed to sync commands for guild {}: {}", guild.id, e);
+                        }
+                    }
                     if let serenity::FullEvent::InteractionCreate { interaction } = event {
                         if let serenity::Interaction::Component(component) = interaction {
                             if component.data.custom_id == "stop" {
