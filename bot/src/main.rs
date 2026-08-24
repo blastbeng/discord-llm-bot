@@ -777,8 +777,29 @@ async fn audio(
     // from overwriting each other's temp file while playback is in progress.
     let file_path = format!("{}/{}_{}", temp_dir, uuid::Uuid::new_v4(), safe_filename);
     
-    // Download the attachment
-    let bytes = reqwest::get(&audio.url).await?.bytes().await?.to_vec();
+    // Download the attachment with proper error handling
+    let bytes = match reqwest::get(&audio.url).await {
+        Ok(resp) => match resp.bytes().await {
+            Ok(b) => b.to_vec(),
+            Err(e) => {
+                log::error!("[GUILDID : {}] audio - failed to read attachment bytes: {}", guild_id, e);
+                ctx.send(poise::CreateReply::default().content(&ctx.data().lang.audio_download_failed).ephemeral(true)).await?;
+                return Ok(());
+            }
+        },
+        Err(e) => {
+            log::error!("[GUILDID : {}] audio - failed to download attachment: {}", guild_id, e);
+            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.audio_download_failed).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
+
+    if bytes.is_empty() {
+        log::warn!("[GUILDID : {}] audio - downloaded attachment is empty", guild_id);
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.audio_download_failed).ephemeral(true)).await?;
+        return Ok(());
+    }
+
     tokio::fs::create_dir_all(&temp_dir).await?;
     tokio::fs::write(&file_path, &bytes).await?;
 

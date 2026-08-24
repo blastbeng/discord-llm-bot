@@ -42,6 +42,7 @@ pub struct Lang {
     pub text_too_long: String,
     pub file_too_large: String,
     pub file_expired: String,
+    pub audio_download_failed: String,
 }
 
 impl Lang {
@@ -98,6 +99,7 @@ impl Lang {
                 text_too_long: "The text is too long (max 200 characters). Please shorten it and try again.".to_string(),
                 file_too_large: "The audio file is too large (max {} MB). Please use a smaller file.".to_string(),
                 file_expired: "This audio file has expired. Please generate it again.".to_string(),
+                audio_download_failed: "Failed to download the audio file. Please try again.".to_string(),
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
@@ -149,6 +151,7 @@ impl Lang {
                 text_too_long: "Il testo é troppo lungo (massimo 200 caratteri). Accorcialo e riprova.".to_string(),
                 file_too_large: "Il file audio é troppo grande (massimo {} MB). Usa un file piú piccolo.".to_string(),
                 file_expired: "Questo file audio é scaduto. Generalo di nuovo.".to_string(),
+                audio_download_failed: "Impossibile scaricare il file audio. Riprova.".to_string(),
             }
         }
     }
