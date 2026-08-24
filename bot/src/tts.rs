@@ -102,7 +102,7 @@ pub fn get_file_path(voice: &str, text: &str) -> String {
 
 pub async fn compress_and_save_mp3(input_bytes: Vec<u8>, file_path: &str) -> std::io::Result<()> {
     // Compress to 64k bitrate, mono channel to save disk space
-    std::fs::create_dir_all("audios")?;
+    tokio::fs::create_dir_all("audios").await?;
     log::debug!("compress_and_save_mp3: saving to {}", file_path);
     let mut cmd = Command::new("ffmpeg");
     cmd.args(["-i", "pipe:0", "-b:a", "64k", "-ac", "1", "-y", file_path])
@@ -455,7 +455,7 @@ pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<TtsResult, B
     // Ensure temp directory exists when not saving to disk
     if !save_mp3 {
         let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
-        std::fs::create_dir_all(&temp_dir)?;
+        tokio::fs::create_dir_all(&temp_dir).await?;
     }
 
     compress_and_save_mp3(bytes, &save_path).await?;
