@@ -326,7 +326,7 @@ async fn stop(ctx: Context<'_>) -> Result<(), Error> {
 }
 
 /// Repeat a sentence
-#[poise::command(slash_command, user_cooldown = 5)]
+#[poise::command(slash_command, user_cooldown = 1)]
 async fn speak(
     ctx: Context<'_>,
     #[description = "La frase da ripetere"] text: String,
@@ -450,7 +450,7 @@ async fn speak(
 }
 
 /// Say a random sentence
-#[poise::command(slash_command, user_cooldown = 5)]
+#[poise::command(slash_command, user_cooldown = 1)]
 async fn random(
     ctx: Context<'_>,
     #[description = "La voce da usare (default: Google)"]
