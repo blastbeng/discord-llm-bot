@@ -305,7 +305,8 @@ async fn leave(ctx: Context<'_>) -> Result<(), Error> {
     log::info!("[GUILDID : {}] leave command invoked by user {}", ctx.guild_id().unwrap(), ctx.author().id);
     check_speak_permission(ctx).await?;
     let guild_id = ctx.guild_id().unwrap();
-    let manager = songbird::get(ctx.serenity_context()).await.unwrap();
+    let manager = songbird::get(ctx.serenity_context()).await
+        .ok_or("Songbird not registered")?;
     if manager.get(guild_id).is_some() {
         let _ = manager.remove(guild_id).await;
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.leave_success).ephemeral(true)).await?;
@@ -322,7 +323,8 @@ async fn stop(ctx: Context<'_>) -> Result<(), Error> {
     log::info!("[GUILDID : {}] stop command invoked by user {}", ctx.guild_id().unwrap(), ctx.author().id);
     check_speak_permission(ctx).await?;
     let guild_id = ctx.guild_id().unwrap();
-    let manager = songbird::get(ctx.serenity_context()).await.unwrap();
+    let manager = songbird::get(ctx.serenity_context()).await
+        .ok_or("Songbird not registered")?;
     if let Some(handler) = manager.get(guild_id) {
         let mut handler = handler.lock().await;
         handler.stop();
@@ -377,7 +379,13 @@ async fn speak(
     let initial_msg = ctx.data().lang.generating_audio.replacen("{}", &text, 1).replacen("{}", &queue_msg, 1);
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
 
-    let manager = songbird::get(ctx.serenity_context()).await.unwrap();
+    let manager = match songbird::get(ctx.serenity_context()).await {
+        Some(m) => m,
+        None => {
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
     let handler_lock = match manager.get(guild_id) {
         Some(h) => h,
         None => {
@@ -547,7 +555,13 @@ async fn random(
     let initial_msg = ctx.data().lang.searching_random.replacen("{}", &queue_msg, 1);
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
 
-    let manager = songbird::get(ctx.serenity_context()).await.unwrap();
+    let manager = match songbird::get(ctx.serenity_context()).await {
+        Some(m) => m,
+        None => {
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
     let handler_lock = match manager.get(guild_id) {
         Some(h) => h,
         None => {
@@ -736,8 +750,14 @@ async fn audio(
 
     // Smart voice connection: don't interrupt playback if bot is already playing
     connect_bot_by_voice_client(ctx, channel_id, ctx.author().id).await?;
-    
-    let manager = songbird::get(ctx.serenity_context()).await.unwrap();
+
+    let manager = match songbird::get(ctx.serenity_context()).await {
+        Some(m) => m,
+        None => {
+            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
     let handler_lock = match manager.get(guild_id) {
         Some(h) => h,
         None => {
