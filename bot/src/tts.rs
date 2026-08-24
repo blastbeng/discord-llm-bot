@@ -85,14 +85,41 @@ pub async fn compress_and_save_mp3(input_bytes: Vec<u8>, file_path: &str) -> std
     cmd.args(["-i", "pipe:0", "-b:a", "64k", "-ac", "1", "-y", file_path])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stderr(std::process::Stdio::piped());
 
     let mut child = cmd.spawn()?;
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(&input_bytes).await?;
     }
-    child.wait().await?;
-    log::debug!("compress_and_save_mp3: completed for {}", file_path);
+    // Capture stderr so we can log it if ffmpeg fails — previously it was
+    // discarded, making it impossible to diagnose compression failures.
+    let stderr = child.stderr.take();
+    let output = child.wait().await?;
+    let exit_code = output.code();
+
+    if let Some(mut stderr) = stderr {
+        use tokio::io::AsyncReadExt;
+        let mut buf = String::new();
+        let _ = stderr.read_to_string(&mut buf).await;
+        if !output.success() {
+            log::error!(
+                "compress_and_save_mp3: ffmpeg exited with code {:?} for {}: {}",
+                exit_code,
+                file_path,
+                buf.trim()
+            );
+        } else {
+            log::debug!("compress_and_save_mp3: completed for {}", file_path);
+        }
+    } else if !output.success() {
+        log::error!(
+            "compress_and_save_mp3: ffmpeg exited with code {:?} for {} (no stderr captured)",
+            exit_code,
+            file_path
+        );
+    } else {
+        log::debug!("compress_and_save_mp3: completed for {}", file_path);
+    }
     Ok(())
 }
 
