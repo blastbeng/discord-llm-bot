@@ -239,3 +239,124 @@ pub async fn ask(
 
     Err(format!("All LLM endpoints failed. Last error: {}", last_error))
 }
+
+/// Translate text to the target language using the LLM.
+/// Uses the same endpoint rotation as `ask`. The system prompt
+/// instructs the LLM to translate without adding commentary.
+pub async fn translate(text: &str, target_lang: &str) -> Result<String, String> {
+    let endpoints = get_endpoint_configs();
+    if endpoints.is_empty() {
+        return Err("No LLM endpoints configured".to_string());
+    }
+
+    let lang = std::env::var("LANG").unwrap_or_else(|_| "ita".to_string());
+    let bot_lang = match lang.as_str() {
+        "eng" => "English",
+        _ => "Italian",
+    };
+
+    let system_prompt = format!(
+        "You are a translation bot. Translate the user's text to {target_lang}. \
+        Output ONLY the translation — no explanations, no quotes, no extra text. \
+        Keep the same tone and register. If the text is already in {target_lang}, \
+        output it unchanged. The bot's interface language is {bot_lang}."
+    );
+
+    let client = llm_client();
+    let mut last_error = String::new();
+
+    for (i, endpoint) in endpoints.iter().enumerate() {
+        let url = format!("{}/chat/completions", endpoint.base_url.trim_end_matches('/'));
+
+        let body = serde_json::json!({
+            "model": endpoint.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text}
+            ],
+            "stream": false,
+            "temperature": 0.3,
+            "max_tokens": 200
+        });
+
+        log::info!(
+            "llm::translate: trying endpoint {}/{} (model: {})",
+            i + 1,
+            endpoints.len(),
+            endpoint.model
+        );
+
+        let resp = client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {}", endpoint.api_key))
+            .json(&body)
+            .send()
+            .await;
+
+        match resp {
+            Ok(r) => {
+                let status = r.status();
+
+                if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                    log::warn!("llm::translate: endpoint {} returned 429, trying next", endpoint.base_url);
+                    last_error = format!("Rate limited at {}", endpoint.base_url);
+                    continue;
+                }
+
+                if !status.is_success() {
+                    let body_text = r.text().await.unwrap_or_default();
+                    log::warn!("llm::translate: endpoint {} returned {}: {}", endpoint.base_url, status, body_text);
+                    last_error = format!("HTTP {} at {}", status, endpoint.base_url);
+                    continue;
+                }
+
+                let json: serde_json::Value = match r.json().await {
+                    Ok(j) => j,
+                    Err(e) => {
+                        last_error = format!("JSON parse error at {}: {}", endpoint.base_url, e);
+                        continue;
+                    }
+                };
+
+                let content = json
+                    .get("choices")
+                    .and_then(|c| c.get(0))
+                    .and_then(|c| c.get("message"))
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("");
+
+                if content.is_empty() {
+                    last_error = format!("Empty response at {}", endpoint.base_url);
+                    continue;
+                }
+
+                let cleaned = content.trim().trim_matches('"').trim_matches('\'').trim().to_string();
+
+                if cleaned.is_empty() {
+                    last_error = format!("Empty response after cleanup at {}", endpoint.base_url);
+                    continue;
+                }
+
+                log::info!("llm::translate: success from {} (length: {})", endpoint.base_url, cleaned.len());
+
+                let truncated = if cleaned.chars().count() > 200 {
+                    let s: String = cleaned.chars().take(200).collect();
+                    format!("{}...", s)
+                } else {
+                    cleaned
+                };
+
+                return Ok(truncated);
+            }
+            Err(e) => {
+                log::warn!("llm::translate: endpoint {} failed: {}, trying next", endpoint.base_url, e);
+                last_error = format!("Connection error at {}: {}", endpoint.base_url, e);
+                continue;
+            }
+        }
+    }
+
+    Err(format!("All LLM endpoints failed. Last error: {}", last_error))
+}

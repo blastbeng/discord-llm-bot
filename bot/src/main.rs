@@ -265,6 +265,21 @@ async fn voice_autocomplete(
         .collect()
 }
 
+async fn effect_autocomplete(
+    _ctx: Context<'_>,
+    current: &str,
+) -> Vec<serenity::AutocompleteChoice> {
+    tts::AVAILABLE_EFFECTS
+        .iter()
+        .chain(std::iter::once(&"random"))
+        .filter(|e| e.to_lowercase().contains(&current.to_lowercase()))
+        .map(|e| {
+            let name = e.to_string();
+            serenity::AutocompleteChoice::new(name.clone(), name)
+        })
+        .collect()
+}
+
 /// Join channel.
 #[poise::command(slash_command, user_cooldown = 5)]
 async fn join(ctx: Context<'_>) -> Result<(), Error> {
@@ -354,9 +369,13 @@ async fn speak(
     #[description = "La voce da usare (default: Google)"]
     #[autocomplete = "voice_autocomplete"]
     voice: Option<String>,
+    #[description = "Effetto audio (default: none)"]
+    #[autocomplete = "effect_autocomplete"]
+    effect: Option<String>,
 ) -> Result<(), Error> {
-    log::info!("[GUILDID : {}] speak command invoked by user {} with text: {:?}, voice: {:?}", ctx.guild_id().unwrap(), ctx.author().id, text, voice);
+    log::info!("[GUILDID : {}] speak command invoked by user {} with text: {:?}, voice: {:?}, effect: {:?}", ctx.guild_id().unwrap(), ctx.author().id, text, voice, effect);
     let voice = voice.unwrap_or_else(|| "Google".to_string());
+    let effect = effect.unwrap_or_else(|| "none".to_string());
     let actual_voice = if voice == "random" {
         let mut rng = rand::thread_rng();
         tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
@@ -366,6 +385,19 @@ async fn speak(
 
     if !tts::is_valid_voice(&actual_voice) {
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_voice).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    // Resolve "random" effect to a random choice
+    let actual_effect = if effect == "random" {
+        let mut rng = rand::thread_rng();
+        tts::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+    } else {
+        effect
+    };
+
+    if !tts::is_valid_effect(&actual_effect) {
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_effect).ephemeral(true)).await?;
         return Ok(());
     }
 
@@ -382,7 +414,7 @@ async fn speak(
     let guild_id = ctx.guild_id().unwrap();
     let channel_id = {
         let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
-        log::info!("[GUILDID : {}] speak - text: {}, voice: {}", guild.id, text, actual_voice);
+        log::info!("[GUILDID : {}] speak - text: {}, voice: {}, effect: {}", guild.id, text, actual_voice, actual_effect);
         guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
     };
     connect_bot_by_voice_client(ctx, channel_id, ctx.author().id).await?;
@@ -422,7 +454,7 @@ async fn speak(
         }
     }
 
-    let tts_result = match tts::get_or_generate_tts(&text, &actual_voice).await {
+    let tts_result = match tts::get_or_generate_tts_with_effect(&text, &actual_voice, &actual_effect).await {
         Ok(result) => result,
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
@@ -776,6 +808,9 @@ async fn ask(
     #[description = "La voce da usare (default: Google)"]
     #[autocomplete = "voice_autocomplete"]
     voice: Option<String>,
+    #[description = "Effetto audio (default: none)"]
+    #[autocomplete = "effect_autocomplete"]
+    effect: Option<String>,
 ) -> Result<(), Error> {
     log::info!("[GUILDID : {}] ask command invoked by user {} with text: {:?}", ctx.guild_id().unwrap(), ctx.author().id, text);
 
@@ -786,6 +821,7 @@ async fn ask(
     }
 
     let voice = voice.unwrap_or_else(|| "Google".to_string());
+    let effect = effect.unwrap_or_else(|| "none".to_string());
     let actual_voice = if voice == "random" {
         let mut rng = rand::thread_rng();
         tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
@@ -795,6 +831,19 @@ async fn ask(
 
     if !tts::is_valid_voice(&actual_voice) {
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_voice).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    // Resolve "random" effect to a random choice
+    let actual_effect = if effect == "random" {
+        let mut rng = rand::thread_rng();
+        tts::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+    } else {
+        effect
+    };
+
+    if !tts::is_valid_effect(&actual_effect) {
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_effect).ephemeral(true)).await?;
         return Ok(());
     }
 
@@ -879,7 +928,7 @@ async fn ask(
         }
     }
 
-    let tts_result = match tts::get_or_generate_tts(&llm_response, &actual_voice).await {
+    let tts_result = match tts::get_or_generate_tts_with_effect(&llm_response, &actual_voice, &actual_effect).await {
         Ok(result) => result,
         Err(e) => {
             log::error!("ask: TTS generation failed: {}", e);
@@ -945,6 +994,224 @@ async fn ask(
         }
     }
 
+    Ok(())
+}
+
+/// Translate text and speak it via TTS
+#[poise::command(slash_command, user_cooldown = 10)]
+async fn translate(
+    ctx: Context<'_>,
+    #[description = "Il testo da tradurre"] text: String,
+    #[description = "La lingua di destinazione (e.g. en, it, fr, de, es)"] target_lang: String,
+    #[description = "La voce da usare (default: Google)"]
+    #[autocomplete = "voice_autocomplete"]
+    voice: Option<String>,
+    #[description = "Effetto audio (default: none)"]
+    #[autocomplete = "effect_autocomplete"]
+    effect: Option<String>,
+) -> Result<(), Error> {
+    log::info!("[GUILDID : {}] translate command invoked by user {} with text: {:?}, target_lang: {}", ctx.guild_id().unwrap(), ctx.author().id, text, target_lang);
+
+    // Check if LLM is configured before doing anything else
+    if !llm::is_configured() {
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.ask_not_configured).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    let voice = voice.unwrap_or_else(|| "Google".to_string());
+    let effect = effect.unwrap_or_else(|| "none".to_string());
+    let actual_voice = if voice == "random" {
+        let mut rng = rand::thread_rng();
+        tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
+    } else {
+        voice
+    };
+
+    if !tts::is_valid_voice(&actual_voice) {
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_voice).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    let actual_effect = if effect == "random" {
+        let mut rng = rand::thread_rng();
+        tts::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+    } else {
+        effect
+    };
+
+    if !tts::is_valid_effect(&actual_effect) {
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_effect).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    if text.chars().count() > 500 {
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.text_too_long).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    ctx.defer_ephemeral().await?;
+    check_permissions(ctx).await?;
+
+    let guild_id = ctx.guild_id().unwrap();
+    let channel_id = {
+        let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
+        guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
+    };
+    connect_bot_by_voice_client(ctx, channel_id, ctx.author().id).await?;
+
+    let queue_msg = get_queue_message(&ctx.data().lang).await;
+    let initial_msg = ctx.data().lang.translating
+        .replacen("{}", &text, 1)
+        .replacen("{}", &target_lang, 1)
+        .replacen("{}", &queue_msg, 1);
+    let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
+
+    // Use the LLM to translate the text
+    let translated = match llm::translate(&text, &target_lang).await {
+        Ok(response) => response,
+        Err(e) => {
+            log::error!("[GUILDID : {}] translate - LLM failed: {}", guild_id, e);
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.ask_error).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
+
+    log::info!("[GUILDID : {}] translate - result: {:?}", guild_id, translated);
+
+    // Save the translated text as a sentence in the database
+    if let Err(e) = database::insert_sentence(&ctx.data().db_pool, &translated).await {
+        log::error!("Failed to insert translated text into database: {}", e);
+    }
+
+    // Generate TTS for the translated text
+    let manager = match songbird::get(ctx.serenity_context()).await {
+        Some(m) => m,
+        None => {
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
+    let handler_lock = match manager.get(guild_id) {
+        Some(h) => h,
+        None => {
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
+    {
+        let mut connected = false;
+        for _ in 0..5 {
+            let handler = handler_lock.lock().await;
+            if handler.current_channel().is_some() {
+                connected = true;
+                break;
+            }
+            drop(handler);
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        if !connected {
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            return Ok(());
+        }
+    }
+
+    let tts_result = match tts::get_or_generate_tts_with_effect(&translated, &actual_voice, &actual_effect).await {
+        Ok(result) => result,
+        Err(e) => {
+            log::error!("translate: TTS generation failed: {}", e);
+            let error_msg = if actual_voice == "Google" {
+                &ctx.data().lang.tts_error_google
+            } else {
+                &ctx.data().lang.tts_error_fakeyou
+            };
+            reply.edit(ctx, poise::CreateReply::default().content(error_msg).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
+
+    let mut handler = handler_lock.lock().await;
+    if handler.current_channel().is_none() {
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    if !tokio::fs::try_exists(&tts_result.file_path).await.unwrap_or(false) {
+        log::error!("translate: TTS file does not exist: {}", tts_result.file_path);
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.tts_error).ephemeral(true)).await?;
+        return Ok(());
+    }
+    log::info!("translate: Playing audio file: {}", tts_result.file_path);
+    let source = songbird::input::File::new(tts_result.file_path.clone());
+    handler.play_only(source.into());
+
+    let warning = if tts_result.fallback {
+        &ctx.data().lang.fakeyou_warning
+    } else {
+        ""
+    };
+
+    let components = vec![
+        serenity::CreateActionRow::Buttons(vec![
+            serenity::CreateButton::new(format!("play:{}", tts_result.file_path))
+                .label("Play")
+                .style(serenity::ButtonStyle::Success),
+            serenity::CreateButton::new("stop")
+                .label("Stop")
+                .style(serenity::ButtonStyle::Danger)
+        ])
+    ];
+
+    match reply.edit(ctx, poise::CreateReply::default()
+        .content(ctx.data().lang.playing.replacen("{}", &translated, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
+        .components(components)
+        .ephemeral(true)
+    ).await {
+        Ok(_) => {}
+        Err(e) => {
+            let e_str = e.to_string();
+            if e_str.contains("Unknown interaction") || e_str.contains("already been acknowledged") {
+                log::debug!("translate: reply.edit failed (interaction expired): {}", e_str);
+            } else {
+                log::warn!("translate: reply.edit failed: {}", e_str);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Set the bot's playback volume (0-100)
+#[poise::command(slash_command, user_cooldown = 5)]
+async fn volume(
+    ctx: Context<'_>,
+    #[description = "Volume level (0-100, default: 100)"] level: Option<i64>,
+) -> Result<(), Error> {
+    log::info!("[GUILDID : {}] volume command invoked by user {}", ctx.guild_id().unwrap(), ctx.author().id);
+    check_speak_permission(ctx).await?;
+    let guild_id = ctx.guild_id().unwrap();
+    let level = level.unwrap_or(100).clamp(0, 100);
+
+    let manager = songbird::get(ctx.serenity_context()).await
+        .ok_or("Songbird not registered")?;
+    let handler_lock = match manager.get(guild_id) {
+        Some(h) => h,
+        None => {
+            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.not_connected).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
+    let handler = handler_lock.lock().await;
+
+    // Songbird 0.6: set volume on the current playing track.
+    // Volume is 0.0-1.0, Discord users think in 0-100.
+    let volume = level as f32 / 100.0;
+    if let Some(track) = handler.queue().current() {
+        let _ = track.set_volume(volume);
+    }
+    log::info!("[GUILDID : {}] volume set to {}% ({})", guild_id, level, volume);
+
+    let msg = ctx.data().lang.volume_set.replacen("{}", &level.to_string(), 1);
+    ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await?;
     Ok(())
 }
 
@@ -1352,7 +1619,7 @@ async fn main() {
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![join(), leave(), stop(), speak(), random(), ask(), audio(), restart(), rename(), avatar()],
+            commands: vec![join(), leave(), stop(), speak(), random(), ask(), translate(), volume(), audio(), restart(), rename(), avatar()],
             pre_command: |ctx| {
                 Box::pin(async move {
                     let command_name = ctx.command().name.as_str();

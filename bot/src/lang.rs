@@ -48,6 +48,9 @@ pub struct Lang {
     pub ask_generating: String,
     pub ask_error: String,
     pub ask_not_configured: String,
+    pub invalid_effect: String,
+    pub volume_set: String,
+    pub translating: String,
 }
 
 impl Lang {
@@ -110,6 +113,9 @@ impl Lang {
                 ask_generating: "🤔 Thinking about: **{}**{}".to_string(),
                 ask_error: "The AI is currently unavailable. Please try again later.".to_string(),
                 ask_not_configured: "The AI is not configured. Set LLM_ENDPOINTS and LLM_MODELS to enable this command.".to_string(),
+                invalid_effect: "Invalid audio effect selected.".to_string(),
+                volume_set: "Volume set to {}%".to_string(),
+                translating: "🌐 Translating: **{}** to {}{}".to_string(),
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
@@ -167,6 +173,9 @@ impl Lang {
                 ask_generating: "🤔 Sto pensando a: **{}**{}".to_string(),
                 ask_error: "L'IA non é al momento disponibile. Riprova piú tardi.".to_string(),
                 ask_not_configured: "L'IA non é configurata. Imposta LLM_ENDPOINTS e LLM_MODELS per abilitare questo comando.".to_string(),
+                invalid_effect: "Effetto audio non valido selezionato.".to_string(),
+                volume_set: "Volume impostato a {}%".to_string(),
+                translating: "🌐 Traduzione di: **{}** in {}{}".to_string(),
             }
         }
     }

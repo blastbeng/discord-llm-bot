@@ -171,12 +171,60 @@ pub fn get_file_path(voice: &str, text: &str) -> String {
     file_path
 }
 
+/// Available voice effects that can be applied to TTS audio.
+/// Each maps to an ffmpeg audio filter chain.
+pub const AVAILABLE_EFFECTS: &[&str] = &[
+    "none",
+    "echo",
+    "reverb",
+    "bass",
+    "chipmunk",
+    "demon",
+    "telephone",
+    "underwater",
+];
+
+/// Get the ffmpeg filter string for a given effect name.
+/// Returns None for "none" (no filtering applied).
+pub fn get_effect_filter(effect: &str) -> Option<String> {
+    match effect {
+        "echo" => Some("aecho=0.8:0.9:1000:0.3".to_string()),
+        "reverb" => Some("aecho=0.7:0.5:1800:0.3,aecho=0.7:0.5:600:0.2".to_string()),
+        "bass" => Some("bass=g=10,equalizer=f=80:t=q:w=1:g=5".to_string()),
+        "chipmunk" => Some("asetrate=44100*1.5,aresample=44100,atempo=0.6667".to_string()),
+        "demon" => Some("asetrate=44100*0.7,aresample=44100,atempo=1.4286,bass=g=8".to_string()),
+        "telephone" => Some("highpass=f=300,lowpass=f=3400".to_string()),
+        "underwater" => Some("lowpass=f=400,bass=g=15,atempo=0.8".to_string()),
+        _ => None,
+    }
+}
+
+/// Check if an effect name is valid.
+pub fn is_valid_effect(effect: &str) -> bool {
+    AVAILABLE_EFFECTS.contains(&effect) || effect == "random"
+}
+
+#[allow(dead_code)]
 pub async fn compress_and_save_mp3(input_bytes: Vec<u8>, file_path: &str) -> std::io::Result<()> {
+    compress_and_save_mp3_with_effect(input_bytes, file_path, "none").await
+}
+
+/// Compress and save MP3 with an optional audio effect applied via ffmpeg.
+/// When effect is "none", the behavior is identical to compress_and_save_mp3.
+pub async fn compress_and_save_mp3_with_effect(input_bytes: Vec<u8>, file_path: &str, effect: &str) -> std::io::Result<()> {
     // Compress to 64k bitrate, mono channel to save disk space
     tokio::fs::create_dir_all("audios").await?;
-    log::debug!("compress_and_save_mp3: saving to {}", file_path);
+    log::debug!("compress_and_save_mp3: saving to {} with effect: {}", file_path, effect);
     let mut cmd = Command::new("ffmpeg");
-    cmd.args(["-i", "pipe:0", "-b:a", "64k", "-ac", "1", "-y", file_path])
+    cmd.args(["-i", "pipe:0", "-b:a", "64k", "-ac", "1", "-y"]);
+
+    // Apply audio effect if one is specified (and not "none")
+    if let Some(filter) = get_effect_filter(effect) {
+        log::info!("compress_and_save_mp3: applying ffmpeg filter: {}", filter);
+        cmd.args(["-af", &filter]);
+    }
+
+    cmd.arg(file_path)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped());
@@ -543,12 +591,21 @@ pub struct TtsResult {
 }
 
 pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<TtsResult, Box<dyn std::error::Error + Send + Sync>> {
+    get_or_generate_tts_with_effect(text, voice, "none").await
+}
+
+pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &str) -> Result<TtsResult, Box<dyn std::error::Error + Send + Sync>> {
     let save_mp3 = std::env::var("SAVE_MP3_ON_DISK")
         .unwrap_or_else(|_| "false".to_string())
         .to_lowercase() == "true";
 
-    // When disk saving is enabled, check the cache first
-    if save_mp3 {
+    // When an effect is applied, we never use the cache — even if a
+    // cached file exists for the same text+voice, the audio would be
+    // the unfiltered version. Always regenerate when an effect is requested.
+    let has_effect = effect != "none" && effect != "random";
+
+    // When disk saving is enabled and no effect, check the cache first
+    if save_mp3 && !has_effect {
         let file_path = get_file_path(voice, text);
         log::debug!("get_or_generate_tts: checking cache for {}", file_path);
         if tokio::fs::try_exists(&file_path).await.unwrap_or(false) {
@@ -622,7 +679,7 @@ pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<TtsResult, B
         tokio::fs::create_dir_all(&temp_dir).await?;
     }
 
-    compress_and_save_mp3(bytes, &save_path).await?;
+    compress_and_save_mp3_with_effect(bytes, &save_path, effect).await?;
 
     if save_mp3 {
         // Write ID3 tags (artist, title, lyrics) into the MP3 file (only for permanent files).
