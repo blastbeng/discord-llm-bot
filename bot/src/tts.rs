@@ -164,10 +164,22 @@ pub fn write_id3_tags(file_path: &str, artist: &str, title: &str, lyrics: &str) 
 }
 
 pub fn get_file_path(voice: &str, text: &str) -> String {
+    get_file_path_with_effect(voice, text, "none")
+}
+
+/// Compute the cache file path, including the effect name in the filename
+/// when an effect is applied. This ensures that filtered audio is cached
+/// separately from unfiltered audio, so the same text+voice+effect combo
+/// is only generated once.
+pub fn get_file_path_with_effect(voice: &str, text: &str, effect: &str) -> String {
     let hash = format!("{:x}", md5_compute(text));
     let voice_token = get_voice_token(voice);
-    let file_path = format!("audios/{}_{}.mp3", voice_token, hash);
-    log::debug!("get_file_path: voice={}, text={}, path={}", voice, text, file_path);
+    let file_path = if effect != "none" && effect != "random" {
+        format!("audios/{}_{}_{}.mp3", voice_token, effect, hash)
+    } else {
+        format!("audios/{}_{}.mp3", voice_token, hash)
+    };
+    log::debug!("get_file_path: voice={}, text={}, effect={}, path={}", voice, text, effect, file_path);
     file_path
 }
 
@@ -599,14 +611,12 @@ pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &s
         .unwrap_or_else(|_| "false".to_string())
         .to_lowercase() == "true";
 
-    // When an effect is applied, we never use the cache — even if a
-    // cached file exists for the same text+voice, the audio would be
-    // the unfiltered version. Always regenerate when an effect is requested.
-    let has_effect = effect != "none" && effect != "random";
-
-    // When disk saving is enabled and no effect, check the cache first
-    if save_mp3 && !has_effect {
-        let file_path = get_file_path(voice, text);
+    // Check the cache first when disk saving is enabled.
+    // The cache key now includes the effect name, so filtered audio is
+    // cached separately from unfiltered audio. When no effect is applied,
+    // the path is identical to the old format (backward compatible).
+    if save_mp3 {
+        let file_path = get_file_path_with_effect(voice, text, effect);
         log::debug!("get_or_generate_tts: checking cache for {}", file_path);
         if tokio::fs::try_exists(&file_path).await.unwrap_or(false) {
             log::debug!("get_or_generate_tts: cache hit for {}", file_path);
@@ -615,12 +625,12 @@ pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &s
 
         // If the requested voice is a FakeYou voice and its specific file doesn't
         // exist, check whether a Google fallback was previously cached for the
-        // same text.  When FakeYou fails and falls back to Google, the file is
-        // saved as Google_{hash}.mp3 — so on the next request for the same
+        // same text+effect. When FakeYou fails and falls back to Google, the file
+        // is saved with the Google token — so on the next request for the same
         // FakeYou voice we should reuse that cached fallback instead of
         // retrying FakeYou (which will likely fail again) every time.
         if voice != "Google" {
-            let google_fallback_path = get_file_path("Google", text);
+            let google_fallback_path = get_file_path_with_effect("Google", text, effect);
             if tokio::fs::try_exists(&google_fallback_path).await.unwrap_or(false) {
                 log::info!(
                     "get_or_generate_tts: FakeYou cache miss, but Google fallback exists — reusing {}",
@@ -655,22 +665,27 @@ pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &s
     };
 
     let save_path = if save_mp3 {
-        // When disk saving is enabled, save permanently to audios/ with proper naming
+        // When disk saving is enabled, save permanently to audios/ with proper naming.
+        // Include the effect in the filename so filtered audio is cached separately.
         if fallback {
-            get_file_path("Google", text)
+            get_file_path_with_effect("Google", text, effect)
         } else {
-            get_file_path(voice, text)
+            get_file_path_with_effect(voice, text, effect)
         }
     } else {
         // When disk saving is disabled, save to a temp file for playback.
-        // Include the voice token in the filename so that the same text
-        // requested with different voices doesn't overwrite each other.
+        // Include the voice token and effect in the filename so that the same text
+        // requested with different voices/effects doesn't overwrite each other.
         // Use actual_voice (not the requested voice) so that a fallback
         // Google file is named with the Google token, not the FakeYou token.
         let hash = format!("{:x}", md5_compute(text));
         let voice_token = get_voice_token(&actual_voice);
         let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
-        format!("{}/tts_{}_{}.mp3", temp_dir, voice_token, hash)
+        if effect != "none" && effect != "random" {
+            format!("{}/tts_{}_{}_{}.mp3", temp_dir, voice_token, effect, hash)
+        } else {
+            format!("{}/tts_{}_{}.mp3", temp_dir, voice_token, hash)
+        }
     };
 
     // Ensure temp directory exists when not saving to disk
