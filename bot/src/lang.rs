@@ -40,6 +40,7 @@ pub struct Lang {
     pub disagio: String,
     pub user_no_permission: String,
     pub text_too_long: String,
+    pub file_too_large: String,
 }
 
 impl Lang {
@@ -94,6 +95,7 @@ impl Lang {
                 disagio: "Disagio.".to_string(),
                 user_no_permission: "You don't have permission to use this command in this voice channel.".to_string(),
                 text_too_long: "The text is too long (max 200 characters). Please shorten it and try again.".to_string(),
+                file_too_large: "The audio file is too large (max {} MB). Please use a smaller file.".to_string(),
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
@@ -143,6 +145,7 @@ impl Lang {
                 disagio: "Disagio.".to_string(),
                 user_no_permission: "Non hai i permessi per utilizzare questo comando in questo canale vocale.".to_string(),
                 text_too_long: "Il testo é troppo lungo (massimo 200 caratteri). Accorcialo e riprova.".to_string(),
+                file_too_large: "Il file audio é troppo grande (massimo {} MB). Usa un file piú piccolo.".to_string(),
             }
         }
     }

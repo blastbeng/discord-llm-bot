@@ -717,6 +717,20 @@ async fn audio(
         return Ok(());
     }
 
+    // Reject oversized attachments before downloading to prevent memory/disk
+    // exhaustion. The limit is configurable via MAX_AUDIO_FILE_SIZE_MB (default 25).
+    let max_size_mb: u64 = env::var("MAX_AUDIO_FILE_SIZE_MB")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(25);
+    let max_size_bytes = max_size_mb * 1024 * 1024;
+    if u64::from(audio.size) > max_size_bytes {
+        log::warn!("[GUILDID : {}] audio - file too large: {} bytes (limit {})", ctx.guild_id().unwrap(), audio.size, max_size_bytes);
+        let msg = ctx.data().lang.file_too_large.replacen("{}", &max_size_mb.to_string(), 1);
+        ctx.send(poise::CreateReply::default().content(&msg).ephemeral(true)).await?;
+        return Ok(());
+    }
+
     let guild_id = ctx.guild_id().unwrap();
     let channel_id = {
         let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
