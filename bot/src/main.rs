@@ -82,7 +82,7 @@ async fn change_presence_loop(ctx: serenity::Context) {
     loop {
         interval.tick().await;
         let url = "https://steamspy.com/api.php?request=top100in2weeks";
-        let client = reqwest::Client::new();
+        let client = tts::http_client();
         match client.get(url).send().await {
             Ok(resp) => {
                 match resp.json::<serde_json::Value>().await {

@@ -14,7 +14,7 @@ static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 /// can take a while to complete.
 static FAKEYOU_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
-fn http_client() -> &'static reqwest::Client {
+pub fn http_client() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(|| reqwest::Client::new())
 }
 
