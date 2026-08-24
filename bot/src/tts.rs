@@ -72,11 +72,18 @@ pub fn get_voice_name_from_token(token: &str) -> &'static str {
 }
 
 pub fn write_id3_tags(file_path: &str, artist: &str, title: &str, lyrics: &str) {
+    // Use the configured language for the ID3 lyrics frame instead of
+    // hardcoding "ita" — when LANG=eng the lyrics are in English.
+    let lang_code = std::env::var("LANG").unwrap_or_else(|_| "ita".to_string());
+    let id3_lang = match lang_code.as_str() {
+        "eng" => "eng",
+        _ => "ita",
+    };
     let mut tag = Tag::new();
     tag.set_artist(artist);
     tag.set_title(title);
     tag.add_frame(id3::frame::Lyrics {
-        lang: "ita".to_string(),
+        lang: id3_lang.to_string(),
         description: String::new(),
         text: lyrics.to_string(),
     });
