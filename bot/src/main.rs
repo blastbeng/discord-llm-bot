@@ -1305,11 +1305,14 @@ async fn main() {
             },
             ..Default::default()
         })
-        .setup(move |ctx, _ready, framework| {
+        .setup(move |ctx, _ready, _framework| {
             let db_pool = db_pool.clone();
             Box::pin(async move {
                 log::info!("Logged in as {} (ID: {})", _ready.user.name, _ready.user.id);
-                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                // Per-guild command registration is handled in the CacheReady and
+                // GuildCreate event handlers, which call set_commands() for each guild.
+                // We intentionally do NOT call register_globally() here — registering both
+                // globally and per-guild causes duplicate slash commands to appear in Discord.
                 let ctx_clone = ctx.clone();
                 tokio::spawn(async move {
                     change_presence_loop(ctx_clone).await;
