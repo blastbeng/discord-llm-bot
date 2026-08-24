@@ -186,6 +186,7 @@ impl fmt::Display for ErrorSeverity {
 /// Logging utility for structured logging with context
 pub struct Logger;
 
+#[allow(dead_code)]
 impl Logger {
     /// Log information message with context
     pub fn info<T: fmt::Display>(context: &str, message: T) {

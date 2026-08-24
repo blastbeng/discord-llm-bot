@@ -4,7 +4,7 @@ mod generator;
 mod lang;
 mod tts;
 
-use error::{BotError, ErrorTracker, Logger};
+use error::{ErrorTracker, Logger};
 use poise::serenity_prelude as serenity;
 use poise::serenity_prelude::Mentionable;
 use rand::seq::SliceRandom;
@@ -60,23 +60,6 @@ fn validate_image_bytes(bytes: &[u8]) -> bool {
         log::warn!("Image validation failed: could not decode image");
         false
     }
-}
-
-// ============================================================================
-// Enhanced Audio Validation (like Python's allowed_audio)
-// ============================================================================
-
-/// Validates audio file extensions and prepares for playback (mimics Python's allowed_audio)
-fn validate_audio_file(filename: &str) -> Result<(), Error> {
-    let allowed_extensions = ["mp3", "wav", "ogg", "m4a", "flac"];
-    let ext = filename.split('.').last().unwrap_or("").to_lowercase();
-    
-    if !allowed_extensions.contains(&ext.as_str()) {
-        return Err(format!("Unsupported audio format: {}. Supported formats: {:?}", ext, allowed_extensions).into());
-    }
-    
-    log::debug!("Audio file validation passed for: {}", filename);
-    Ok(())
 }
 
 // ============================================================================
