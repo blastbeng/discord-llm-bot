@@ -900,8 +900,15 @@ async fn rename(
         return Ok(());
     }
     let guild_id = ctx.guild_id().unwrap();
-    guild_id.edit_nickname(ctx.http(), Some(&name)).await?;
-    ctx.send(poise::CreateReply::default().content(ctx.data().lang.nickname_changed.replacen("{}", &name, 1)).ephemeral(true)).await?;
+    match guild_id.edit_nickname(ctx.http(), Some(&name)).await {
+        Ok(_) => {
+            ctx.send(poise::CreateReply::default().content(ctx.data().lang.nickname_changed.replacen("{}", &name, 1)).ephemeral(true)).await?;
+        }
+        Err(e) => {
+            log::error!("[GUILDID : {}] rename - failed to set nickname: {}", guild_id, e);
+            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.discord_api_error).ephemeral(true)).await?;
+        }
+    }
     Ok(())
 }
 
