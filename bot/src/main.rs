@@ -47,15 +47,24 @@ async fn play_audio_with_ffmpeg_pipe(
 // Enhanced File Validation (like Python's check_image_with_pil)
 // ============================================================================
 
-/// Validates image bytes using the image crate (mimics Python's check_image_with_pil)
-fn validate_image_bytes(bytes: &[u8]) -> bool {
-    if let Ok(image) = image::load_from_memory(bytes) {
-        let dimensions = image.dimensions();
-        log::info!("Image validated: {}x{} pixels", dimensions.0, dimensions.1);
-        true
-    } else {
-        log::warn!("Image validation failed: could not decode image");
-        false
+/// Validates image bytes using the image crate (mimics Python's check_image_with_pil).
+/// Returns `Ok(dimensions)` on success, or `Err(reason)` if the image is invalid
+/// or too small for a Discord avatar (minimum 128x128 pixels).
+fn validate_image_bytes(bytes: &[u8]) -> Result<(u32, u32), &'static str> {
+    match image::load_from_memory(bytes) {
+        Ok(image) => {
+            let (w, h) = image.dimensions();
+            log::info!("Image validated: {}x{} pixels", w, h);
+            if w < 128 || h < 128 {
+                log::warn!("Image too small for avatar: {}x{} (minimum 128x128)", w, h);
+                return Err("too_small");
+            }
+            Ok((w, h))
+        }
+        Err(e) => {
+            log::warn!("Image validation failed: could not decode image: {}", e);
+            Err("invalid")
+        }
     }
 }
 
@@ -998,9 +1007,20 @@ async fn avatar(
     }
 
     // Validate image using the image crate (like Python's check_image_with_pil)
-    if !validate_image_bytes(&bytes) {
-        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.unsupported_file).ephemeral(true)).await?;
-        return Ok(());
+    match validate_image_bytes(&bytes) {
+        Ok((w, h)) => {
+            log::info!("[GUILDID : {}] avatar - image validated: {}x{} pixels", ctx.guild_id().unwrap(), w, h);
+        }
+        Err("too_small") => {
+            log::warn!("[GUILDID : {}] avatar - image too small (minimum 128x128)", ctx.guild_id().unwrap());
+            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.image_too_small).ephemeral(true)).await?;
+            return Ok(());
+        }
+        Err(_) => {
+            log::warn!("[GUILDID : {}] avatar - invalid image file", ctx.guild_id().unwrap());
+            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.unsupported_file).ephemeral(true)).await?;
+            return Ok(());
+        }
     }
 
     // Update bot avatar (like Python's client.user.edit(avatar=image))
