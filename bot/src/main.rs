@@ -548,12 +548,16 @@ async fn random(
     #[autocomplete = "voice_autocomplete"]
     voice: Option<String>,
     #[description = "Il testo da cercare"] text: Option<String>,
+    #[description = "Effetto audio (default: none)"]
+    #[autocomplete = "effect_autocomplete"]
+    effect: Option<String>,
 ) -> Result<(), Error> {
-    log::info!("[GUILDID : {}] random command invoked by user {} with voice: {:?}, text: {:?}", ctx.guild_id().unwrap(), ctx.author().id, voice, text);
+    log::info!("[GUILDID : {}] random command invoked by user {} with voice: {:?}, text: {:?}, effect: {:?}", ctx.guild_id().unwrap(), ctx.author().id, voice, text, effect);
 
     // Track whether the user explicitly specified a voice
     let voice_explicitly_set = voice.is_some();
     let voice = voice.unwrap_or_else(|| "Google".to_string());
+    let effect = effect.unwrap_or_else(|| "none".to_string());
     let actual_voice = if voice == "random" {
         let mut rng = rand::thread_rng();
         tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
@@ -563,6 +567,19 @@ async fn random(
 
     if !tts::is_valid_voice(&actual_voice) {
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_voice).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    // Resolve "random" effect to a random choice
+    let actual_effect = if effect == "random" {
+        let mut rng = rand::thread_rng();
+        tts::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+    } else {
+        effect
+    };
+
+    if !tts::is_valid_effect(&actual_effect) {
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_effect).ephemeral(true)).await?;
         return Ok(());
     }
 
@@ -742,7 +759,7 @@ async fn random(
         sentences.choose(&mut rng).unwrap().to_string()
     };
 
-    let tts_result = match tts::get_or_generate_tts(&random_sentence, &actual_voice).await {
+    let tts_result = match tts::get_or_generate_tts_with_effect(&random_sentence, &actual_voice, &actual_effect).await {
         Ok(result) => result,
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
