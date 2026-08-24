@@ -93,14 +93,19 @@ pub async fn get_tts_google(text: &str) -> Result<Vec<u8>, Box<dyn std::error::E
 #[derive(serde::Deserialize)]
 struct FakeYouJobResponse {
     success: bool,
-    job_token: Option<String>,
+    inference_job_token: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
 struct FakeYouStatusResponse {
     success: bool,
-    status: Option<serde_json::Value>,
-    media_url: Option<String>,
+    state: Option<FakeYouJobState>,
+}
+
+#[derive(serde::Deserialize)]
+struct FakeYouJobState {
+    status: Option<String>,
+    maybe_public_bucket_wav_audio_path: Option<String>,
 }
 
 pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
@@ -116,24 +121,31 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
     };
 
     let client = reqwest::Client::new();
+    let idempotency_token = uuid::Uuid::new_v4().to_string();
     let body = serde_json::json!({
+        "uuid_idempotency_token": idempotency_token,
         "tts_model_token": voice_token,
         "inference_text": text
     });
 
-    let resp = client.post("https://api.fakeyou.com/tts")
+    let resp = client.post("https://api.fakeyou.com/tts/inference")
+        .header("Accept", "application/json")
         .json(&body)
         .send()
-        .await?
-        .json::<FakeYouJobResponse>()
         .await?;
 
-    if !resp.success {
+    if !resp.status().is_success() {
+        return Err(format!("FakeYou API returned status: {}", resp.status()).into());
+    }
+
+    let resp_json = resp.json::<FakeYouJobResponse>().await?;
+
+    if !resp_json.success {
         return Err("FakeYou API failed to start job".into());
     }
 
-    let job_token = resp.job_token.ok_or("No job token received")?;
-    log::debug!("get_tts_fakeyou: job token {}", job_token);
+    let job_token = resp_json.inference_job_token.ok_or("No inference job token received")?;
+    log::debug!("get_tts_fakeyou: inference job token {}", job_token);
 
     let max_retries = 30; // 60 seconds max (2s per retry)
     let mut retries = 0;
@@ -147,28 +159,49 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         log::debug!("get_tts_fakeyou: polling status (attempt {})", retries);
         let status_resp = client.get(format!("https://api.fakeyou.com/tts/job/{}", job_token))
+            .header("Accept", "application/json")
             .send()
-            .await?
-            .json::<FakeYouStatusResponse>()
             .await?;
 
-        if !status_resp.success {
-            return Err("FakeYou API job status failed".into());
+    if !status_resp.status().is_success() {
+            return Err(format!("FakeYou polling returned status: {}", status_resp.status()).into());
         }
 
-        if let Some(status) = status_resp.status {
-            if let Some(status_str) = status.as_str() {
-                if status_str == "complete" {
-                    if let Some(media_url) = status_resp.media_url {
-                        log::debug!("get_tts_fakeyou: job completed, downloading media");
-                        let media_resp = client.get(&media_url).send().await?;
-                        let bytes = media_resp.bytes().await?.to_vec();
-                        return Ok(bytes);
-                    } else {
-                        return Err("No media url received".into());
+        let status_json = status_resp.json::<FakeYouStatusResponse>().await?;
+
+        if !status_json.success {
+            return Err("FakeYou API job status request failed".into());
+        }
+
+        if let Some(state) = status_json.state {
+            if let Some(status_str) = &state.status {
+                log::debug!("get_tts_fakeyou: job status = {}", status_str);
+                match status_str.as_str() {
+                    "complete_success" => {
+                        if let Some(wav_path) = &state.maybe_public_bucket_wav_audio_path {
+                            let media_url = format!("https://storage.googleapis.com/vocodes-public/{}", wav_path);
+                            log::debug!("get_tts_fakeyou: downloading from {}", media_url);
+                            let media_resp = client.get(&media_url).send().await?;
+                            if !media_resp.status().is_success() {
+                                return Err(format!("Failed to download audio: status {}", media_resp.status()).into());
+                            }
+                            let bytes = media_resp.bytes().await?.to_vec();
+                            log::info!("get_tts_fakeyou: downloaded {} bytes", bytes.len());
+                            return Ok(bytes);
+                        } else {
+                            return Err("Job completed but no audio path provided".into());
+                        }
                     }
-                } else if status_str == "failed" {
-                    return Err("FakeYou job failed".into());
+                    "complete_failure" | "dead" => {
+                        return Err(format!("FakeYou job failed with status: {}", status_str).into());
+                    }
+                    "attempt_failed" => {
+                        log::warn!("get_tts_fakeyou: attempt failed, will retry");
+                        // Continue polling — FakeYou may retry the job
+                    }
+                    _ => {
+                        // "pending" or "started" — keep polling
+                    }
                 }
             }
         }

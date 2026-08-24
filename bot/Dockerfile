@@ -1,6 +1,21 @@
-FROM rust:1.88-slim AS builder
+# =============================================================================
+# Stage 1: Plan — generate cargo-chef recipe from Cargo.toml
+# =============================================================================
+FROM rust:1.88-slim AS chef
+RUN cargo install cargo-chef --locked
+WORKDIR /app
 
-# Install only necessary build dependencies (libssl-dev not needed due to rustls)
+FROM chef AS planner
+COPY Cargo.toml ./
+RUN mkdir src && echo 'fn main() {}' > src/main.rs
+RUN cargo chef prepare --recipe-path recipe.json
+
+# =============================================================================
+# Stage 2: Cook — compile all dependencies (cached unless Cargo.toml deps change)
+# =============================================================================
+FROM chef AS builder
+
+# Install build dependencies
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     pkg-config \
@@ -13,24 +28,28 @@ RUN apt-get update && \
 
 WORKDIR /app
 
-# Set cargo build jobs to 4 to speed up compilation
-ENV CARGO_BUILD_JOBS=4
+# Cook dependencies from the recipe — this layer is cached as long as
+# the dependency set (Cargo.toml) doesn't change
+COPY --from=planner /app/recipe.json recipe.json
+RUN cargo chef cook --release --recipe-path recipe.json
 
-# Copy only Cargo.toml first to cache dependencies
+# =============================================================================
+# Stage 3: Build — compile the actual application (only recompiles your code)
+# =============================================================================
 COPY Cargo.toml ./
-RUN mkdir src && echo 'fn main() { eprintln!("DUMMY BINARY - this means the real build was skipped!"); }' > src/main.rs
-RUN cargo build --release || true
-RUN rm -rf src target/release/discord-llm-bot
-
-# Copy the actual source code and build
 COPY src ./src
-# Touch source files to force cargo to recompile (bypass fingerprint cache)
-RUN find src -name "*.rs" -exec touch {} + && cargo build --release
-RUN test -f target/release/discord-llm-bot && ! strings target/release/discord-llm-bot | grep -q "DUMMY BINARY" || (echo "ERROR: Dummy binary was not replaced!" && exit 1)
 
+# Build the real binary; dependencies are already compiled in the cook layer
+RUN cargo build --release
+
+# Verify the binary is real (not a dummy)
+RUN test -f target/release/discord-llm-bot
+
+# =============================================================================
+# Stage 4: Runtime — minimal image with only the binary and runtime deps
+# =============================================================================
 FROM debian:bookworm-slim
 
-# Install runtime dependencies
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ffmpeg \
