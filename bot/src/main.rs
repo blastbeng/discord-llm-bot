@@ -1071,8 +1071,8 @@ async fn main() {
             pre_command: |ctx| {
                 Box::pin(async move {
                     let command_name = ctx.command().name.as_str();
-                    // Only restrict restart and avatar to the parent server
-                    if command_name != "restart" && command_name != "avatar" {
+                    // Only restrict restart, avatar, and rename to the parent server
+                    if command_name != "restart" && command_name != "avatar" && command_name != "rename" {
                         return;
                     }
                     let allowed_guild_id = env::var("GUILD_ID").unwrap_or_default();
