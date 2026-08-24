@@ -243,16 +243,8 @@ async fn voice_autocomplete(
     _ctx: Context<'_>,
     current: &str,
 ) -> Vec<serenity::AutocompleteChoice> {
-    let voices = vec![
-        "Google",
-        "Goku (FakeYou.com)",
-        "Gerry Scotti (FakeYou.com)",
-        "Homer Simpson (FakeYou.com)",
-        "Peter Griffin (FakeYou.com)",
-        "Papa Francesco (FakeYou.com)",
-        "Silvio Berlusconi (FakeYou.com)",
-        "random",
-    ];
+    let mut voices: Vec<&str> = tts::AVAILABLE_VOICES.to_vec();
+    voices.push("random");
 
     voices.into_iter()
         .filter(|v| {
@@ -344,23 +336,14 @@ async fn speak(
 ) -> Result<(), Error> {
     log::info!("[GUILDID : {}] speak command invoked by user {} with text: {:?}, voice: {:?}", ctx.guild_id().unwrap(), ctx.author().id, text, voice);
     let voice = voice.unwrap_or_else(|| "Google".to_string());
-    let voices = [
-        "Google",
-        "Goku (FakeYou.com)",
-        "Gerry Scotti (FakeYou.com)",
-        "Homer Simpson (FakeYou.com)",
-        "Peter Griffin (FakeYou.com)",
-        "Papa Francesco (FakeYou.com)",
-        "Silvio Berlusconi (FakeYou.com)",
-    ];
     let actual_voice = if voice == "random" {
         let mut rng = rand::thread_rng();
-        voices.choose(&mut rng).unwrap().to_string()
+        tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
     } else {
         voice
     };
 
-    if !voices.contains(&actual_voice.as_str()) {
+    if !tts::is_valid_voice(&actual_voice) {
         ctx.say(&ctx.data().lang.invalid_voice).await?;
         return Ok(());
     }
@@ -480,23 +463,14 @@ async fn random(
     // Track whether the user explicitly specified a voice
     let voice_explicitly_set = voice.is_some();
     let voice = voice.unwrap_or_else(|| "Google".to_string());
-    let voices = [
-        "Google",
-        "Goku (FakeYou.com)",
-        "Gerry Scotti (FakeYou.com)",
-        "Homer Simpson (FakeYou.com)",
-        "Peter Griffin (FakeYou.com)",
-        "Papa Francesco (FakeYou.com)",
-        "Silvio Berlusconi (FakeYou.com)",
-    ];
     let actual_voice = if voice == "random" {
         let mut rng = rand::thread_rng();
-        voices.choose(&mut rng).unwrap().to_string()
+        tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
     } else {
         voice
     };
 
-    if !voices.contains(&actual_voice.as_str()) {
+    if !tts::is_valid_voice(&actual_voice) {
         ctx.say(&ctx.data().lang.invalid_voice).await?;
         return Ok(());
     }

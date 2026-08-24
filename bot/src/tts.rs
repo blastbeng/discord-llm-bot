@@ -4,6 +4,17 @@ use std::path::Path;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
+/// All available voices (matches Python's get_available_voices)
+pub const AVAILABLE_VOICES: &[&str] = &[
+    "Google",
+    "Goku (FakeYou.com)",
+    "Gerry Scotti (FakeYou.com)",
+    "Homer Simpson (FakeYou.com)",
+    "Peter Griffin (FakeYou.com)",
+    "Papa Francesco (FakeYou.com)",
+    "Silvio Berlusconi (FakeYou.com)",
+];
+
 pub fn get_voice_token(voice: &str) -> &str {
     match voice {
         "Papa Francesco (FakeYou.com)" => "weight_gc8gsr41974q5ax35gvttr85v",
@@ -14,6 +25,11 @@ pub fn get_voice_token(voice: &str) -> &str {
         "Homer Simpson (FakeYou.com)" => "weight_zw97bw3hbtm07qwkd2exna15b",
         _ => "Google",
     }
+}
+
+/// Check if a voice name is valid (excluding "random")
+pub fn is_valid_voice(voice: &str) -> bool {
+    voice == "random" || AVAILABLE_VOICES.contains(&voice)
 }
 
 pub fn write_id3_tags(file_path: &str, artist: &str, title: &str, lyrics: &str) {
@@ -110,15 +126,10 @@ struct FakeYouJobState {
 
 pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     log::debug!("get_tts_fakeyou: starting job for voice {}", voice);
-    let voice_token = match voice {
-        "Papa Francesco (FakeYou.com)" => "weight_gc8gsr41974q5ax35gvttr85v",
-        "Silvio Berlusconi (FakeYou.com)" => "weight_324nvat7xvaawe146na154gwh",
-        "Goku (FakeYou.com)" => "weight_wn689844yyr08jny6jyyvkwcp",
-        "Gerry Scotti (FakeYou.com)" => "weight_ms1kzt5m09cfw1yn666cxhy88",
-        "Peter Griffin (FakeYou.com)" => "weight_t0y9rpba3qjnq02da44ynfs45",
-        "Homer Simpson (FakeYou.com)" => "weight_zw97bw3hbtm07qwkd2exna15b",
-        _ => return Err("Invalid voice".into()),
-    };
+    let voice_token = get_voice_token(voice);
+    if voice_token == "Google" {
+        return Err(format!("Invalid or non-FakeYou voice: {}", voice).into());
+    }
 
     // Build client with a generous timeout (FakeYou jobs can take a while)
     let client = reqwest::Client::builder()
