@@ -773,7 +773,9 @@ async fn audio(
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("audio.mp3");
-    let file_path = format!("{}/{}", temp_dir, safe_filename);
+    // Prefix with a UUID to prevent concurrent uploads with the same filename
+    // from overwriting each other's temp file while playback is in progress.
+    let file_path = format!("{}/{}_{}", temp_dir, uuid::Uuid::new_v4(), safe_filename);
     
     // Download the attachment
     let bytes = reqwest::get(&audio.url).await?.bytes().await?.to_vec();
