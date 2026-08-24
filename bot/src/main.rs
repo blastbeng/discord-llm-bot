@@ -866,12 +866,11 @@ async fn restart(ctx: Context<'_>) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     log::info!("[GUILDID : {}] restart command invoked by user {}", ctx.guild_id().unwrap(), ctx.author().id);
     let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
-    let _guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
-    if ctx.guild_id().unwrap().to_string() != _guild_id || ctx.author().id.to_string() != admin_id {
+    let env_guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
+    if ctx.guild_id().unwrap().to_string() != env_guild_id || ctx.author().id.to_string() != admin_id {
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.admin_parent_server).ephemeral(true)).await?;
         return Ok(());
     }
-    let _guild_id = ctx.guild_id().unwrap();
     let guild_id = ctx.guild_id().unwrap();
     let member = guild_id.member(ctx.http(), ctx.author().id).await?;
     #[allow(deprecated)]
