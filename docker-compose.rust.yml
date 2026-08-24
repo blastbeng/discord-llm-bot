@@ -17,7 +17,7 @@ services:
       - "/tmp/discord-llm-bot:/tmp/discord-llm-bot"
       - "./audios:/app/audios"
     image: "blastbeng/discord-llm-bot-rust:1.0.0"
-    restart: always
+    restart: "no"
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f discord-llm-bot || exit 1"]
       interval: 30s
