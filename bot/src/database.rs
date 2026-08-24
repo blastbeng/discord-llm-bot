@@ -156,8 +156,13 @@ async fn update_existing_database(pool: &SqlitePool) -> Result<(), sqlx::Error> 
         return Ok(());
     }
 
-    // Get current database sentences for comparison
-    let existing_sentences = select_all_sentence(pool).await?;
+    // Get current database sentences for comparison (unsorted — no need for
+    // the weighted-random ordering that select_all_sentence applies).
+    let existing_sentences: Vec<String> = sqlx::query_scalar(
+        "SELECT sentence FROM sentences ORDER BY sentence"
+    )
+    .fetch_all(pool)
+    .await?;
     let existing_set: std::collections::HashSet<String> = existing_sentences.iter().cloned().collect();
 
     log::info!("update_existing_database: {} sentences in database", existing_sentences.len());
