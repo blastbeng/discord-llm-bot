@@ -922,10 +922,10 @@ async fn avatar(
     ctx.defer_ephemeral().await?;
 
     let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
-    let guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
+    let env_guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
 
     // Verify admin permissions and guild restrictions first (like Python's flow)
-    if ctx.guild_id().unwrap().to_string() != guild_id || ctx.author().id.to_string() != admin_id {
+    if ctx.guild_id().unwrap().to_string() != env_guild_id || ctx.author().id.to_string() != admin_id {
         log::info!("Avatar update restricted to parent server administrators only");
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.admin_parent_server).ephemeral(true)).await?;
         return Ok(());
@@ -935,8 +935,8 @@ async fn avatar(
         ctx.guild_id().unwrap(), ctx.author().id, image.filename);
 
     // Verify the user is a guild administrator (same check as /restart)
-    let guild_id_val = ctx.guild_id().unwrap();
-    let member = guild_id_val.member(ctx.http(), ctx.author().id).await?;
+    let guild_id = ctx.guild_id().unwrap();
+    let member = guild_id.member(ctx.http(), ctx.author().id).await?;
     #[allow(deprecated)]
     if !member.permissions(ctx)?.administrator() {
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.admin_only).ephemeral(true)).await?;
