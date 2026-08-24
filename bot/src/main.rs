@@ -933,6 +933,15 @@ async fn avatar(
     log::info!("[GUILDID : {}] avatar command invoked by user {} with image: {}",
         ctx.guild_id().unwrap(), ctx.author().id, image.filename);
 
+    // Verify the user is a guild administrator (same check as /restart)
+    let guild_id_val = ctx.guild_id().unwrap();
+    let member = guild_id_val.member(ctx.http(), ctx.author().id).await?;
+    #[allow(deprecated)]
+    if !member.permissions(ctx)?.administrator() {
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.admin_only).ephemeral(true)).await?;
+        return Ok(());
+    }
+
     // Check content type (like Python's check_image_with_pil)
     if !image.content_type.as_deref().is_some_and(|ct| ct.starts_with("image/")) {
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.unsupported_file).ephemeral(true)).await?;
