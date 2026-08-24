@@ -225,46 +225,37 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
     });
 
     log::info!("get_tts_fakeyou: submitting inference job for voice {}", voice);
-    let resp = client.post("https://api.fakeyou.com/tts/inference")
-        .header("Accept", "application/json")
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .send()
-        .await?;
 
-    // Handle rate limiting with one retry after a backoff
-    if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        log::warn!("get_tts_fakeyou: rate limited on inference, waiting 10s and retrying once");
-        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+    // Submit the inference job, with one retry on rate limit (429).
+    let mut attempts = 0;
+    let resp_json = loop {
+        attempts += 1;
         let resp = client.post("https://api.fakeyou.com/tts/inference")
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
             .json(&body)
             .send()
             .await?;
+
         if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err("FakeYou rate limited (429), try again later".into());
+            if attempts >= 2 {
+                return Err("FakeYou rate limited (429), try again later".into());
+            }
+            log::warn!("get_tts_fakeyou: rate limited on inference, waiting 10s and retrying once");
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            continue;
         }
+
         if !resp.status().is_success() {
             return Err(format!("FakeYou API returned status: {}", resp.status()).into());
         }
-        let resp_json = resp.json::<FakeYouJobResponse>().await?;
-        if !resp_json.success {
+
+        let json = resp.json::<FakeYouJobResponse>().await?;
+        if !json.success {
             return Err("FakeYou API failed to start job".into());
         }
-        let job_token = resp_json.inference_job_token.ok_or("No inference job token received")?;
-        return poll_fakeyou_job(&client, &job_token).await;
-    }
-
-    if !resp.status().is_success() {
-        return Err(format!("FakeYou API returned status: {}", resp.status()).into());
-    }
-
-    let resp_json = resp.json::<FakeYouJobResponse>().await?;
-
-    if !resp_json.success {
-        return Err("FakeYou API failed to start job".into());
-    }
+        break json;
+    };
 
     let job_token = resp_json.inference_job_token.ok_or("No inference job token received")?;
     log::debug!("get_tts_fakeyou: inference job token {}", job_token);
