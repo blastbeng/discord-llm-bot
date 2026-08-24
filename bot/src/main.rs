@@ -1292,11 +1292,16 @@ async fn main() {
                                     if let Some(handler) = manager.get(guild_id) {
                                         let mut handler = handler.lock().await;
                                         handler.stop();
+                                        component.create_response(ctx, serenity::CreateInteractionResponse::Message(
+                                            serenity::CreateInteractionResponseMessage::new().content(&data.lang.stop_success).ephemeral(true)
+                                        )).await?;
+                                    } else {
+                                        // Bot is not connected to any voice channel in this guild
+                                        component.create_response(ctx, serenity::CreateInteractionResponse::Message(
+                                            serenity::CreateInteractionResponseMessage::new().content(&data.lang.not_connected).ephemeral(true)
+                                        )).await?;
                                     }
                                 }
-                                component.create_response(ctx, serenity::CreateInteractionResponse::Message(
-                                    serenity::CreateInteractionResponseMessage::new().content(&data.lang.stop_success).ephemeral(true)
-                                )).await?;
                             } else if let Some(file_path) = component.data.custom_id.strip_prefix("play:") {
                                 if let Some(guild_id) = component.guild_id {
                                     log::info!("Component interaction: play button pressed by user {} for file {}", component.user.id, file_path);
