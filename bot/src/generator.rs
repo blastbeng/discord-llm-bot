@@ -1,7 +1,6 @@
 use crate::database;
 use crate::tts;
 use sqlx::SqlitePool;
-use std::path::Path;
 
 pub async fn run_background_generator(pool: SqlitePool) {
     // The generator pre-generates TTS files to disk — it only makes sense
@@ -50,7 +49,7 @@ pub async fn run_background_generator(pool: SqlitePool) {
                         }
                         
                         let file_path = tts::get_file_path(voice, &sentence);
-                        if !Path::new(&file_path).exists() {
+                        if !tokio::fs::try_exists(&file_path).await.unwrap_or(false) {
                             log::info!(
                                 "Generating TTS for: '{}' with voice: '{}'",
                                 truncate_string(&sentence, 50),
