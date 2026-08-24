@@ -831,6 +831,13 @@ async fn audio(
 
     log::info!("[GUILDID : {}] audio - filename: {}", guild_id, audio.filename);
 
+    // Create the reply early so we can edit it with the final result, matching
+    // the speak/random pattern. This gives a cleaner UX: the deferred "thinking..."
+    // indicator transitions into the final message instead of a new followup.
+    let queue_msg = get_queue_message(&ctx.data().lang).await;
+    let initial_msg = format!("{}{}", ctx.data().lang.audio_playback, queue_msg);
+    let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
+
     let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
     let safe_filename = std::path::Path::new(&audio.filename)
         .file_name()
@@ -846,20 +853,20 @@ async fn audio(
             Ok(b) => b.to_vec(),
             Err(e) => {
                 log::error!("[GUILDID : {}] audio - failed to read attachment bytes: {}", guild_id, e);
-                ctx.send(poise::CreateReply::default().content(&ctx.data().lang.audio_download_failed).ephemeral(true)).await?;
+                reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.audio_download_failed).ephemeral(true)).await?;
                 return Ok(());
             }
         },
         Err(e) => {
             log::error!("[GUILDID : {}] audio - failed to download attachment: {}", guild_id, e);
-            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.audio_download_failed).ephemeral(true)).await?;
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.audio_download_failed).ephemeral(true)).await?;
             return Ok(());
         }
     };
 
     if bytes.is_empty() {
         log::warn!("[GUILDID : {}] audio - downloaded attachment is empty", guild_id);
-        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.audio_download_failed).ephemeral(true)).await?;
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.audio_download_failed).ephemeral(true)).await?;
         return Ok(());
     }
 
@@ -869,15 +876,11 @@ async fn audio(
     // Play audio using Songbird's built-in FFmpeg decoder
     if let Err(e) = play_audio_with_ffmpeg_pipe(&ctx, &file_path, "Custom Audio").await {
         log::error!("[GUILDID : {}] audio - playback failed: {}", guild_id, e);
-        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
         return Ok(());
     }
 
     log::info!("Audio playback started in guild {}", guild_id);
-
-    // Display queue status message with Play/Stop buttons (like speak/random commands)
-    let queue_status = get_queue_message(&ctx.data().lang).await;
-    let response_content = format!("{}{}", ctx.data().lang.audio_playback, queue_status);
 
     let components = vec![
         serenity::CreateActionRow::Buttons(vec![
@@ -890,11 +893,28 @@ async fn audio(
         ])
     ];
 
-    ctx.send(poise::CreateReply::default()
-        .content(response_content)
+    // Edit the reply with Play/Stop buttons. Use match instead of ? so
+    // that an expired interaction token doesn't propagate to on_error
+    // as "Unknown interaction" — the audio already played successfully.
+    // Display queue status message with Play/Stop buttons
+    let queue_status = get_queue_message(&ctx.data().lang).await;
+    let response_content = format!("{}{}", ctx.data().lang.audio_playback, queue_status);
+
+    match reply.edit(ctx, poise::CreateReply::default()
+        .content(&response_content)
         .components(components)
         .ephemeral(true)
-    ).await?;
+    ).await {
+        Ok(_) => {}
+        Err(e) => {
+            let e_str = e.to_string();
+            if e_str.contains("Unknown interaction") || e_str.contains("already been acknowledged") {
+                log::debug!("audio: reply.edit failed (interaction expired, audio already played): {}", e_str);
+            } else {
+                log::warn!("audio: reply.edit failed: {}", e_str);
+            }
+        }
+    }
 
     // Clean up temp file after 10 minutes to ensure playback completes.
     // Audio uploads can be up to 25 MB (potentially 30+ minutes of audio),
