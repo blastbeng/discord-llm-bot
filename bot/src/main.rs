@@ -723,16 +723,15 @@ async fn audio(
     let queue_status = get_queue_message(&ctx.data().lang).await;
     let response_content = format!("{}{}", &ctx.data().lang.audio_playback, queue_status);
     
-    ctx.send(poise::CreateReply::default().content(response_content).ephemeral(true)).await?;
+    ctx.say(response_content).await?;
 
-    // Wait longer (5 minutes) to ensure playback completes (like Python's implementation)
+    // Clean up temp file after 5 minutes to ensure playback completes
     let file_path_clone = file_path.clone();
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(300)).await;
         let _ = tokio::fs::remove_file(&file_path_clone).await;
     });
 
-    ctx.send(poise::CreateReply::default().content(&ctx.data().lang.audio_playback).ephemeral(true)).await?;
     Ok(())
 }
 
