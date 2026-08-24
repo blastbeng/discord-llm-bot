@@ -486,6 +486,9 @@ async fn random(
     #[description = "Il testo da cercare"] text: Option<String>,
 ) -> Result<(), Error> {
     log::info!("[GUILDID : {}] random command invoked by user {} with voice: {:?}, text: {:?}", ctx.guild_id().unwrap(), ctx.author().id, voice, text);
+
+    // Track whether the user explicitly specified a voice
+    let voice_explicitly_set = voice.is_some();
     let voice = voice.unwrap_or_else(|| "Google".to_string());
     let voices = [
         "Google",
@@ -519,34 +522,37 @@ async fn random(
     };
     connect_bot_by_voice_client(ctx, channel_id).await?;
 
-    let sentences = if let Some(t) = &text {
-        if !t.trim().is_empty() {
-            database::select_like_sentence(&ctx.data().db_pool, t).await?
-        } else {
-            database::select_all_sentence(&ctx.data().db_pool).await?
-        }
-    } else {
-        database::select_all_sentence(&ctx.data().db_pool).await?
-    };
+    // When no voice is explicitly specified and SAVE_MP3_ON_DISK is true,
+    // try to pick a random MP3 directly from the audios/ folder
+    let save_mp3 = std::env::var("SAVE_MP3_ON_DISK")
+        .unwrap_or_else(|_| "false".to_string())
+        .to_lowercase() == "true";
 
-    if sentences.is_empty() {
-        let msg = if let Some(t) = &text {
-            if !t.trim().is_empty() {
-                ctx.data().lang.no_sentence_with_text.replacen("{}", t, 1)
+    let mut cached_audio_path: Option<String> = None;
+    if !voice_explicitly_set && save_mp3 {
+        log::info!("random: no voice specified and SAVE_MP3_ON_DISK=true, scanning audios/ folder");
+        if let Ok(entries) = std::fs::read_dir("audios") {
+            let mp3_files: Vec<String> = entries
+                .filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let path = e.path();
+                    if path.extension().map_or(false, |ext| ext == "mp3") {
+                        path.to_str().map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if !mp3_files.is_empty() {
+                let mut rng = rand::thread_rng();
+                let chosen = mp3_files.choose(&mut rng).unwrap().clone();
+                log::info!("random: picked cached MP3: {}", chosen);
+                cached_audio_path = Some(chosen);
             } else {
-                ctx.data().lang.no_sentence.clone()
+                log::info!("random: no MP3 files found in audios/, falling back to Google TTS");
             }
-        } else {
-            ctx.data().lang.no_sentence.clone()
-        };
-        ctx.say(msg).await?;
-        return Ok(());
+        }
     }
-
-    let random_sentence = {
-        let mut rng = rand::thread_rng();
-        sentences.choose(&mut rng).unwrap().to_string()
-    };
 
     let queue_msg = get_queue_message(&ctx.data().lang).await;
     let initial_msg = ctx.data().lang.searching_random.replacen("{}", &queue_msg, 1);
@@ -577,6 +583,73 @@ async fn random(
             return Ok(());
         }
     }
+
+    // If we found a cached MP3, play it directly without TTS generation
+    if let Some(audio_path) = &cached_audio_path {
+        let mut handler = handler_lock.lock().await;
+        if handler.current_channel().is_none() {
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            return Ok(());
+        }
+
+        log::info!("Playing cached audio file: {}", audio_path);
+        let source = songbird::input::File::new(audio_path.clone());
+        handler.play_only(source.into());
+        log::info!("Audio playback started in guild {}", guild_id);
+
+        let components = vec![
+            serenity::CreateActionRow::Buttons(vec![
+                serenity::CreateButton::new(format!("play:{}", audio_path))
+                    .label("Play")
+                    .style(serenity::ButtonStyle::Success),
+                serenity::CreateButton::new("stop")
+                    .label("Stop")
+                    .style(serenity::ButtonStyle::Danger)
+            ])
+        ];
+
+        let display_name = std::path::Path::new(audio_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("cached audio");
+        reply.edit(ctx, poise::CreateReply::default()
+            .content(ctx.data().lang.playing.replacen("{}", display_name, 1).replacen("{}", "cached", 1))
+            .components(components)
+            .ephemeral(true)
+        ).await?;
+
+        return Ok(());
+    }
+
+    // No cached audio found, fall back to normal TTS generation from database sentences
+    let sentences = if let Some(t) = &text {
+        if !t.trim().is_empty() {
+            database::select_like_sentence(&ctx.data().db_pool, t).await?
+        } else {
+            database::select_all_sentence(&ctx.data().db_pool).await?
+        }
+    } else {
+        database::select_all_sentence(&ctx.data().db_pool).await?
+    };
+
+    if sentences.is_empty() {
+        let msg = if let Some(t) = &text {
+            if !t.trim().is_empty() {
+                ctx.data().lang.no_sentence_with_text.replacen("{}", t, 1)
+            } else {
+                ctx.data().lang.no_sentence.clone()
+            }
+        } else {
+            ctx.data().lang.no_sentence.clone()
+        };
+        reply.edit(ctx, poise::CreateReply::default().content(msg).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    let random_sentence = {
+        let mut rng = rand::thread_rng();
+        sentences.choose(&mut rng).unwrap().to_string()
+    };
 
     let tts_result = match tts::get_or_generate_tts(&random_sentence, &actual_voice).await {
         Ok(result) => result,
