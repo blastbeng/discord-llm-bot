@@ -552,18 +552,16 @@ async fn random(
     let mut cached_audio_path: Option<String> = None;
     if !voice_explicitly_set && save_mp3 {
         log::info!("random: no voice specified and SAVE_MP3_ON_DISK=true, scanning audios/ folder");
-        if let Ok(entries) = std::fs::read_dir("audios") {
-            let mp3_files: Vec<String> = entries
-                .filter_map(|e| e.ok())
-                .filter_map(|e| {
-                    let path = e.path();
-                    if path.extension().is_some_and(|ext| ext == "mp3") {
-                        path.to_str().map(|s| s.to_string())
-                    } else {
-                        None
+        if let Ok(mut entries) = tokio::fs::read_dir("audios").await {
+            let mut mp3_files = Vec::new();
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let path = entry.path();
+                if path.extension().is_some_and(|ext| ext == "mp3") {
+                    if let Some(s) = path.to_str() {
+                        mp3_files.push(s.to_string());
                     }
-                })
-                .collect();
+                }
+            }
             if !mp3_files.is_empty() {
                 let mut rng = rand::thread_rng();
                 let chosen = mp3_files.choose(&mut rng).unwrap().clone();
