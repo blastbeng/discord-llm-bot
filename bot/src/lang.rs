@@ -57,6 +57,7 @@ pub struct Lang {
     pub help_button_ai: String,
     pub help_button_admin: String,
     pub help_button_all: String,
+    pub joke_error: String,
 }
 
 impl Lang {
@@ -128,6 +129,7 @@ impl Lang {
                 help_button_ai: "🤖 AI & LLM".to_string(),
                 help_button_admin: "🔧 Admin".to_string(),
                 help_button_all: "📋 All Commands".to_string(),
+                joke_error: "Failed to fetch a joke. Please try again later.".to_string(),
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
@@ -194,6 +196,7 @@ impl Lang {
                 help_button_ai: "🤖 IA & LLM".to_string(),
                 help_button_admin: "🔧 Admin".to_string(),
                 help_button_all: "📋 Tutti i Comandi".to_string(),
+                joke_error: "Impossibile recuperare una battuta. Riprova piú tardi.".to_string(),
             }
         }
     }

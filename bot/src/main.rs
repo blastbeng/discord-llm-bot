@@ -1208,6 +1208,208 @@ async fn translate(
     Ok(())
 }
 
+/// Tell a random joke fetched from JokeAPI (free, no API key needed).
+#[poise::command(slash_command, user_cooldown = 10)]
+async fn joke(
+    ctx: Context<'_>,
+    #[description = "La voce da usare (default: Google)"]
+    #[autocomplete = "voice_autocomplete"]
+    voice: Option<String>,
+    #[description = "Effetto audio (default: none)"]
+    #[autocomplete = "effect_autocomplete"]
+    effect: Option<String>,
+) -> Result<(), Error> {
+    log::info!("[GUILDID : {}] joke command invoked by user {}", ctx.guild_id().unwrap(), ctx.author().id);
+
+    let voice = voice.unwrap_or_else(|| "Google".to_string());
+    let effect = effect.unwrap_or_else(|| "none".to_string());
+    let actual_voice = if voice == "random" {
+        let mut rng = rand::thread_rng();
+        tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
+    } else {
+        voice
+    };
+
+    if !tts::is_valid_voice(&actual_voice) {
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_voice).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    let actual_effect = if effect == "random" {
+        let mut rng = rand::thread_rng();
+        tts::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+    } else {
+        effect
+    };
+
+    if !tts::is_valid_effect(&actual_effect) {
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_effect).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    ctx.defer_ephemeral().await?;
+    check_permissions(ctx).await?;
+
+    let guild_id = ctx.guild_id().unwrap();
+    let channel_id = {
+        let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
+        guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
+    };
+    connect_bot_by_voice_client(ctx, channel_id, ctx.author().id).await?;
+
+    let reply = ctx.send(poise::CreateReply::default().content(&ctx.data().lang.processing).ephemeral(true)).await?;
+
+    // Fetch a joke from JokeAPI (free, no API key needed)
+    // Filter out nsfw, religious, political, racist, sexist, explicit categories
+    let joke_url = "https://v2.jokeapi.dev/joke/Any?safe-mode&type=twopart&format=json";
+    let joke_text = match tts::http_client().get(joke_url).send().await {
+        Ok(resp) => {
+            if !resp.status().is_success() {
+                log::error!("joke: JokeAPI returned status {}", resp.status());
+                reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.joke_error).ephemeral(true)).await?;
+                return Ok(());
+            }
+            match resp.json::<serde_json::Value>().await {
+                Ok(json) => {
+                    // JokeAPI returns either:
+                    // {"type":"twopart","setup":"...","delivery":"..."}
+                    // {"type":"single","joke":"..."}
+                    if json.get("error").is_some_and(|e| e.as_bool().unwrap_or(false)) {
+                        log::error!("joke: JokeAPI returned error: {:?}", json);
+                        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.joke_error).ephemeral(true)).await?;
+                        return Ok(());
+                    }
+                    let setup = json.get("setup").and_then(|s| s.as_str()).unwrap_or("");
+                    let delivery = json.get("delivery").and_then(|d| d.as_str()).unwrap_or("");
+                    let single = json.get("joke").and_then(|j| j.as_str()).unwrap_or("");
+                    if !setup.is_empty() && !delivery.is_empty() {
+                        format!("{}. {}", setup, delivery)
+                    } else if !single.is_empty() {
+                        single.to_string()
+                    } else {
+                        log::error!("joke: JokeAPI returned unexpected format: {:?}", json);
+                        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.joke_error).ephemeral(true)).await?;
+                        return Ok(());
+                    }
+                }
+                Err(e) => {
+                    log::error!("joke: failed to parse JokeAPI response: {}", e);
+                    reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.joke_error).ephemeral(true)).await?;
+                    return Ok(());
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("joke: failed to fetch from JokeAPI: {}", e);
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.joke_error).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
+
+    log::info!("[GUILDID : {}] joke: fetched joke ({} chars)", guild_id, joke_text.len());
+
+    // Save the joke as a sentence in the database
+    if let Err(e) = database::insert_sentence(&ctx.data().db_pool, &joke_text).await {
+        log::error!("Failed to insert joke into database: {}", e);
+    }
+
+    // Generate TTS and play it
+    let manager = match songbird::get(ctx.serenity_context()).await {
+        Some(m) => m,
+        None => {
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
+    let handler_lock = match manager.get(guild_id) {
+        Some(h) => h,
+        None => {
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
+    {
+        let mut connected = false;
+        for _ in 0..5 {
+            let handler = handler_lock.lock().await;
+            if handler.current_channel().is_some() {
+                connected = true;
+                break;
+            }
+            drop(handler);
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        if !connected {
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            return Ok(());
+        }
+    }
+
+    let tts_result = match tts::get_or_generate_tts_with_effect(&joke_text, &actual_voice, &actual_effect).await {
+        Ok(result) => result,
+        Err(e) => {
+            log::error!("joke: TTS generation failed: {}", e);
+            let error_msg = if actual_voice == "Google" {
+                &ctx.data().lang.tts_error_google
+            } else {
+                &ctx.data().lang.tts_error_fakeyou
+            };
+            reply.edit(ctx, poise::CreateReply::default().content(error_msg).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
+
+    let mut handler = handler_lock.lock().await;
+    if handler.current_channel().is_none() {
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    if !tokio::fs::try_exists(&tts_result.file_path).await.unwrap_or(false) {
+        log::error!("joke: TTS file does not exist: {}", tts_result.file_path);
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.tts_error).ephemeral(true)).await?;
+        return Ok(());
+    }
+    log::info!("joke: Playing audio file: {}", tts_result.file_path);
+    let source = songbird::input::File::new(tts_result.file_path.clone());
+    play_with_volume(&mut handler, source.into(), ctx.data());
+
+    let warning = if tts_result.fallback {
+        &ctx.data().lang.fakeyou_warning
+    } else {
+        ""
+    };
+
+    let components = vec![
+        serenity::CreateActionRow::Buttons(vec![
+            serenity::CreateButton::new(format!("play:{}", tts_result.file_path))
+                .label("Play")
+                .style(serenity::ButtonStyle::Success),
+            serenity::CreateButton::new("stop")
+                .label("Stop")
+                .style(serenity::ButtonStyle::Danger)
+        ])
+    ];
+
+    match reply.edit(ctx, poise::CreateReply::default()
+        .content(ctx.data().lang.playing.replacen("{}", &joke_text, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
+        .components(components)
+        .ephemeral(true)
+    ).await {
+        Ok(_) => {}
+        Err(e) => {
+            let e_str = e.to_string();
+            if e_str.contains("Unknown interaction") || e_str.contains("already been acknowledged") {
+                log::debug!("joke: reply.edit failed (interaction expired): {}", e_str);
+            } else {
+                log::warn!("joke: reply.edit failed: {}", e_str);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Show bot statistics: database, cache, system resources, and uptime.
 #[poise::command(slash_command, user_cooldown = 10)]
 async fn stats(ctx: Context<'_>) -> Result<(), Error> {
@@ -1771,7 +1973,7 @@ async fn main() {
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![join(), leave(), stop(), speak(), random(), ask(), translate(), volume(), audio(), restart(), rename(), avatar(), help(), stats()],
+            commands: vec![join(), leave(), stop(), speak(), random(), ask(), translate(), volume(), audio(), restart(), rename(), avatar(), help(), stats(), joke()],
             pre_command: |ctx| {
                 Box::pin(async move {
                     let command_name = ctx.command().name.as_str();
@@ -1881,7 +2083,8 @@ async fn main() {
                                         .field("👋 /leave", "Leave the voice channel", false)
                                         .field("⏹️ /stop", "Stop current audio playback", false)
                                         .field("🗣️ /speak", "Speak text with TTS (Google/FakeYou). Optional: voice, effect", false)
-                                        .field("🎲 /random", "Play a random sentence from the database. Optional: voice, text search", false)
+                                        .field("🎲 /random", "Play a random sentence from the database. Optional: voice, text search, effect", false)
+                                        .field("😂 /joke", "Fetch a random joke and speak it via TTS. Optional: voice, effect", false)
                                         .field("🔊 /volume", "Set playback volume (0-100). Default: 100", false)
                                         .field("🎵 /audio", "Play an uploaded audio file in voice chat", false),
                                     "ai" => serenity::CreateEmbed::new()
@@ -1902,11 +2105,13 @@ async fn main() {
                                         .field("👋 /leave", "Leave the voice channel", false)
                                         .field("⏹️ /stop", "Stop current playback", false)
                                         .field("🗣️ /speak", "Speak text with TTS. Optional: voice, effect", false)
-                                        .field("🎲 /random", "Random sentence from database. Optional: voice, text", false)
+                                        .field("🎲 /random", "Random sentence from database. Optional: voice, text, effect", false)
+                                        .field("😂 /joke", "Random joke via TTS. Optional: voice, effect", false)
                                         .field("🔊 /volume", "Set playback volume (0-100)", false)
                                         .field("🎵 /audio", "Play an uploaded audio file", false)
                                         .field("🤔 /ask", "Ask the AI a question. Optional: voice, effect", false)
                                         .field("🌐 /translate", "Translate text via LLM. Optional: voice, effect", false)
+                                        .field("📊 /stats", "Show bot statistics", false)
                                         .field("❓ /help", "Show this help message", false)
                                         .field("🔄 /restart", "Restart bot (admin)", false)
                                         .field("✏️ /rename", "Change bot nickname (admin)", false)
