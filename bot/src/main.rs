@@ -910,10 +910,15 @@ async fn main() {
             commands: vec![join(), leave(), stop(), speak(), random(), audio(), restart(), rename(), avatar()],
             pre_command: |ctx| {
                 Box::pin(async move {
+                    let command_name = ctx.command().name.as_str();
+                    // Only restrict restart and avatar to the parent server
+                    if command_name != "restart" && command_name != "avatar" {
+                        return;
+                    }
                     let allowed_guild_id = env::var("GUILD_ID").unwrap_or_default();
                     if ctx.guild_id().map(|g| g.to_string()) != Some(allowed_guild_id) {
                         let _ = ctx.say(&ctx.data().lang.wrong_guild).await;
-                        log::warn!("Command invoked in wrong guild by user {}", ctx.author().id);
+                        log::warn!("Command {} invoked in wrong guild by user {}", command_name, ctx.author().id);
                     }
                 })
             },
