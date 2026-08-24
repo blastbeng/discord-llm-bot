@@ -806,20 +806,25 @@ async fn audio(
         guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
     };
 
+    // Create the reply early so all subsequent messages edit the deferred response
+    // instead of creating followup messages (cleaner UX, avoids "already
+    // acknowledged" errors if the on_error handler also tries to send).
+    let reply = ctx.send(poise::CreateReply::default().content("...").ephemeral(true)).await?;
+
     // Smart voice connection: don't interrupt playback if bot is already playing
     connect_bot_by_voice_client(ctx, channel_id, ctx.author().id).await?;
 
     let manager = match songbird::get(ctx.serenity_context()).await {
         Some(m) => m,
         None => {
-            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
             return Ok(());
         }
     };
     let handler_lock = match manager.get(guild_id) {
         Some(h) => h,
         None => {
-            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
             return Ok(());
         }
     };
@@ -836,21 +841,16 @@ async fn audio(
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
         if !connected {
-            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
+            reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
             return Ok(());
         }
     }
 
     log::info!("[GUILDID : {}] audio - filename: {}", guild_id, audio.filename);
 
-    // Create the reply early so we can edit it with the final result, matching
-    // the speak/random pattern. This gives a cleaner UX: the deferred "thinking..."
-    // indicator transitions into the final message instead of a new followup.
     // Compute queue metrics once and reuse for both the initial and final message
     // so the user sees consistent values (sysinfo CPU/RAM can fluctuate between calls).
     let queue_status = get_queue_message(&ctx.data().lang).await;
-    let initial_msg = format!("{}{}", ctx.data().lang.audio_playback, queue_status);
-    let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
 
     let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
     let safe_filename = std::path::Path::new(&audio.filename)
