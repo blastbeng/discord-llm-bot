@@ -359,6 +359,13 @@ async fn speak(
         return Ok(());
     }
 
+    // Google TTS has a ~200 character limit; longer text silently fails or
+    // returns truncated audio. Reject early with a clear user-facing message.
+    if text.chars().count() > 200 {
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.text_too_long).ephemeral(true)).await?;
+        return Ok(());
+    }
+
     ctx.defer_ephemeral().await?;
     check_permissions(ctx).await?;
 
@@ -484,6 +491,16 @@ async fn random(
     if !tts::is_valid_voice(&actual_voice) {
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_voice).ephemeral(true)).await?;
         return Ok(());
+    }
+
+    // Validate search text length (if provided) — the resulting sentence from
+    // the database is already bounded, but an excessively long search query
+    // is still wasteful and likely a user mistake.
+    if let Some(t) = &text {
+        if t.chars().count() > 200 {
+            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.text_too_long).ephemeral(true)).await?;
+            return Ok(());
+        }
     }
 
     ctx.defer_ephemeral().await?;
