@@ -446,7 +446,7 @@ async fn speak(
     }
     
     log::info!("TTS file path: {}", tts_result.file_path);
-    if !std::path::Path::new(&tts_result.file_path).exists() {
+    if !tokio::fs::try_exists(&tts_result.file_path).await.unwrap_or(false) {
         log::error!("TTS file does not exist: {}", tts_result.file_path);
         reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.tts_error).ephemeral(true)).await?;
         return Ok(());
@@ -719,7 +719,7 @@ async fn random(
     }
     
     log::info!("TTS file path: {}", tts_result.file_path);
-    if !std::path::Path::new(&tts_result.file_path).exists() {
+    if !tokio::fs::try_exists(&tts_result.file_path).await.unwrap_or(false) {
         log::error!("TTS file does not exist: {}", tts_result.file_path);
         reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.tts_error).ephemeral(true)).await?;
         return Ok(());
@@ -1349,7 +1349,7 @@ async fn main() {
                                     // try to find a permanent copy in audios/ (handles the case
                                     // where SAVE_MP3_ON_DISK was toggled after the file was
                                     // created as a temp file in /tmp).
-                                    let playback_path = if std::path::Path::new(file_path).exists() {
+                                    let playback_path = if tokio::fs::try_exists(file_path).await.unwrap_or(false) {
                                         file_path.to_string()
                                     } else if file_path.contains("/tts_") {
                                         // Temp file pattern: /tmp/.../tts_voice_hash.mp3
@@ -1360,7 +1360,7 @@ async fn main() {
                                             .unwrap_or("");
                                         let stripped = filename.strip_prefix("tts_").unwrap_or(filename);
                                         let permanent = format!("audios/{}", stripped);
-                                        if std::path::Path::new(&permanent).exists() {
+                                        if tokio::fs::try_exists(&permanent).await.unwrap_or(false) {
                                             log::info!("Play button: temp file gone, found permanent: {}", permanent);
                                             permanent
                                         } else {

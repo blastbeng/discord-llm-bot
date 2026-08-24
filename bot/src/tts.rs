@@ -1,6 +1,5 @@
 use id3::{Tag, TagLike, Version};
 use md5::compute as md5_compute;
-use std::path::Path;
 use std::sync::OnceLock;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -392,7 +391,7 @@ pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<TtsResult, B
     if save_mp3 {
         let file_path = get_file_path(voice, text);
         log::debug!("get_or_generate_tts: checking cache for {}", file_path);
-        if Path::new(&file_path).exists() {
+        if tokio::fs::try_exists(&file_path).await.unwrap_or(false) {
             log::debug!("get_or_generate_tts: cache hit for {}", file_path);
             return Ok(TtsResult { file_path, actual_voice: voice.to_string(), fallback: false });
         }
@@ -405,7 +404,7 @@ pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<TtsResult, B
         // retrying FakeYou (which will likely fail again) every time.
         if voice != "Google" {
             let google_fallback_path = get_file_path("Google", text);
-            if Path::new(&google_fallback_path).exists() {
+            if tokio::fs::try_exists(&google_fallback_path).await.unwrap_or(false) {
                 log::info!(
                     "get_or_generate_tts: FakeYou cache miss, but Google fallback exists — reusing {}",
                     google_fallback_path
