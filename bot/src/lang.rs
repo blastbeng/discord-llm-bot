@@ -107,7 +107,7 @@ impl Lang {
                 audio_download_failed: "Failed to download the audio file. Please try again.".to_string(),
                 image_too_small: "The image is too small. Minimum size is 128x128 pixels.".to_string(),
                 processing: "⏳ Processing...".to_string(),
-                ask_generating: "🤔 Thinking about: **{}**{}{}".to_string(),
+                ask_generating: "🤔 Thinking about: **{}**{}".to_string(),
                 ask_error: "The AI is currently unavailable. Please try again later.".to_string(),
                 ask_not_configured: "The AI is not configured. Set LLM_ENDPOINTS and LLM_MODELS to enable this command.".to_string(),
             },
@@ -164,7 +164,7 @@ impl Lang {
                 audio_download_failed: "Impossibile scaricare il file audio. Riprova.".to_string(),
                 image_too_small: "L'immagine é troppo piccola. La dimensione minima é 128x128 pixel.".to_string(),
                 processing: "⏳ Elaborazione in corso...".to_string(),
-                ask_generating: "🤔 Sto pensando a: **{}**{}{}".to_string(),
+                ask_generating: "🤔 Sto pensando a: **{}**{}".to_string(),
                 ask_error: "L'IA non é al momento disponibile. Riprova piú tardi.".to_string(),
                 ask_not_configured: "L'IA non é configurata. Imposta LLM_ENDPOINTS e LLM_MODELS per abilitare questo comando.".to_string(),
             }

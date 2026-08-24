@@ -827,8 +827,7 @@ async fn ask(
     let queue_msg = get_queue_message(&ctx.data().lang).await;
     let initial_msg = ctx.data().lang.ask_generating
         .replacen("{}", &text, 1)
-        .replacen("{}", &queue_msg, 1)
-        .replacen("{}", "", 1); // third {} reserved for future use
+        .replacen("{}", &queue_msg, 1);
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
 
     // Query the LLM with database context

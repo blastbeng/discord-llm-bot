@@ -93,7 +93,7 @@ pub async fn ask(
             "You are a humorous Discord voice bot. Keep your answer to a single short sentence (max 200 characters). Be funny and casual.",
         ),
         _ => (
-            "Respondi in italiano.",
+            "Rispondi in italiano.",
             "Sei un bot vocale Discord umoristico. Rispondi con una singola frase breve (massimo 200 caratteri). Sii divertente e alla mano.",
         ),
     };
