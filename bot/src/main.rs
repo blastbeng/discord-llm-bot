@@ -777,12 +777,18 @@ async fn audio(
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     log::info!("[GUILDID : {}] audio command invoked by user {} with filename: {}", ctx.guild_id().unwrap(), ctx.author().id, audio.filename);
+
+    // Create the reply early so all subsequent messages edit the deferred response
+    // instead of creating followup messages (cleaner UX, avoids "already
+    // acknowledged" errors if the on_error handler also tries to send).
+    let reply = ctx.send(poise::CreateReply::default().content("...").ephemeral(true)).await?;
+
     check_permissions(ctx).await?;
 
     let allowed_extensions = ["mp3", "wav", "ogg", "m4a", "flac"];
     let ext = audio.filename.split('.').next_back().unwrap_or("").to_lowercase();
     if !allowed_extensions.contains(&ext.as_str()) {
-        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_extension).ephemeral(true)).await?;
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.invalid_extension).ephemeral(true)).await?;
         return Ok(());
     }
 
@@ -796,7 +802,7 @@ async fn audio(
     if u64::from(audio.size) > max_size_bytes {
         log::warn!("[GUILDID : {}] audio - file too large: {} bytes (limit {})", ctx.guild_id().unwrap(), audio.size, max_size_bytes);
         let msg = ctx.data().lang.file_too_large.replacen("{}", &max_size_mb.to_string(), 1);
-        ctx.send(poise::CreateReply::default().content(&msg).ephemeral(true)).await?;
+        reply.edit(ctx, poise::CreateReply::default().content(&msg).ephemeral(true)).await?;
         return Ok(());
     }
 
@@ -805,11 +811,6 @@ async fn audio(
         let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
         guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
     };
-
-    // Create the reply early so all subsequent messages edit the deferred response
-    // instead of creating followup messages (cleaner UX, avoids "already
-    // acknowledged" errors if the on_error handler also tries to send).
-    let reply = ctx.send(poise::CreateReply::default().content("...").ephemeral(true)).await?;
 
     // Smart voice connection: don't interrupt playback if bot is already playing
     connect_bot_by_voice_client(ctx, channel_id, ctx.author().id).await?;
