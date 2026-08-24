@@ -662,13 +662,13 @@ async fn random(
 #[poise::command(slash_command, user_cooldown = 5)]
 async fn audio(
     ctx: Context<'_>,
-    #[description = "Il file audio (mp3 or wav)"] audio: serenity::Attachment,
+    #[description = "Il file audio (mp3, wav, ogg, m4a, flac)"] audio: serenity::Attachment,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
     log::info!("[GUILDID : {}] audio command invoked by user {} with filename: {}", ctx.guild_id().unwrap(), ctx.author().id, audio.filename);
     check_permissions(ctx).await?;
 
-    let allowed_extensions = ["mp3", "wav", "ogg", "m4a"];
+    let allowed_extensions = ["mp3", "wav", "ogg", "m4a", "flac"];
     let ext = audio.filename.split('.').last().unwrap_or("").to_lowercase();
     if !allowed_extensions.contains(&ext.as_str()) {
         ctx.say(&ctx.data().lang.invalid_extension).await?;
