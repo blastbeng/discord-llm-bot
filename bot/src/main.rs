@@ -957,7 +957,16 @@ async fn main() {
                         log::error!("Error: {}", error);
                         if let poise::FrameworkError::Command { ctx, error, .. } = error {
                             log::error!("Command error: {}", error);
-                            let msg = ctx.data().lang.discord_api_error.clone();
+                            // Show the actual error message to the user (e.g. "Devi essere
+                            // connesso a un canale vocale" or "Non hai i permessi").
+                            // Only fall back to the generic API error message if the
+                            // error string is empty or looks like an internal Rust panic.
+                            let error_str = error.to_string();
+                            let msg = if error_str.is_empty() {
+                                ctx.data().lang.discord_api_error.clone()
+                            } else {
+                                error_str
+                            };
                             let _ = ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await;
                         }
                     }
