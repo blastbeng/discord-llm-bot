@@ -59,7 +59,7 @@ pub async fn compress_and_save_mp3(input_bytes: Vec<u8>, file_path: &str) -> std
     std::fs::create_dir_all("audios")?;
     log::debug!("compress_and_save_mp3: saving to {}", file_path);
     let mut cmd = Command::new("ffmpeg");
-    cmd.args(&["-i", "pipe:0", "-b:a", "64k", "-ac", "1", "-y", file_path])
+    cmd.args(["-i", "pipe:0", "-b:a", "64k", "-ac", "1", "-y", file_path])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());

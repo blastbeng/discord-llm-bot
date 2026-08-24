@@ -212,13 +212,11 @@ async fn connect_bot_by_voice_client(
             // Bot is not playing — check if the invoking member is in the bot's current channel
             // If so, keep the bot there instead of switching (Python's smart behavior)
             let bot_channel_id = serenity::ChannelId::new(current_channel.0.get());
-            if let Ok(bot_channel) = bot_channel_id.to_channel(ctx.http()).await {
-                if let serenity::Channel::Guild(bot_guild_channel) = bot_channel {
-                    let members = bot_guild_channel.members(ctx.cache()).unwrap_or_default();
-                    if members.iter().any(|m| m.user.id == member_id) {
-                        log::info!("connect_bot_by_voice_client: member {} is in bot's current channel {}, keeping bot there", member_id, bot_channel_id);
-                        return Ok(());
-                    }
+            if let Ok(serenity::Channel::Guild(bot_guild_channel)) = bot_channel_id.to_channel(ctx.http()).await {
+                let members = bot_guild_channel.members(ctx.cache()).unwrap_or_default();
+                if members.iter().any(|m| m.user.id == member_id) {
+                    log::info!("connect_bot_by_voice_client: member {} is in bot's current channel {}, keeping bot there", member_id, bot_channel_id);
+                    return Ok(());
                 }
             }
         }
@@ -278,7 +276,7 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
         Ok(_) => {
             // Check if user is joining to their own channel by comparing IDs directly
             let message = format!("{} {}", 
-                &ctx.data().lang.join_success_to_self, 
+                ctx.data().lang.join_success_to_self, 
                 ctx.author().id.mention());
             ctx.say(&message).await?;
         }
@@ -500,7 +498,7 @@ async fn random(
                 .filter_map(|e| e.ok())
                 .filter_map(|e| {
                     let path = e.path();
-                    if path.extension().map_or(false, |ext| ext == "mp3") {
+                    if path.extension().is_some_and(|ext| ext == "mp3") {
                         path.to_str().map(|s| s.to_string())
                     } else {
                         None
@@ -683,7 +681,7 @@ async fn audio(
     check_permissions(ctx).await?;
 
     let allowed_extensions = ["mp3", "wav", "ogg", "m4a", "flac"];
-    let ext = audio.filename.split('.').last().unwrap_or("").to_lowercase();
+    let ext = audio.filename.split('.').next_back().unwrap_or("").to_lowercase();
     if !allowed_extensions.contains(&ext.as_str()) {
         ctx.say(&ctx.data().lang.invalid_extension).await?;
         return Ok(());
@@ -735,7 +733,7 @@ async fn audio(
 
     // Display queue status message (like Python's get_queue_message)
     let queue_status = get_queue_message(&ctx.data().lang).await;
-    let response_content = format!("{}{}", &ctx.data().lang.audio_playback, queue_status);
+    let response_content = format!("{}{}", ctx.data().lang.audio_playback, queue_status);
     
     ctx.say(response_content).await?;
 
@@ -812,7 +810,7 @@ async fn avatar(
         ctx.guild_id().unwrap(), ctx.author().id, image.filename);
 
     // Check content type (like Python's check_image_with_pil)
-    if !image.content_type.as_deref().map_or(false, |ct| ct.starts_with("image/")) {
+    if !image.content_type.as_deref().is_some_and(|ct| ct.starts_with("image/")) {
         ctx.say(&ctx.data().lang.unsupported_file).await?;
         return Ok(());
     }
@@ -961,8 +959,7 @@ async fn main() {
                             log::error!("Failed to sync commands for guild {}: {}", guild.id, e);
                         }
                     }
-                    if let serenity::FullEvent::InteractionCreate { interaction } = event {
-                        if let serenity::Interaction::Component(component) = interaction {
+                    if let serenity::FullEvent::InteractionCreate { interaction: serenity::Interaction::Component(component) } = event {
                             if component.data.custom_id == "stop" {
                                 // Check if user is in a voice channel
                                 if let Some(guild_id) = component.guild_id {
@@ -1061,7 +1058,6 @@ async fn main() {
                                 }
                                 component.edit_response(ctx, serenity::EditInteractionResponse::new().content(&data.lang.replaying_audio)).await?;
                             }
-                        }
                     }
                     Ok(())
                 })
