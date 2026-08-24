@@ -1280,15 +1280,34 @@ async fn main() {
                                         component.edit_response(ctx, serenity::EditInteractionResponse::new().content(&data.lang.must_be_in_voice)).await?;
                                         return Ok(());
                                     }
-                                    // Check if the file still exists — temp files (in /tmp)
-                                    // are cleaned up after 5 minutes, so the Play button
-                                    // may outlive the file. Permanent files in audios/
-                                    // (SAVE_MP3_ON_DISK=true) should never expire.
-                                    if !std::path::Path::new(file_path).exists() {
+                                    // Resolve the file path: if the original file doesn't exist,
+                                    // try to find a permanent copy in audios/ (handles the case
+                                    // where SAVE_MP3_ON_DISK was toggled after the file was
+                                    // created as a temp file in /tmp).
+                                    let playback_path = if std::path::Path::new(file_path).exists() {
+                                        file_path.to_string()
+                                    } else if file_path.contains("/tts_") {
+                                        // Temp file pattern: /tmp/.../tts_voice_hash.mp3
+                                        // Permanent pattern: audios/voice_hash.mp3
+                                        let filename = std::path::Path::new(file_path)
+                                            .file_name()
+                                            .and_then(|n| n.to_str())
+                                            .unwrap_or("");
+                                        let stripped = filename.strip_prefix("tts_").unwrap_or(filename);
+                                        let permanent = format!("audios/{}", stripped);
+                                        if std::path::Path::new(&permanent).exists() {
+                                            log::info!("Play button: temp file gone, found permanent: {}", permanent);
+                                            permanent
+                                        } else {
+                                            log::warn!("Play button: file no longer exists: {} (no permanent fallback)", file_path);
+                                            component.edit_response(ctx, serenity::EditInteractionResponse::new().content(&data.lang.file_expired)).await?;
+                                            return Ok(());
+                                        }
+                                    } else {
                                         log::warn!("Play button: file no longer exists: {}", file_path);
                                         component.edit_response(ctx, serenity::EditInteractionResponse::new().content(&data.lang.file_expired)).await?;
                                         return Ok(());
-                                    }
+                                    };
                                     let manager = match songbird::get(ctx).await {
                                         Some(m) => m,
                                         None => {
@@ -1307,14 +1326,14 @@ async fn main() {
                                                 let _ = manager.join(guild_id, user_channel).await;
                                                 let handler_lock = manager.get(guild_id).unwrap();
                                                 let mut handler = handler_lock.lock().await;
-                                                log::info!("Playing audio file: {}", file_path);
-                                                let source = songbird::input::File::new(file_path.to_string());
+                                                log::info!("Playing audio file: {}", playback_path);
+                                                let source = songbird::input::File::new(playback_path.clone());
                                                 handler.play_only(source.into());
                                                 log::info!("Audio playback started in guild {}", guild_id);
                                             }
                                         } else {
-                                            log::info!("Playing audio file: {}", file_path);
-                                            let source = songbird::input::File::new(file_path.to_string());
+                                            log::info!("Playing audio file: {}", playback_path);
+                                            let source = songbird::input::File::new(playback_path.clone());
                                             handler.play_only(source.into());
                                             log::info!("Audio playback started in guild {}", guild_id);
                                         }
@@ -1324,8 +1343,8 @@ async fn main() {
                                             .and_then(|g| g.voice_states.get(&component.user.id).and_then(|vs| vs.channel_id)) {
                                             if let Ok(handler_lock) = manager.join(guild_id, user_channel).await {
                                                 let mut handler = handler_lock.lock().await;
-                                                log::info!("Playing audio file: {}", file_path);
-                                                let source = songbird::input::File::new(file_path.to_string());
+                                                log::info!("Playing audio file: {}", playback_path);
+                                                let source = songbird::input::File::new(playback_path.clone());
                                                 handler.play_only(source.into());
                                                 log::info!("Audio playback started in guild {}", guild_id);
                                             }
