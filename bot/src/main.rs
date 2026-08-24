@@ -63,54 +63,8 @@ fn validate_image_bytes(bytes: &[u8]) -> bool {
 }
 
 // ============================================================================
-// Enhanced Voice Client Management (like Python's connect_bot_by_voice_client)
+// Smart Voice Client Management (ports Python's connect_bot_by_voice_client)
 // ============================================================================
-
-/// Manages voice client connections with enhanced error handling (mimics Python's connect_bot_by_voice_client)
-async fn manage_voice_connection(
-    ctx: &Context<'_>,
-    user_channel_id: serenity::ChannelId,
-) -> Result<(), Error> {
-    let guild_id = ctx.guild_id().unwrap();
-    let manager = songbird::get(ctx.serenity_context()).await.ok_or("Voice manager not available")?;
-    
-    if let Some(handler_lock) = manager.get(guild_id) {
-        let mut handler = handler_lock.lock().await;
-        
-        if let Some(current_channel) = handler.current_channel() {
-            if current_channel.0.get() == user_channel_id.get() {
-                log::info!("Voice client already connected to channel {}", user_channel_id);
-                return Ok(());
-            }
-            
-            log::info!("Switching voice connection from {:?} to {:?}", handler.current_channel(), user_channel_id);
-            
-            if let Err(e) = handler.leave().await {
-                log::warn!("Pre-switch cleanup encountered: {}", e);
-            }
-        }
-        
-        log::debug!("Connecting to channel {}", user_channel_id);
-        
-        match manager.join(guild_id, user_channel_id).await {
-            Ok(_) => {
-                log::info!("Successfully joined channel {}", user_channel_id);
-                tokio::time::timeout(std::time::Duration::from_secs(3), 
-                    tokio::task::yield_now()
-                ).await.ok();
-            },
-            Err(e) => {
-                log::error!("Connection establishment failed: {}", e);
-                return Err(format!("Failed to join channel: {}", e).into());
-            }
-        }
-    } else {
-        log::info!("Creating new voice connection for guild {}", guild_id);
-        manager.join(guild_id, user_channel_id).await?;
-    }
-    
-    Ok(())
-}
 
 #[derive(Debug)]
 // Data stored in the bot's context
@@ -212,7 +166,11 @@ async fn check_speak_permission(ctx: Context<'_>) -> Result<(), Error> {
     Ok(())
 }
 
-async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::ChannelId) -> Result<(), Error> {
+async fn connect_bot_by_voice_client(
+    ctx: Context<'_>,
+    channel_id: serenity::ChannelId,
+    member_id: serenity::UserId,
+) -> Result<(), Error> {
     let guild_id = ctx.guild_id().unwrap();
     let manager = songbird::get(ctx.serenity_context()).await
         .ok_or("Songbird not registered")?;
@@ -228,15 +186,47 @@ async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::Cha
         }
     }
 
+    // Smart channel switching (ports Python's connect_bot_by_voice_client logic):
+    // 1. If bot is already in the target channel, stay put
+    // 2. If bot is in a different channel and is NOT playing, check if the invoking
+    //    member is already in the bot's current channel — if so, keep the bot there
+    //    instead of switching (so the bot doesn't abandon users mid-conversation)
+    // 3. Only switch channels when the member is NOT in the bot's current channel
     if let Some(handler_lock) = manager.get(guild_id) {
-        let mut handler = handler_lock.lock().await;
+        let handler = handler_lock.lock().await;
         if let Some(current_channel) = handler.current_channel() {
+            // Bot is already in the target channel — nothing to do
             if current_channel.0.get() == channel_id.get() {
                 log::info!("connect_bot_by_voice_client: bot already in channel {}", channel_id);
                 return Ok(());
             }
+
+            // Bot is in a different channel — check if it's currently playing
+            let is_playing = handler.queue().current().is_some();
+            if is_playing {
+                // Bot is playing audio — don't interrupt, keep the bot in its current channel
+                log::info!("connect_bot_by_voice_client: bot is playing, keeping current channel {:?}", current_channel);
+                return Ok(());
+            }
+
+            // Bot is not playing — check if the invoking member is in the bot's current channel
+            // If so, keep the bot there instead of switching (Python's smart behavior)
+            let bot_channel_id = serenity::ChannelId::new(current_channel.0.get());
+            if let Ok(bot_channel) = bot_channel_id.to_channel(ctx.http()).await {
+                if let serenity::Channel::Guild(bot_guild_channel) = bot_channel {
+                    let members = bot_guild_channel.members(ctx.cache()).unwrap_or_default();
+                    if members.iter().any(|m| m.user.id == member_id) {
+                        log::info!("connect_bot_by_voice_client: member {} is in bot's current channel {}, keeping bot there", member_id, bot_channel_id);
+                        return Ok(());
+                    }
+                }
+            }
         }
+        drop(handler);
+
+        // Bot is in a different channel and member is not there — switch
         log::info!("connect_bot_by_voice_client: leaving current channel to join {}", channel_id);
+        let mut handler = handler_lock.lock().await;
         let _ = handler.leave().await;
         drop(handler);
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -292,7 +282,7 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
         guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
     };
     
-    match connect_bot_by_voice_client(ctx, channel_id).await {
+    match connect_bot_by_voice_client(ctx, channel_id, ctx.author().id).await {
         Ok(_) => {
             // Check if user is joining to their own channel by comparing IDs directly
             let message = format!("{} {}", 
@@ -384,7 +374,7 @@ async fn speak(
         log::info!("[GUILDID : {}] speak - text: {}, voice: {}", guild.id, text, actual_voice);
         guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
     };
-    connect_bot_by_voice_client(ctx, channel_id).await?;
+    connect_bot_by_voice_client(ctx, channel_id, ctx.author().id).await?;
     let queue_msg = get_queue_message(&ctx.data().lang).await;
     let initial_msg = ctx.data().lang.generating_audio.replacen("{}", &text, 1).replacen("{}", &queue_msg, 1);
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
@@ -520,7 +510,7 @@ async fn random(
         log::info!("[GUILDID : {}] random - voice: {}, text: {:?}", guild.id, actual_voice, text);
         guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
     };
-    connect_bot_by_voice_client(ctx, channel_id).await?;
+    connect_bot_by_voice_client(ctx, channel_id, ctx.author().id).await?;
 
     // When no voice is explicitly specified and SAVE_MP3_ON_DISK is true,
     // try to pick a random MP3 directly from the audios/ folder
@@ -731,8 +721,8 @@ async fn audio(
         guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
     };
 
-    // Manage voice connection with enhanced error handling (like Python's connect_bot_by_voice_client)
-    manage_voice_connection(&ctx, channel_id).await?;
+    // Smart voice connection: don't interrupt playback if bot is already playing
+    connect_bot_by_voice_client(ctx, channel_id, ctx.author().id).await?;
     
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
     let handler_lock = match manager.get(guild_id) {
