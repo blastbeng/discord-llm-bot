@@ -1191,6 +1191,88 @@ async fn translate(
     Ok(())
 }
 
+/// Show bot statistics: database, cache, system resources, and uptime.
+#[poise::command(slash_command, user_cooldown = 10)]
+async fn stats(ctx: Context<'_>) -> Result<(), Error> {
+    log::info!("[GUILDID : {}] stats command invoked by user {}", ctx.guild_id().unwrap(), ctx.author().id);
+    ctx.defer_ephemeral().await?;
+
+    // Database statistics
+    let db_stats = database::get_db_statistics(&ctx.data().db_pool).await.unwrap_or_else(|e| format!("Error: {}", e));
+
+    // TTS cache size (count MP3 files in audios/ directory)
+    let cache_info: String = match tokio::fs::read_dir("audios").await {
+        Ok(mut entries) => {
+            let mut count = 0u64;
+            let mut size_bytes: u64 = 0;
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if entry.path().extension().is_some_and(|ext| ext == "mp3") {
+                    count += 1;
+                    if let Ok(meta) = entry.metadata().await {
+                        size_bytes += meta.len();
+                    }
+                }
+            }
+            let size_mb = size_bytes as f64 / (1024.0 * 1024.0);
+            format!("{} files ({:.1} MB)", count, size_mb)
+        }
+        Err(_) => "N/A".to_string(),
+    };
+
+    // System resources
+    let (cpu_usage, ram_usage) = {
+        let mut sys = System::new_all();
+        sys.refresh_cpu();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        sys.refresh_cpu();
+        let cpu = sys.global_cpu_info().cpu_usage();
+        let total_mem = sys.total_memory();
+        let used_mem = sys.used_memory();
+        let ram = (used_mem as f64 / total_mem as f64) * 100.0;
+        (cpu, ram)
+    };
+
+    // Uptime — use a static OnceLock to record boot time on first call
+    let uptime: String = {
+        static BOOT_TIME: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        let boot = BOOT_TIME.get_or_init(std::time::Instant::now);
+        let elapsed = boot.elapsed();
+        let hours = elapsed.as_secs() / 3600;
+        let mins = (elapsed.as_secs() % 3600) / 60;
+        format!("{}h {}m", hours, mins)
+    };
+
+    // FakeYou session status
+    let fakeyou_status = if std::env::var("FAKEYOU_USERNAME").unwrap_or_default().is_empty() {
+        "Not configured".to_string()
+    } else {
+        "Authenticated".to_string()
+    };
+
+    // LLM status
+    let llm_status = if llm::is_configured() {
+        let endpoints = std::env::var("LLM_ENDPOINTS").unwrap_or_default();
+        let count = endpoints.split(',').filter(|s| !s.trim().is_empty()).count();
+        format!("{} endpoint(s)", count)
+    } else {
+        "Not configured".to_string()
+    };
+
+    let embed = serenity::CreateEmbed::new()
+        .title("📊 Bot Statistics")
+        .color(0x57F287)
+        .field("🗄️ Database", db_stats, false)
+        .field("🎵 TTS Cache", cache_info, true)
+        .field("⏱️ Uptime", uptime, true)
+        .field("💻 CPU", format!("{:.1}%", cpu_usage), true)
+        .field("💾 RAM", format!("{:.1}%", ram_usage), true)
+        .field("🎭 FakeYou", fakeyou_status, true)
+        .field("🤖 LLM", llm_status, true);
+
+    ctx.send(poise::CreateReply::default().embed(embed).ephemeral(true)).await?;
+    Ok(())
+}
+
 /// Show help for all bot commands with interactive category buttons.
 #[poise::command(slash_command, user_cooldown = 5)]
 async fn help(ctx: Context<'_>) -> Result<(), Error> {
@@ -1672,7 +1754,7 @@ async fn main() {
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![join(), leave(), stop(), speak(), random(), ask(), translate(), volume(), audio(), restart(), rename(), avatar(), help()],
+            commands: vec![join(), leave(), stop(), speak(), random(), ask(), translate(), volume(), audio(), restart(), rename(), avatar(), help(), stats()],
             pre_command: |ctx| {
                 Box::pin(async move {
                     let command_name = ctx.command().name.as_str();
