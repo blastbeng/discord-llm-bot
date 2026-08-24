@@ -649,11 +649,23 @@ async fn random(
             .next()
             .map(tts::get_voice_name_from_token)
             .unwrap_or("Unknown");
-        reply.edit(ctx, poise::CreateReply::default()
+        // Use match instead of ? so expired interaction tokens don't propagate
+        // to on_error — the audio already started playing on the line above.
+        match reply.edit(ctx, poise::CreateReply::default()
             .content(ctx.data().lang.playing.replacen("{}", "Cached audio", 1).replacen("{}", voice_name, 1))
             .components(components)
             .ephemeral(true)
-        ).await?;
+        ).await {
+            Ok(_) => {}
+            Err(e) => {
+                let e_str = e.to_string();
+                if e_str.contains("Unknown interaction") || e_str.contains("already been acknowledged") {
+                    log::debug!("random (cached): reply.edit failed (interaction expired, audio already played): {}", e_str);
+                } else {
+                    log::warn!("random (cached): reply.edit failed: {}", e_str);
+                }
+            }
+        }
 
         return Ok(());
     }
