@@ -1099,6 +1099,13 @@ async fn main() {
                                         component.edit_response(ctx, serenity::EditInteractionResponse::new().content(&data.lang.must_be_in_voice)).await?;
                                         return Ok(());
                                     }
+                                    // Check if the file still exists — temp files are cleaned up
+                                    // after 5 minutes, so the Play button may outlive the file.
+                                    if !std::path::Path::new(file_path).exists() {
+                                        log::warn!("Play button: file no longer exists: {}", file_path);
+                                        component.edit_response(ctx, serenity::EditInteractionResponse::new().content(&data.lang.file_expired)).await?;
+                                        return Ok(());
+                                    }
                                     let manager = songbird::get(ctx).await.unwrap();
                                     if let Some(handler_lock) = manager.get(guild_id) {
                                         let mut handler = handler_lock.lock().await;
