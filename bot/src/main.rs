@@ -80,6 +80,7 @@ pub struct Data {
     pub db_pool: sqlx::SqlitePool,
     pub lang: lang::Lang,
     pub error_tracker: ErrorTracker,
+    pub volume: std::sync::Arc<std::sync::Mutex<f32>>,
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -263,6 +264,16 @@ async fn voice_autocomplete(
             serenity::AutocompleteChoice::new(name.clone(), name)
         })
         .collect()
+}
+
+/// Play an audio source and apply the stored volume from Data.
+/// Call this instead of `handler.play_only(source)` to ensure the
+/// bot respects the volume set by /volume across all tracks.
+fn play_with_volume(handler: &mut songbird::Call, source: songbird::input::Input, data: &Data) {
+    let track_handle = handler.play_only(source.into());
+    // Apply the stored volume level to the new track
+    let vol = *data.volume.lock().unwrap();
+    let _ = track_handle.set_volume(vol);
 }
 
 async fn effect_autocomplete(
@@ -486,7 +497,7 @@ async fn speak(
     }
     log::info!("Playing audio file: {}", tts_result.file_path);
     let source = songbird::input::File::new(tts_result.file_path.clone());
-    handler.play_only(source.into());
+    play_with_volume(&mut handler, source.into(), ctx.data());
     log::info!("Audio playback started in guild {}", guild_id);
 
     let warning = if tts_result.fallback {
@@ -652,7 +663,7 @@ async fn random(
 
         log::info!("Playing cached audio file: {}", audio_path);
         let source = songbird::input::File::new(audio_path.clone());
-        handler.play_only(source.into());
+        play_with_volume(&mut handler, source.into(), ctx.data());
         log::info!("Audio playback started in guild {}", guild_id);
 
         let components = vec![
@@ -759,7 +770,7 @@ async fn random(
     }
     log::info!("Playing audio file: {}", tts_result.file_path);
     let source = songbird::input::File::new(tts_result.file_path.clone());
-    handler.play_only(source.into());
+    play_with_volume(&mut handler, source.into(), ctx.data());
     log::info!("Audio playback started in guild {}", guild_id);
 
     let warning = if tts_result.fallback {
@@ -956,7 +967,7 @@ async fn ask(
     }
     log::info!("ask: Playing audio file: {}", tts_result.file_path);
     let source = songbird::input::File::new(tts_result.file_path.clone());
-    handler.play_only(source.into());
+    play_with_volume(&mut handler, source.into(), ctx.data());
     log::info!("ask: Audio playback started in guild {}", guild_id);
 
     let warning = if tts_result.fallback {
@@ -1142,7 +1153,7 @@ async fn translate(
     }
     log::info!("translate: Playing audio file: {}", tts_result.file_path);
     let source = songbird::input::File::new(tts_result.file_path.clone());
-    handler.play_only(source.into());
+    play_with_volume(&mut handler, source.into(), ctx.data());
 
     let warning = if tts_result.fallback {
         &ctx.data().lang.fakeyou_warning
@@ -1202,11 +1213,17 @@ async fn volume(
     };
     let handler = handler_lock.lock().await;
 
-    // Songbird 0.6: set volume on the current playing track.
+    // Songbird 0.6: set volume on the current playing track, and store it
+    // in Data so future tracks inherit the same volume level.
     // Volume is 0.0-1.0, Discord users think in 0-100.
     let volume = level as f32 / 100.0;
     if let Some(track) = handler.queue().current() {
         let _ = track.set_volume(volume);
+    }
+    // Persist volume for future tracks
+    {
+        let mut vol_lock = ctx.data().volume.lock().unwrap();
+        *vol_lock = volume;
     }
     log::info!("[GUILDID : {}] volume set to {}% ({})", guild_id, level, volume);
 
@@ -1896,6 +1913,7 @@ async fn main() {
                     db_pool, 
                     lang,
                     error_tracker,
+                    volume: std::sync::Arc::new(std::sync::Mutex::new(1.0)),
                 })
             })
         })
