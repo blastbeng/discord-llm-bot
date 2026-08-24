@@ -4,7 +4,10 @@ use std::path::Path;
 pub async fn init_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     log::debug!("init_db: creating tables if not exists");
     
-    // Create sentences table with additional metadata columns
+    // Create sentences table with additional metadata columns.
+    // If the table already exists from the old Python bot (which only had
+    // id + sentence), CREATE TABLE IF NOT EXISTS is a no-op and we rely on
+    // the ALTER TABLE migration below to add the missing columns.
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS sentences (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -16,6 +19,33 @@ pub async fn init_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
+
+    // Migrate legacy Python bot tables that only had id + sentence columns.
+    // SQLite doesn't support ADD COLUMN IF NOT EXISTS, so we check
+    // PRAGMA table_info and add columns conditionally.
+    let columns: Vec<(String, String)> = sqlx::query_as(
+        "SELECT name, type FROM pragma_table_info('sentences')"
+    )
+    .fetch_all(pool)
+    .await?;
+    
+    let existing: std::collections::HashSet<String> = columns.iter().map(|(n, _)| n.to_lowercase()).collect();
+    
+    if !existing.contains("created_at") {
+        log::info!("init_db: migrating legacy table — adding created_at column");
+        sqlx::query("ALTER TABLE sentences ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+            .execute(pool).await?;
+    }
+    if !existing.contains("usage_count") {
+        log::info!("init_db: migrating legacy table — adding usage_count column");
+        sqlx::query("ALTER TABLE sentences ADD COLUMN usage_count INTEGER DEFAULT 0")
+            .execute(pool).await?;
+    }
+    if !existing.contains("last_used_at") {
+        log::info!("init_db: migrating legacy table — adding last_used_at column");
+        sqlx::query("ALTER TABLE sentences ADD COLUMN last_used_at TIMESTAMP")
+            .execute(pool).await?;
+    }
 
     // Create index for better query performance
     sqlx::query(
