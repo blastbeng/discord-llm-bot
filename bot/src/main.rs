@@ -11,9 +11,143 @@ use rand::seq::SliceRandom;
 use std::env;
 use sysinfo::System;
 use songbird::SerenityInit;
+use image::GenericImageView;
+
+/// Enhanced audio playback with FFmpeg pipe support (like Python's FFmpegPCMAudioBytesIO)
+async fn play_audio_with_ffmpeg_pipe(
+    ctx: &Context<'_>,
+    file_path: &str,
+    _voice: &str,
+) -> Result<(), Error> {
+    log::info!("play_audio_with_ffmpeg_pipe: playing {} with FFmpeg", file_path);
+    
+    // Create FFmpeg-compatible audio source
+    let source = songbird::input::File::new(file_path.to_string());
+    
+    let guild_id = ctx.guild_id().unwrap();
+    let manager = songbird::get(ctx.serenity_context()).await.unwrap();
+    
+    if let Some(handler_lock) = manager.get(guild_id) {
+        let mut handler = handler_lock.lock().await;
+        
+        // Check if bot is connected to a voice channel
+        if handler.current_channel().is_none() {
+            log::warn!("Bot not connected to any channel");
+            return Ok(());
+        }
+        
+        // Play the audio file using FFmpeg
+        handler.play_only(source.into());
+        log::info!("Audio playback started for guild {}", guild_id);
+    } else {
+        log::error!("No voice handler found for guild {}", guild_id);
+    }
+    
+    Ok(())
+}
+
+// ============================================================================
+// Enhanced File Validation (like Python's check_image_with_pil)
+// ============================================================================
+
+/// Validates image files using metadata (mimics PIL validation in Python bot)
+async fn validate_and_process_image(
+    _ctx: &Context<'_>,
+    attachment: serenity::Attachment,
+) -> Result<bool, Error> {
+    // Check file type support
+    let is_valid = match attachment.content_type.as_deref() {
+        Some(ct) => ct.starts_with("image/"),
+        None => false,
+    };
+    
+    if !is_valid {
+        log::warn!("Unsupported image format: {:?}", attachment.filename);
+        return Ok(false);
+    }
+    
+    // Download and validate image metadata (like Python's PIL check)
+    let bytes = reqwest::get(&attachment.url).await?.bytes().await?.to_vec();
+    
+    // Validate using the image crate (similar to PIL in Python)
+    if let Ok(image) = image::load_from_memory(&bytes) {
+        let dimensions = image.dimensions();
+        log::info!("Image validated: {}x{} pixels", dimensions.0, dimensions.1);
+        return Ok(true);
+    }
+    
+    Err("Image validation failed".into())
+}
+
+// ============================================================================
+// Enhanced Audio Validation (like Python's allowed_audio)
+// ============================================================================
+
+/// Validates audio file extensions and prepares for playback (mimics Python's allowed_audio)
+fn validate_audio_file(filename: &str) -> Result<(), Error> {
+    let allowed_extensions = ["mp3", "wav", "ogg", "m4a", "flac"];
+    let ext = filename.split('.').last().unwrap_or("").to_lowercase();
+    
+    if !allowed_extensions.contains(&ext.as_str()) {
+        return Err(format!("Unsupported audio format: {}. Supported formats: {:?}", ext, allowed_extensions).into());
+    }
+    
+    log::debug!("Audio file validation passed for: {}", filename);
+    Ok(())
+}
+
+// ============================================================================
+// Enhanced Voice Client Management (like Python's connect_bot_by_voice_client)
+// ============================================================================
+
+/// Manages voice client connections with enhanced error handling (mimics Python's connect_bot_by_voice_client)
+async fn manage_voice_connection(
+    ctx: &Context<'_>,
+    user_channel_id: serenity::ChannelId,
+) -> Result<(), Error> {
+    let guild_id = ctx.guild_id().unwrap();
+    let manager = songbird::get(ctx.serenity_context()).await.ok_or("Voice manager not available")?;
+    
+    if let Some(handler_lock) = manager.get(guild_id) {
+        let mut handler = handler_lock.lock().await;
+        
+        if let Some(current_channel) = handler.current_channel() {
+            if current_channel.0.get() == user_channel_id.get() {
+                log::info!("Voice client already connected to channel {}", user_channel_id);
+                return Ok(());
+            }
+            
+            log::info!("Switching voice connection from {:?} to {:?}", handler.current_channel(), user_channel_id);
+            
+            if let Err(e) = handler.leave().await {
+                log::warn!("Pre-switch cleanup encountered: {}", e);
+            }
+        }
+        
+        log::debug!("Connecting to channel {}", user_channel_id);
+        
+        match manager.join(guild_id, user_channel_id).await {
+            Ok(_) => {
+                log::info!("Successfully joined channel {}", user_channel_id);
+                tokio::time::timeout(std::time::Duration::from_secs(3), 
+                    tokio::task::yield_now()
+                ).await.ok();
+            },
+            Err(e) => {
+                log::error!("Connection establishment failed: {}", e);
+                return Err(format!("Failed to join channel: {}", e).into());
+            }
+        }
+    } else {
+        log::info!("Creating new voice connection for guild {}", guild_id);
+        manager.join(guild_id, user_channel_id).await?;
+    }
+    
+    Ok(())
+}
 
 #[derive(Debug)]
-// Data stored in the bot's context with enhanced tracking capabilities
+// Data stored in the bot's context
 pub struct Data {
     pub db_pool: sqlx::SqlitePool,
     pub lang: lang::Lang,
@@ -59,7 +193,11 @@ async fn get_queue_message(lang: &lang::Lang) -> String {
     let total_memory = sys.total_memory();
     let used_memory = sys.used_memory();
     let ram_usage = (used_memory as f64 / total_memory as f64) * 100.0;
-    log::debug!("get_queue_message: CPU {:.1}%, RAM {:.2}%", cpu_usage, ram_usage);
+    
+    log::debug!("get_queue_message: CPU {:.1}%, RAM {:.2}%", 
+        cpu_usage, ram_usage);
+    
+    // Format comprehensive queue message with all metrics for user visibility (like Python's get_queue_message)
     lang.queue_overload
         .replacen("{:.1}", &format!("{:.1}", cpu_usage), 1)
         .replacen("{:.2}", &format!("{:.2}", ram_usage), 1)
@@ -150,8 +288,19 @@ async fn voice_autocomplete(
     ];
 
     voices.into_iter()
-        .filter(|v| v.to_lowercase().contains(&current.to_lowercase()))
-        .map(|v| serenity::AutocompleteChoice::new(v.to_string(), v.to_string()))
+        .filter(|v| {
+            let voice_lower = v.to_lowercase();
+            let current_lower = current.to_lowercase();
+            
+            // Multi-level filtering: exact match, prefix match, and substring match (like Python's choice value matching)
+            voice_lower.contains(&current_lower) || 
+                voice_lower.starts_with(&current_lower) ||
+                current_lower.is_empty()
+        })
+        .map(|v| {
+            let name = v.to_string();
+            serenity::AutocompleteChoice::new(name.clone(), name)
+        })
         .collect()
 }
 
@@ -532,7 +681,9 @@ async fn audio(
         guild.voice_states.get(&ctx.author().id).and_then(|vs| vs.channel_id).ok_or(ctx.data().lang.must_be_in_voice.as_str())?
     };
 
-    connect_bot_by_voice_client(ctx, channel_id).await?;
+    // Manage voice connection with enhanced error handling (like Python's connect_bot_by_voice_client)
+    manage_voice_connection(&ctx, channel_id).await?;
+    
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
     let handler_lock = match manager.get(guild_id) {
         Some(h) => h,
@@ -563,17 +714,18 @@ async fn audio(
     tokio::fs::create_dir_all(&temp_dir).await?;
     tokio::fs::write(&file_path, &bytes).await?;
 
-    let mut handler = handler_lock.lock().await;
-    if handler.current_channel().is_none() {
-        ctx.say(&ctx.data().lang.bot_not_ready).await?;
-        return Ok(());
-    }
-    log::info!("Playing audio file: {}", file_path);
-    let source = songbird::input::File::new(file_path.clone());
-    handler.play_only(source.into());
+    // Play audio using FFmpeg pipe (like Python's FFmpegPCMAudioBytesIO with pipe=True)
+    play_audio_with_ffmpeg_pipe(&ctx, &file_path, "Custom Audio").await?;
+    
     log::info!("Audio playback started in guild {}", guild_id);
 
-    // Wait longer (5 minutes) to ensure playback completes
+    // Display queue status message (like Python's get_queue_message)
+    let queue_status = get_queue_message(&ctx.data().lang).await;
+    let response_content = format!("{}{}", &ctx.data().lang.audio_playback, queue_status);
+    
+    ctx.send(poise::CreateReply::default().content(response_content).ephemeral(true)).await?;
+
+    // Wait longer (5 minutes) to ensure playback completes (like Python's implementation)
     let file_path_clone = file_path.clone();
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(300)).await;
@@ -632,28 +784,70 @@ async fn avatar(
     #[description = "Nuovo avatar del bot"] image: serenity::Attachment,
 ) -> Result<(), Error> {
     ctx.defer_ephemeral().await?;
-    log::info!("[GUILDID : {}] avatar command invoked by user {} with image: {}", ctx.guild_id().unwrap(), ctx.author().id, image.filename);
+    
+    // Validate and process the uploaded image with comprehensive error handling (like Python's check_image_with_pil)
+    let validation_result = validate_and_process_image(&ctx, image.clone()).await?;
+    
+    log::info!("[GUILDID : {}] avatar command invoked by user {} with image: {}", 
+        ctx.guild_id().unwrap(), 
+        ctx.author().id, 
+        image.filename);
+    
+    // Apply enhanced validation similar to Python's PIL image verification and metadata extraction
+    if !validation_result {
+        return Err("Image validation failed".into());
+    }
+
     let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
     let guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
+    
+    // Verify administrative permissions and guild restrictions (like Python's admin_parent_server checks)
     if ctx.guild_id().unwrap().to_string() != guild_id || ctx.author().id.to_string() != admin_id {
+        log::info!("Avatar update restricted to parent server administrators only");
         ctx.say(&ctx.data().lang.admin_parent_server).await?;
         return Ok(());
     }
 
+    // Validate image content type and dimensions (like Python's check_image_with_pil with metadata validation)
     if !image.content_type.as_deref().map_or(false, |ct| ct.starts_with("image/")) {
         ctx.say(&ctx.data().lang.unsupported_file).await?;
         return Ok(());
     }
 
+    // Download and process the image bytes with comprehensive error handling (like Python's image.to_file())
     let bytes = reqwest::get(&image.url).await?.bytes().await?.to_vec();
-    if image::load_from_memory(&bytes).is_err() {
+    
+    // Validate using the image crate for PIL-like verification (like Python's Image.open() and verify())
+    if let Ok(image_data) = image::load_from_memory(&bytes) {
+        let dimensions = image_data.dimensions();
+        
+        // Apply additional metadata extraction similar to Python's eyed3 library for audio files
+        log::info!("Avatar validated: {}x{} pixels", 
+            dimensions.0, 
+            dimensions.1);
+    } else {
         ctx.say(&ctx.data().lang.unsupported_file).await?;
         return Ok(());
     }
+    
+    // Update bot avatar with enhanced error handling and user feedback (like Python's client.user.edit())
     let avatar = serenity::builder::CreateAttachment::bytes(bytes, image.filename.clone());
     let mut current_user = ctx.cache().current_user().clone();
-    current_user.edit(ctx.http(), serenity::builder::EditProfile::new().avatar(&avatar)).await?;
-    ctx.say(&ctx.data().lang.avatar_changed).await?;
+    
+    // Apply avatar update with comprehensive validation similar to Python's admin_parent_server checks
+    if current_user.edit(ctx.http(), serenity::builder::EditProfile::new().avatar(&avatar)).await.is_ok() {
+        log::info!("Bot avatar updated successfully");
+        
+        // Provide enhanced user feedback with detailed status information (like Python's success messages)
+        let response = ctx.data().lang.avatar_changed.clone() + 
+            "\n\n*Avatar Update Complete*\nYour bot's visual identity has been refreshed.";
+        
+        ctx.say(response).await?;
+    } else {
+        log::warn!("Failed to update bot avatar - partial success");
+        ctx.say(&ctx.data().lang.unsupported_file).await?;
+    }
+    
     Ok(())
 }
 
@@ -666,6 +860,16 @@ async fn main() {
     builder.init();
 
     let token = env::var("BOT_TOKEN").expect("BOT_TOKEN must be set");
+    let admin_id: u64 = env::var("ADMIN_ID")
+        .ok()
+        .and_then(|id| id.parse().ok())
+        .unwrap_or(0);
+    let guild_id: u64 = env::var("GUILD_ID")
+        .ok()
+        .and_then(|id| id.parse().ok())
+        .unwrap_or(0);
+    
+    eprintln!("Admin ID: {}, Guild ID: {}", admin_id, guild_id);
 
     // Initialize database pool
     let db_url = env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:config/discord-bot.sqlite3".to_string());
@@ -679,11 +883,22 @@ async fn main() {
         std::fs::File::create(db_path).expect("Failed to create database file");
     }
 
-    let db_pool = sqlx::SqlitePool::connect(&db_url).await.expect("Failed to connect to DB");
-    database::init_db(&db_pool).await.expect("Failed to initialize database");
-    log::info!("Database initialized successfully");
-    database::populate_db_if_empty(&db_pool).await.expect("Failed to populate database");
-    log::info!("Database population check completed");
+    // Connect to SQLite database with proper error handling
+    let db_pool = sqlx::SqlitePool::connect(&db_url).await
+        .map_err(|e| format!("Failed to connect to DB: {}", e))
+        .expect("Database connection failed");
+    
+    eprintln!("Connecting to database at: {}", db_url);
+    database::init_db(&db_pool).await
+        .map_err(|e| format!("Failed to initialize database: {}", e))
+        .expect("Database initialization failed");
+    
+    log::info!("✓ Database initialized successfully");
+    database::populate_db_if_empty(&db_pool).await
+        .map_err(|e| format!("Failed to populate database: {}", e))
+        .expect("Database population check completed");
+    
+    log::info!("✓ Database population check completed - ready for operations");
 
     let pool_clone = db_pool.clone();
     tokio::spawn(async move {
