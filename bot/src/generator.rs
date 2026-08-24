@@ -33,7 +33,7 @@ pub async fn run_background_generator(pool: SqlitePool) {
         let mut fakeyou_count = 0;
         let max_fakeyou_per_cycle = 3; // Increased limit for better coverage
         
-        if let Ok(sentences) = database::select_all_sentence(&pool).await {
+        if let Ok(sentences) = database::select_sentences_for_generation(&pool).await {
             log::debug!("Background generator: processing {} sentences", sentences.len());
             
             'outer: for sentence in sentences {

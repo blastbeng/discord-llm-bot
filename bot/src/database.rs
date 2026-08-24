@@ -68,6 +68,23 @@ pub async fn select_all_sentence(pool: &SqlitePool) -> Result<Vec<String>, sqlx:
     Ok(rows)
 }
 
+/// Fetch sentences ordered by least-used first, for the background generator.
+/// Unlike select_all_sentence which uses weighted-random ordering for variety
+/// in user-facing commands, this deterministic ordering ensures the generator
+/// processes the least-cached sentences first and eventually covers all entries.
+pub async fn select_sentences_for_generation(pool: &SqlitePool) -> Result<Vec<String>, sqlx::Error> {
+    log::debug!("select_sentences_for_generation: fetching sentences ordered by usage_count ASC");
+    let rows = sqlx::query_scalar::<_, String>(
+        "SELECT sentence FROM sentences 
+         ORDER BY usage_count ASC, created_at ASC"
+    )
+    .fetch_all(pool)
+    .await?;
+
+    log::debug!("select_sentences_for_generation: retrieved {} sentences", rows.len());
+    Ok(rows)
+}
+
 pub async fn select_like_sentence(pool: &SqlitePool, text: &str) -> Result<Vec<String>, sqlx::Error> {
     log::debug!("select_like_sentence: searching for pattern '%{}%'", text);
     
