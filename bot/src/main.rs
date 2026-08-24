@@ -850,10 +850,12 @@ async fn audio(
         .ephemeral(true)
     ).await?;
 
-    // Clean up temp file after 5 minutes to ensure playback completes
+    // Clean up temp file after 10 minutes to ensure playback completes.
+    // Audio uploads can be up to 25 MB (potentially 30+ minutes of audio),
+    // so the 5-minute cleanup used for TTS temp files is too short here.
     let file_path_clone = file_path.clone();
     tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(600)).await;
         let _ = tokio::fs::remove_file(&file_path_clone).await;
     });
 
