@@ -1160,6 +1160,10 @@ async fn main() {
     
     log::info!("✓ Database population check completed - ready for operations");
 
+    // Initialize FakeYou — login if credentials are configured so the
+    // shared client's cookie jar has a session cookie for TTS requests.
+    tts::init_fakeyou().await;
+
     let pool_clone = db_pool.clone();
     tokio::spawn(async move {
         generator::run_background_generator(pool_clone).await;

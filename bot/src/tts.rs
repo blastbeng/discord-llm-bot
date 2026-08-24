@@ -10,8 +10,13 @@ use tokio::process::Command;
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 /// Shared reqwest client with a generous timeout for FakeYou jobs, which
-/// can take a while to complete.
+/// can take a while to complete. Uses a cookie store so that if we login
+/// with FakeYou credentials, the session cookie persists across requests.
 static FAKEYOU_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+/// FakeYou session token (cookie value) obtained via login. Stored after
+/// a successful login so subsequent TTS requests are authenticated.
+static FAKEYOU_SESSION_COOKIE: OnceLock<String> = OnceLock::new();
 
 pub fn http_client() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(|| reqwest::Client::new())
@@ -21,9 +26,76 @@ fn fakeyou_client() -> &'static reqwest::Client {
     FAKEYOU_CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
+            .cookie_store(true)
             .build()
             .expect("Failed to build FakeYou HTTP client")
     })
+}
+
+/// Login to FakeYou if credentials are configured (FAKEYOU_USERNAME and
+/// FAKEYOU_PASSWORD env vars). This authenticates the session so the
+/// shared client's cookie jar contains the session cookie for all
+/// subsequent TTS requests. If credentials are not set, TTS proceeds
+/// without authentication (may face stricter rate limits).
+async fn fakeyou_login_if_configured() {
+    let username = std::env::var("FAKEYOU_USERNAME").unwrap_or_default();
+    let password = std::env::var("FAKEYOU_PASSWORD").unwrap_or_default();
+
+    if username.is_empty() || password.is_empty() {
+        log::info!("FakeYou: no credentials configured, using unauthenticated requests");
+        return;
+    }
+
+    log::info!("FakeYou: logging in as {}", username);
+    let client = fakeyou_client();
+    let login_body = serde_json::json!({
+        "username_or_email": username,
+        "password": password,
+    });
+
+    match client
+        .post("https://api.fakeyou.com/v1/login")
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+        .json(&login_body)
+        .send()
+        .await
+    {
+        Ok(resp) => {
+            let status = resp.status();
+            // Extract session cookie from Set-Cookie header
+            if let Some(set_cookie) = resp.headers().get("set-cookie") {
+                if let Ok(cookie_str) = set_cookie.to_str() {
+                    // Parse "session=VALUE; ..." to extract the session token
+                    if let Some(token) = cookie_str
+                        .split(';')
+                        .next()
+                        .and_then(|s| s.split('=').nth(1))
+                    {
+                        let _ = FAKEYOU_SESSION_COOKIE.set(token.to_string());
+                        log::info!("FakeYou: login successful (status {}), session cookie stored", status);
+                        return;
+                    }
+                }
+            }
+            // If we couldn't extract a cookie but login returned 200, the
+            // cookie jar in the reqwest client should still have it.
+            if status.is_success() {
+                log::info!("FakeYou: login returned success ({}), cookie jar updated", status);
+            } else {
+                let body = resp.text().await.unwrap_or_default();
+                log::error!("FakeYou: login failed with status {}: {}", status, body);
+            }
+        }
+        Err(e) => {
+            log::error!("FakeYou: login request failed: {}", e);
+        }
+    }
+}
+
+/// Initialize FakeYou — call once at startup to login if credentials are configured.
+pub async fn init_fakeyou() {
+    fakeyou_login_if_configured().await;
 }
 
 /// All available voices (matches Python's get_available_voices)
@@ -226,18 +298,32 @@ pub async fn get_tts_google(text: &str) -> Result<Vec<u8>, Box<dyn std::error::E
 struct FakeYouJobResponse {
     success: bool,
     inference_job_token: Option<String>,
+    #[serde(default)]
+    error_type: Option<String>,
+    #[serde(default)]
+    error_reason: Option<String>,
+    #[serde(default)]
+    error_message: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
 struct FakeYouStatusResponse {
     success: bool,
     state: Option<FakeYouJobState>,
+    #[serde(default)]
+    error_type: Option<String>,
+    #[serde(default)]
+    error_reason: Option<String>,
+    #[serde(default)]
+    error_message: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
 struct FakeYouJobState {
     status: Option<String>,
     maybe_public_bucket_wav_audio_path: Option<String>,
+    #[serde(default)]
+    maybe_extra_status_description: Option<String>,
 }
 
 pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
@@ -263,6 +349,7 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
             "tts_model_token": voice_token,
             "inference_text": text
         });
+        log::debug!("get_tts_fakeyou: POST tts/inference (attempt {}) voice_token={}", attempts, voice_token);
         let resp = client.post("https://api.fakeyou.com/tts/inference")
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
@@ -270,28 +357,55 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
             .send()
             .await?;
 
-        if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        let status = resp.status();
+
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             if attempts >= 2 {
+                log::error!("get_tts_fakeyou: rate limited (429) after {} attempts", attempts);
                 return Err("FakeYou rate limited (429), try again later".into());
             }
-            log::warn!("get_tts_fakeyou: rate limited on inference, waiting 10s and retrying once");
+            log::warn!("get_tts_fakeyou: rate limited on inference (429), waiting 10s and retrying once");
             tokio::time::sleep(std::time::Duration::from_secs(10)).await;
             continue;
         }
 
-        if !resp.status().is_success() {
-            return Err(format!("FakeYou API returned status: {}", resp.status()).into());
+        if !status.is_success() {
+            let body_text = resp.text().await.unwrap_or_default();
+            log::error!(
+                "get_tts_fakeyou: inference request failed with status {}: {}",
+                status, body_text
+            );
+            return Err(format!("FakeYou inference API returned status {}: {}", status, body_text).into());
         }
 
-        let json = resp.json::<FakeYouJobResponse>().await?;
+        let json = match resp.json::<FakeYouJobResponse>().await {
+            Ok(j) => j,
+            Err(e) => {
+                log::error!("get_tts_fakeyou: failed to parse inference response JSON: {}", e);
+                return Err(format!("Failed to parse FakeYou inference response: {}", e).into());
+            }
+        };
+
         if !json.success {
-            return Err("FakeYou API failed to start job".into());
+            let error_type = json.error_type.as_deref().unwrap_or("unknown");
+            let error_reason = json.error_reason.as_deref().unwrap_or("unknown");
+            let error_msg = json.error_message.as_deref().unwrap_or("no error message");
+            log::error!(
+                "get_tts_fakeyou: inference failed — error_type={}, error_reason={}, error_message={}",
+                error_type, error_reason, error_msg
+            );
+            return Err(format!(
+                "FakeYou inference failed: {} — {} ({})",
+                error_type, error_msg, error_reason
+            ).into());
         }
+
+        log::info!("get_tts_fakeyou: inference job accepted (attempt {})", attempts);
         break json;
     };
 
     let job_token = resp_json.inference_job_token.ok_or("No inference job token received")?;
-    log::debug!("get_tts_fakeyou: inference job token {}", job_token);
+    log::info!("get_tts_fakeyou: inference job token {}", job_token);
 
     poll_fakeyou_job(&client, &job_token).await
 }
@@ -306,72 +420,118 @@ async fn poll_fakeyou_job(
 
     loop {
         if retries >= max_retries {
+            log::error!("poll_fakeyou_job: timed out after {} retries (120s)", max_retries);
             return Err("FakeYou job timed out after 120 seconds".into());
         }
         retries += 1;
 
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        log::debug!("get_tts_fakeyou: polling status (attempt {})", retries);
+        log::debug!("poll_fakeyou_job: polling status (attempt {}/{})", retries, max_retries);
 
         let status_resp = client.get(format!("https://api.fakeyou.com/tts/job/{}", job_token))
             .header("Accept", "application/json")
             .send()
             .await?;
 
+        let status_code = status_resp.status();
+
         // Handle rate limiting on polling with a backoff
-        if status_resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            log::warn!("get_tts_fakeyou: rate limited on polling, waiting 10s");
+        if status_code == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            log::warn!("poll_fakeyou_job: rate limited on polling (429), waiting 10s");
             tokio::time::sleep(std::time::Duration::from_secs(10)).await;
             continue;
         }
 
-        if !status_resp.status().is_success() {
-            return Err(format!("FakeYou polling returned status: {}", status_resp.status()).into());
+        if !status_code.is_success() {
+            let body_text = status_resp.text().await.unwrap_or_default();
+            log::error!(
+                "poll_fakeyou_job: polling request failed with status {}: {}",
+                status_code, body_text
+            );
+            return Err(format!("FakeYou polling returned status {}: {}", status_code, body_text).into());
         }
 
-        let status_json = status_resp.json::<FakeYouStatusResponse>().await?;
+        let status_json = match status_resp.json::<FakeYouStatusResponse>().await {
+            Ok(j) => j,
+            Err(e) => {
+                log::error!("poll_fakeyou_job: failed to parse status response JSON: {}", e);
+                return Err(format!("Failed to parse FakeYou status response: {}", e).into());
+            }
+        };
 
         if !status_json.success {
-            return Err("FakeYou API job status request failed".into());
+            let error_type = status_json.error_type.as_deref().unwrap_or("unknown");
+            let error_reason = status_json.error_reason.as_deref().unwrap_or("unknown");
+            let error_msg = status_json.error_message.as_deref().unwrap_or("no error message");
+            log::error!(
+                "poll_fakeyou_job: status request failed — error_type={}, error_reason={}, error_message={}",
+                error_type, error_reason, error_msg
+            );
+            return Err(format!(
+                "FakeYou job status request failed: {} — {} ({})",
+                error_type, error_msg, error_reason
+            ).into());
         }
 
         if let Some(state) = status_json.state {
             if let Some(status_str) = &state.status {
-                log::debug!("get_tts_fakeyou: job status = {}", status_str);
+                let extra = state.maybe_extra_status_description.as_deref().unwrap_or("");
+                log::debug!(
+                    "poll_fakeyou_job: job status = {}{}",
+                    status_str,
+                    if extra.is_empty() { String::new() } else { format!(" ({})", extra) }
+                );
                 match status_str.as_str() {
                     "complete_success" => {
                         if let Some(wav_path) = &state.maybe_public_bucket_wav_audio_path {
                             // The Python library (fakeyou.py v1.3.0) constructs the
                             // download URL as: https://cdn-2.fakeyou.com + wav_path
                             let media_url = format!("https://cdn-2.fakeyou.com{}", wav_path);
-                            log::info!("get_tts_fakeyou: downloading from {}", media_url);
+                            log::info!("poll_fakeyou_job: downloading from {}", media_url);
                             let media_resp = client.get(&media_url).send().await?;
-                            if !media_resp.status().is_success() {
-                                return Err(format!("Failed to download audio: status {}", media_resp.status()).into());
+                            let media_status = media_resp.status();
+                            if !media_status.is_success() {
+                                let body_text = media_resp.text().await.unwrap_or_default();
+                                log::error!(
+                                    "poll_fakeyou_job: audio download failed with status {}: {}",
+                                    media_status, body_text
+                                );
+                                return Err(format!(
+                                    "Failed to download audio: status {}: {}",
+                                    media_status, body_text
+                                ).into());
                             }
                             let bytes = media_resp.bytes().await?.to_vec();
                             if bytes.len() < 100 {
+                                log::error!("poll_fakeyou_job: downloaded audio too small: {} bytes", bytes.len());
                                 return Err(format!("Downloaded audio too small: {} bytes", bytes.len()).into());
                             }
-                            log::info!("get_tts_fakeyou: downloaded {} bytes", bytes.len());
+                            log::info!("poll_fakeyou_job: downloaded {} bytes", bytes.len());
                             return Ok(bytes);
                         } else {
+                            log::error!("poll_fakeyou_job: job completed but no audio path provided");
                             return Err("Job completed but no audio path provided".into());
                         }
                     }
                     "complete_failure" | "dead" => {
+                        log::error!("poll_fakeyou_job: job failed with status: {}", status_str);
                         return Err(format!("FakeYou job failed with status: {}", status_str).into());
                     }
                     "attempt_failed" => {
                         // The Python library raises an exception immediately on attempt_failed.
                         // FakeYou does not retry after this status.
+                        log::error!("poll_fakeyou_job: job attempt failed");
                         return Err("FakeYou job attempt failed".into());
                     }
                     _ => {
                         // "pending" or "started" — keep polling
                     }
                 }
+            } else {
+                log::debug!("poll_fakeyou_job: state has no status field (attempt {})", retries);
             }
+        } else {
+            log::debug!("poll_fakeyou_job: response has no state (attempt {})", retries);
         }
     }
 }
@@ -423,10 +583,15 @@ pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<TtsResult, B
         (get_tts_google(text).await?, "Google".to_string(), false)
     } else {
         match get_tts_fakeyou(text, voice).await {
-            Ok(b) => (b, voice.to_string(), false),
+            Ok(b) => {
+                log::info!("get_or_generate_tts: FakeYou succeeded for voice {}", voice);
+                (b, voice.to_string(), false)
+            }
             Err(e) => {
-                log::warn!("get_or_generate_tts: falling back to Google for voice {}", voice);
-                log::error!("FakeYou failed, falling back to Google: {}", e);
+                log::warn!(
+                    "get_or_generate_tts: FakeYou failed for voice '{}', falling back to Google: {}",
+                    voice, e
+                );
                 (get_tts_google(text).await?, "Google".to_string(), true)
             }
         }
