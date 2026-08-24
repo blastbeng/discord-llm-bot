@@ -947,18 +947,22 @@ async fn restart(ctx: Context<'_>) -> Result<(), Error> {
     log::info!("[GUILDID : {}] restart command invoked by user {}", ctx.guild_id().unwrap(), ctx.author().id);
     let admin_id = env::var("ADMIN_ID").unwrap_or_default();
     let env_guild_id = env::var("GUILD_ID").unwrap_or_default();
+
+    // Create reply early so all subsequent messages edit the deferred response
+    let reply = ctx.send(poise::CreateReply::default().content("...").ephemeral(true)).await?;
+
     if ctx.guild_id().unwrap().to_string() != env_guild_id || ctx.author().id.to_string() != admin_id {
-        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.admin_parent_server).ephemeral(true)).await?;
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.admin_parent_server).ephemeral(true)).await?;
         return Ok(());
     }
     let guild_id = ctx.guild_id().unwrap();
     let member = guild_id.member(ctx.http(), ctx.author().id).await?;
     #[allow(deprecated)]
     if !member.permissions(ctx)?.administrator() {
-        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.admin_only).ephemeral(true)).await?;
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.admin_only).ephemeral(true)).await?;
         return Ok(());
     }
-    ctx.send(poise::CreateReply::default().content(&ctx.data().lang.restarting).ephemeral(true)).await?;
+    reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.restarting).ephemeral(true)).await?;
     // Give Discord time to deliver the interaction response before exiting.
     // Without this delay, std::process::exit(0) may kill the process before
     // the HTTP response reaches Discord, and the user never sees the message.
