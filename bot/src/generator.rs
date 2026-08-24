@@ -4,6 +4,19 @@ use sqlx::SqlitePool;
 use std::path::Path;
 
 pub async fn run_background_generator(pool: SqlitePool) {
+    // The generator pre-generates TTS files to disk — it only makes sense
+    // when SAVE_MP3_ON_DISK is enabled. When disabled, TTS is generated
+    // on-demand and saved to temp files, so caching is pointless.
+    let save_mp3 = std::env::var("SAVE_MP3_ON_DISK")
+        .unwrap_or_else(|_| "false".to_string())
+        .to_lowercase()
+        == "true";
+
+    if !save_mp3 {
+        log::info!("Background generator disabled (SAVE_MP3_ON_DISK=false)");
+        return;
+    }
+
     let voices = [
         "Google",
         "Goku (FakeYou.com)",
