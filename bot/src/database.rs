@@ -51,10 +51,15 @@ pub async fn insert_sentence(pool: &SqlitePool, sentence: &str) -> Result<(), sq
 pub async fn select_all_sentence(pool: &SqlitePool) -> Result<Vec<String>, sqlx::Error> {
     log::debug!("select_all_sentence: fetching all sentences");
     
-    // Fetch random sentences with metadata for better selection
+    // Weighted random selection: bias toward less-used and older sentences.
+    // RANDOM() returns a float in [0,1); multiplying by usage_count+1 gives
+    // higher values to more-used sentences, so ascending sort picks the
+    // least-used first. Adding created_at weight (older = smaller) further
+    // breaks ties toward older entries. This ensures variety instead of
+    // always repeating the same popular sentences.
     let rows = sqlx::query_scalar::<_, String>(
         "SELECT sentence FROM sentences 
-         ORDER BY RANDOM(), usage_count DESC, created_at ASC"
+         ORDER BY (RANDOM() * (usage_count + 1)) ASC, created_at ASC"
     )
     .fetch_all(pool)
     .await?;
