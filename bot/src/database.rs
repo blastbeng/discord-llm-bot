@@ -127,6 +127,8 @@ pub async fn select_like_sentence(pool: &SqlitePool, text: &str) -> Result<Vec<S
     // The CASE differentiates exact matches (rank 0) from partial matches (rank 1),
     // so sentences equal to the search text appear first, followed by those that
     // merely contain it as a substring.
+    // usage_count ASC (least-used first) is consistent with select_all_sentence's
+    // weighted-random philosophy — biasing toward less-used sentences for variety.
     let pattern = format!("%{}%", text);
     let rows = sqlx::query_scalar::<_, String>(
         "SELECT sentence FROM sentences 
@@ -136,7 +138,7 @@ pub async fn select_like_sentence(pool: &SqlitePool, text: &str) -> Result<Vec<S
                 WHEN sentence = ? COLLATE NOCASE THEN 0 
                 ELSE 1 
             END,
-            usage_count DESC, created_at ASC"
+            usage_count ASC, created_at ASC"
     )
     .bind(&pattern)
     .bind(text)

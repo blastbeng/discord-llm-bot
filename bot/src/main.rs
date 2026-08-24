@@ -846,8 +846,10 @@ async fn audio(
     // Create the reply early so we can edit it with the final result, matching
     // the speak/random pattern. This gives a cleaner UX: the deferred "thinking..."
     // indicator transitions into the final message instead of a new followup.
-    let queue_msg = get_queue_message(&ctx.data().lang).await;
-    let initial_msg = format!("{}{}", ctx.data().lang.audio_playback, queue_msg);
+    // Compute queue metrics once and reuse for both the initial and final message
+    // so the user sees consistent values (sysinfo CPU/RAM can fluctuate between calls).
+    let queue_status = get_queue_message(&ctx.data().lang).await;
+    let initial_msg = format!("{}{}", ctx.data().lang.audio_playback, queue_status);
     let reply = ctx.send(poise::CreateReply::default().content(initial_msg).ephemeral(true)).await?;
 
     let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
@@ -908,8 +910,6 @@ async fn audio(
     // Edit the reply with Play/Stop buttons. Use match instead of ? so
     // that an expired interaction token doesn't propagate to on_error
     // as "Unknown interaction" — the audio already played successfully.
-    // Display queue status message with Play/Stop buttons
-    let queue_status = get_queue_message(&ctx.data().lang).await;
     let response_content = format!("{}{}", ctx.data().lang.audio_playback, queue_status);
 
     match reply.edit(ctx, poise::CreateReply::default()
