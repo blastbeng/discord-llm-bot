@@ -182,11 +182,18 @@ pub struct TtsResult {
 }
 
 pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<TtsResult, Box<dyn std::error::Error + Send + Sync>> {
-    let file_path = get_file_path(voice, text);
-    log::debug!("get_or_generate_tts: checking cache for {}", file_path);
-    if Path::new(&file_path).exists() {
-        log::debug!("get_or_generate_tts: cache hit for {}", file_path);
-        return Ok(TtsResult { file_path, actual_voice: voice.to_string(), fallback: false });
+    let save_mp3 = std::env::var("SAVE_MP3_ON_DISK")
+        .unwrap_or_else(|_| "false".to_string())
+        .to_lowercase() == "true";
+
+    // When disk saving is enabled, check the cache first
+    if save_mp3 {
+        let file_path = get_file_path(voice, text);
+        log::debug!("get_or_generate_tts: checking cache for {}", file_path);
+        if Path::new(&file_path).exists() {
+            log::debug!("get_or_generate_tts: cache hit for {}", file_path);
+            return Ok(TtsResult { file_path, actual_voice: voice.to_string(), fallback: false });
+        }
     }
 
     log::info!("get_or_generate_tts: generating TTS for voice {}", voice);
@@ -203,23 +210,46 @@ pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<TtsResult, B
         }
     };
 
-    // When fallback occurs, save with Google filename so we don't cache
-    // Google audio under a FakeYou filename
-    let save_path = if fallback {
-        get_file_path("Google", text)
+    let save_path = if save_mp3 {
+        // When disk saving is enabled, save permanently to audios/ with proper naming
+        if fallback {
+            get_file_path("Google", text)
+        } else {
+            get_file_path(voice, text)
+        }
     } else {
-        file_path
+        // When disk saving is disabled, save to a temp file for playback
+        let hash = format!("{:x}", md5_compute(text));
+        let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
+        format!("{}/tts_{}.mp3", temp_dir, hash)
     };
+
+    // Ensure temp directory exists when not saving to disk
+    if !save_mp3 {
+        let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
+        std::fs::create_dir_all(&temp_dir)?;
+    }
 
     compress_and_save_mp3(bytes, &save_path).await?;
 
-    // Write ID3 tags (artist, title, lyrics) into the MP3 file
-    let (artist, title) = if actual_voice == "Google" {
-        ("Google", "Google")
-    } else {
-        (voice, get_voice_token(voice))
-    };
-    write_id3_tags(&save_path, artist, title, text);
+    if save_mp3 {
+        // Write ID3 tags (artist, title, lyrics) into the MP3 file (only for permanent files)
+        let (artist, title) = if actual_voice == "Google" {
+            ("Google", "Google")
+        } else {
+            (voice, get_voice_token(voice))
+        };
+        write_id3_tags(&save_path, artist, title, text);
+    }
+
+    // Schedule temp file cleanup when not saving to disk
+    if !save_mp3 {
+        let path_clone = save_path.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+            let _ = tokio::fs::remove_file(&path_clone).await;
+        });
+    }
 
     Ok(TtsResult { file_path: save_path, actual_voice, fallback })
 }

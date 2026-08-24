@@ -348,7 +348,7 @@ async fn stop(ctx: Context<'_>) -> Result<(), Error> {
 async fn speak(
     ctx: Context<'_>,
     #[description = "La frase da ripetere"] text: String,
-    #[description = "La voce da usare"]
+    #[description = "La voce da usare (default: Google)"]
     #[autocomplete = "voice_autocomplete"]
     voice: Option<String>,
 ) -> Result<(), Error> {
@@ -480,7 +480,7 @@ async fn speak(
 #[poise::command(slash_command, user_cooldown = 5)]
 async fn random(
     ctx: Context<'_>,
-    #[description = "La voce da usare"]
+    #[description = "La voce da usare (default: Google)"]
     #[autocomplete = "voice_autocomplete"]
     voice: Option<String>,
     #[description = "Il testo da cercare"] text: Option<String>,
