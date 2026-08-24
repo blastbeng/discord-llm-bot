@@ -270,10 +270,27 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
     
     match connect_bot_by_voice_client(ctx, channel_id, ctx.author().id).await {
         Ok(_) => {
-            // Check if user is joining to their own channel by comparing IDs directly
-            let message = format!("{} {}", 
-                ctx.data().lang.join_success_to_self, 
-                ctx.author().id.mention());
+            // Check if the bot actually ended up in the user's channel.
+            // connect_bot_by_voice_client may keep the bot in a different
+            // channel (e.g. it was playing, or the member was already in
+            // the bot's channel), so we must verify the actual channel.
+            let manager = songbird::get(ctx.serenity_context()).await
+                .ok_or("Songbird not registered")?;
+            let bot_in_user_channel = manager.get(ctx.guild_id().unwrap())
+                .is_some_and(|h| {
+                    h.try_lock()
+                        .ok()
+                        .is_some_and(|guard| {
+                            guard.current_channel()
+                                .is_some_and(|c| c.0.get() == channel_id.get())
+                        })
+                });
+
+            let message = if bot_in_user_channel {
+                format!("{} {}", ctx.data().lang.join_success_to_self, ctx.author().id.mention())
+            } else {
+                ctx.data().lang.join_success.clone()
+            };
             ctx.say(&message).await?;
         }
         Err(e) => {
