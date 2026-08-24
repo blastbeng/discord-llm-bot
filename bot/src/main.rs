@@ -294,7 +294,7 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
                 });
 
             let message = if bot_in_user_channel {
-                format!("{} {}", ctx.data().lang.join_success_to_self, ctx.author().id.mention())
+                ctx.data().lang.join_success_to_self.replacen("{}", &ctx.author().id.mention().to_string(), 1)
             } else {
                 ctx.data().lang.join_success.clone()
             };
