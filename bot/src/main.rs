@@ -1102,13 +1102,14 @@ async fn main() {
             pre_command: |ctx| {
                 Box::pin(async move {
                     let command_name = ctx.command().name.as_str();
-                    // Only restrict restart, avatar, and rename to the parent server
+                    // Only check guild restriction for admin commands (restart, avatar, rename).
+                    // Each of these commands also has its own guild+admin check inside the
+                    // command body, so this hook only provides an early log warning.
                     if command_name != "restart" && command_name != "avatar" && command_name != "rename" {
                         return;
                     }
                     let allowed_guild_id = env::var("GUILD_ID").unwrap_or_default();
                     if ctx.guild_id().map(|g| g.to_string()) != Some(allowed_guild_id) {
-                        let _ = ctx.send(poise::CreateReply::default().content(&ctx.data().lang.wrong_guild).ephemeral(true)).await;
                         log::warn!("Command {} invoked in wrong guild by user {}", command_name, ctx.author().id);
                     }
                 })
