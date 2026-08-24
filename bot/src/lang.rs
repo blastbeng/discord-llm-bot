@@ -37,6 +37,8 @@ pub struct Lang {
     pub initializing_connection: String,
     pub invalid_voice: String,
     pub wrong_guild: String,
+    pub disagio: String,
+    pub user_no_permission: String,
 }
 
 impl Lang {
@@ -88,6 +90,8 @@ impl Lang {
                 initializing_connection: "Please try again later, I'm initializing the connection...".to_string(),
                 invalid_voice: "Invalid voice selected.".to_string(),
                 wrong_guild: "This bot can only be used in the parent server".to_string(),
+                disagio: "Disagio.".to_string(),
+                user_no_permission: "You don't have permission to use this command in this voice channel.".to_string(),
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
@@ -134,6 +138,8 @@ impl Lang {
                 initializing_connection: "Per favore riprova piú tardi, Sto inizializzando la connessione...".to_string(),
                 invalid_voice: "Voce non valida selezionata.".to_string(),
                 wrong_guild: "Questo bot può essere utilizzato solo nel server padre".to_string(),
+                disagio: "Disagio.".to_string(),
+                user_no_permission: "Non hai i permessi per utilizzare questo comando in questo canale vocale.".to_string(),
             }
         }
     }

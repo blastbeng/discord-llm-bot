@@ -217,8 +217,8 @@ async fn check_permissions(ctx: Context<'_>) -> Result<(), Error> {
         #[allow(deprecated)]
         let perms = guild_channel.permissions_for_user(ctx.cache(), ctx.cache().current_user().id)?;
         if !perms.speak() || !perms.connect() {
-            log::warn!("check_permissions: user {} lacks speak/connect permission in channel {}", ctx.author().id, channel_id);
-            return Err(lang.no_speak_permission.as_str().into());
+            log::warn!("check_permissions: bot lacks speak/connect permission in channel {}", channel_id);
+            return Err(lang.user_no_permission.as_str().into());
         }
     }
     Ok(())
@@ -239,8 +239,8 @@ async fn check_speak_permission(ctx: Context<'_>) -> Result<(), Error> {
         #[allow(deprecated)]
         let perms = guild_channel.permissions_for_user(ctx.cache(), ctx.cache().current_user().id)?;
         if !perms.speak() {
-            log::warn!("check_speak_permission: user {} lacks speak permission in channel {}", ctx.author().id, channel_id);
-            return Err(lang.no_speak_permission.as_str().into());
+            log::warn!("check_speak_permission: bot lacks speak permission in channel {}", channel_id);
+            return Err(lang.user_no_permission.as_str().into());
         }
     }
     Ok(())
@@ -250,7 +250,18 @@ async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::Cha
     let guild_id = ctx.guild_id().unwrap();
     let manager = songbird::get(ctx.serenity_context()).await
         .ok_or("Songbird not registered")?;
-    
+
+    // Check if the bot has speak permission in the target channel (like Python's connect_bot_by_voice_client)
+    let channel = channel_id.to_channel(ctx.http()).await?;
+    if let serenity::Channel::Guild(guild_channel) = channel {
+        #[allow(deprecated)]
+        let perms = guild_channel.permissions_for_user(ctx.cache(), ctx.cache().current_user().id)?;
+        if !perms.speak() {
+            log::warn!("connect_bot_by_voice_client: bot lacks speak permission in channel {}", channel_id);
+            return Err(ctx.data().lang.disagio.as_str().into());
+        }
+    }
+
     if let Some(handler_lock) = manager.get(guild_id) {
         let mut handler = handler_lock.lock().await;
         if let Some(current_channel) = handler.current_channel() {
@@ -264,7 +275,7 @@ async fn connect_bot_by_voice_client(ctx: Context<'_>, channel_id: serenity::Cha
         drop(handler);
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
-    
+
     log::info!("connect_bot_by_voice_client: joining channel {}", channel_id);
     let _handler_lock = manager.join(guild_id, channel_id).await?;
     // Wait for connection to establish
@@ -978,7 +989,7 @@ async fn main() {
                                     };
                                     if !has_perms {
                                         component.create_response(ctx, serenity::CreateInteractionResponse::Message(
-                                            serenity::CreateInteractionResponseMessage::new().content(&data.lang.no_speak_permission).ephemeral(true)
+                                            serenity::CreateInteractionResponseMessage::new().content(&data.lang.user_no_permission).ephemeral(true)
                                         )).await?;
                                         return Ok(());
                                     }
