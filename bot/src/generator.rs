@@ -67,7 +67,7 @@ pub async fn run_background_generator(pool: SqlitePool) {
                                 } else {
                                     generated_count += 1;
                                 }
-                                
+
                                 if *voice != "Google" && !result.fallback {
                                     fakeyou_count += 1;
                                 }
@@ -82,8 +82,7 @@ pub async fn run_background_generator(pool: SqlitePool) {
                                 failed_count += 1;
                             }
                         }
-                        
-                        generated_count += 1;
+
                         // Sleep a bit to avoid rate limiting and reduce API load
                         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                     } else {
