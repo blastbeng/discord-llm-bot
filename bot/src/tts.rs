@@ -452,11 +452,13 @@ pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<TtsResult, B
     compress_and_save_mp3(bytes, &save_path).await?;
 
     if save_mp3 {
-        // Write ID3 tags (artist, title, lyrics) into the MP3 file (only for permanent files)
+        // Write ID3 tags (artist, title, lyrics) into the MP3 file (only for permanent files).
+        // Use actual_voice (not the requested voice) so that a fallback Google
+        // file is tagged with "Google" as the artist, matching its filename.
         let (artist, title) = if actual_voice == "Google" {
             ("Google", "Google")
         } else {
-            (voice, get_voice_token(voice))
+            (actual_voice.as_str(), get_voice_token(&actual_voice))
         };
         write_id3_tags(&save_path, artist, title, text);
     }
