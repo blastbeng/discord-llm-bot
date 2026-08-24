@@ -1,0 +1,490 @@
+// WhatsApp bot — receives messages from the Baileys bridge via HTTP webhook,
+// processes commands, and sends responses back via the bridge HTTP API.
+// Shares the same SQLite database and TTS cache with the Discord bot.
+
+mod database;
+mod llm;
+mod tts;
+mod lang;
+
+use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
+use rand::seq::SliceRandom;
+use serde::Deserialize;
+use serde_json::Value;
+use std::sync::Arc;
+use std::env;
+
+struct AppState {
+    db_pool: sqlx::SqlitePool,
+    lang: lang::Lang,
+    bridge_url: String,
+    /// Per-group conversation history for /ask.
+    conversations: std::sync::Mutex<std::collections::HashMap<String, Vec<llm::ConversationMessage>>>,
+}
+
+#[derive(Deserialize)]
+struct WebhookPayload {
+    from: String,
+    is_group: bool,
+    sender: String,
+    #[allow(dead_code)]
+    message_id: String,
+    text: String,
+}
+
+#[tokio::main]
+async fn main() {
+    eprintln!("=== wapp-bot starting ===");
+    dotenv::dotenv().ok();
+    let mut builder = env_logger::Builder::from_env(env_logger::Env::default().filter_or("LOG_LEVEL", "info"));
+    builder.init();
+
+    let bridge_url = env::var("WAPP_BRIDGE_URL").unwrap_or_else(|_| "http://whatsapp-bridge:3001".to_string());
+    let webhook_port: u16 = env::var("WAPP_WEBHOOK_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3002);
+
+    // Initialize database (shared with Discord bot)
+    let db_url = env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite:config/discord-bot.sqlite3".to_string());
+    tokio::fs::create_dir_all("config").await.expect("Failed to create config directory");
+    let db_path = db_url.strip_prefix("sqlite:").unwrap_or(&db_url);
+    if !tokio::fs::try_exists(db_path).await.unwrap_or(false) {
+        tokio::fs::File::create(db_path).await.expect("Failed to create database file");
+    }
+
+    let db_pool = sqlx::SqlitePool::connect(&db_url).await
+        .expect("Database connection failed");
+    eprintln!("Connecting to database at: {}", db_url);
+    database::init_db(&db_pool).await.expect("Database initialization failed");
+    log::info!("✓ Database initialized");
+    database::populate_db_if_empty(&db_pool).await.expect("Database population failed");
+    log::info!("✓ Database population check completed");
+
+    // Initialize FakeYou TTS
+    tts::init_fakeyou().await;
+
+    let state = Arc::new(AppState {
+        db_pool,
+        lang: lang::Lang::new(),
+        bridge_url: bridge_url.clone(),
+        conversations: std::sync::Mutex::new(std::collections::HashMap::new()),
+    });
+
+    let app = Router::new()
+        .route("/webhook", post(handle_webhook))
+        .with_state(state);
+
+    let addr = format!("0.0.0.0:{}", webhook_port);
+    log::info!("wapp-bot listening on {}", addr);
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    axum::serve(listener, app).await.unwrap();
+}
+
+async fn handle_webhook(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<WebhookPayload>,
+) -> (StatusCode, Json<Value>) {
+    log::info!("wapp-bot: received message from {} in group={}: {:?}", payload.from, payload.is_group, payload.text);
+
+    // Parse the command
+    let text = payload.text.trim();
+    let (command, args) = match text.split_once(' ') {
+        Some((cmd, rest)) => (cmd.to_lowercase(), rest.trim().to_string()),
+        None => (text.to_lowercase(), String::new()),
+    };
+
+    let response = match command.as_str() {
+        "/speak" | "/s" => cmd_speak(&state, &payload, &args).await,
+        "/random" | "/r" => cmd_random(&state, &payload, &args).await,
+        "/ask" | "/a" => cmd_ask(&state, &payload, &args).await,
+        "/translate" | "/t" => cmd_translate(&state, &payload, &args).await,
+        "/joke" | "/j" => cmd_joke(&state, &payload).await,
+        "/stats" => cmd_stats(&state, &payload).await,
+        "/help" | "/h" => cmd_help(&state, &payload).await,
+        _ => return (StatusCode::OK, Json(serde_json::json!({"status": "ignored"}))),
+    };
+
+    (StatusCode::OK, Json(serde_json::json!({"status": "processed", "response": response})))
+}
+
+// ─── Helper: send text via bridge ──────────────────────────────────
+
+async fn send_text(state: &AppState, chat_id: &str, text: &str) {
+    let url = format!("{}/sendText", state.bridge_url);
+    let client = reqwest::Client::new();
+    match client.post(&url).json(&serde_json::json!({"chatId": chat_id, "text": text})).send().await {
+        Ok(r) => {
+            if !r.status().is_success() {
+                log::error!("wapp-bot: sendText failed with status {}", r.status());
+            }
+        }
+        Err(e) => log::error!("wapp-bot: sendText error: {}", e),
+    }
+}
+
+// ─── Helper: send audio via bridge ─────────────────────────────────
+
+async fn send_audio(state: &AppState, chat_id: &str, file_path: &str) {
+    let url = format!("{}/sendAudio", state.bridge_url);
+    let client = reqwest::Client::new();
+    match client.post(&url).json(&serde_json::json!({"chatId": chat_id, "filePath": file_path})).send().await {
+        Ok(r) => {
+            if !r.status().is_success() {
+                log::error!("wapp-bot: sendAudio failed with status {}", r.status());
+            }
+        }
+        Err(e) => log::error!("wapp-bot: sendAudio error: {}", e),
+    }
+}
+
+// ─── Helper: parse voice and effect from args ──────────────────────
+
+fn parse_voice_effect(args: &str) -> (String, String, String) {
+    // Format: "text" or "text --voice Google" or "text --voice Google --effect echo"
+    // We parse from the end to find --voice and --effect flags
+    let mut voice = "Google".to_string();
+    let mut effect = "none".to_string();
+    let mut text = args.to_string();
+
+    // Extract --effect
+    if let Some(pos) = text.rfind("--effect ") {
+        let effect_str = &text[pos + 9..];
+        effect = effect_str.trim().to_string();
+        text = text[..pos].trim().to_string();
+    }
+
+    // Extract --voice
+    if let Some(pos) = text.rfind("--voice ") {
+        let voice_str = &text[pos + 8..];
+        voice = voice_str.trim().to_string();
+        text = text[..pos].trim().to_string();
+    }
+
+    (text, voice, effect)
+}
+
+// ─── Commands ──────────────────────────────────────────────────────
+
+async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) -> String {
+    let (text, voice, effect) = parse_voice_effect(args);
+
+    if text.is_empty() {
+        return "Usage: /speak <text> [--voice Google] [--effect none]".to_string();
+    }
+
+    if text.chars().count() > 200 {
+        return "Text too long (max 200 characters).".to_string();
+    }
+
+    let actual_voice = if voice == "random" {
+        let mut rng = rand::thread_rng();
+        tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
+    } else {
+        voice
+    };
+
+    if !tts::is_valid_voice(&actual_voice) {
+        return "Invalid voice selected.".to_string();
+    }
+
+    let actual_effect = if effect == "random" {
+        let mut rng = rand::thread_rng();
+        tts::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+    } else {
+        effect
+    };
+
+    if !tts::is_valid_effect(&actual_effect) {
+        return "Invalid audio effect selected.".to_string();
+    }
+
+    // Generate TTS
+    match tts::get_or_generate_tts_with_effect(&text, &actual_voice, &actual_effect).await {
+        Ok(tts_result) => {
+            // Save sentence to database
+            if let Err(e) = database::insert_sentence(&state.db_pool, &text).await {
+                log::error!("Failed to insert sentence: {}", e);
+            }
+
+            // Send audio via bridge
+            send_audio(state, &payload.from, &tts_result.file_path).await;
+
+            let warning = if tts_result.fallback { " (fallback to Google)" } else { "" };
+            format!("Playing: {} with voice: {}{}", text, tts_result.actual_voice, warning)
+        }
+        Err(e) => {
+            log::error!("TTS generation failed: {}", e);
+            "Error generating audio. Please try again later.".to_string()
+        }
+    }
+}
+
+async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) -> String {
+    let (search_text, voice, effect) = parse_voice_effect(args);
+
+    // Fetch sentences from database
+    let sentences = if !search_text.is_empty() {
+        match database::select_like_sentence(&state.db_pool, &search_text).await {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Database error: {}", e);
+                return "Database error. Please try again later.".to_string();
+            }
+        }
+    } else {
+        match database::select_all_sentence(&state.db_pool).await {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("Database error: {}", e);
+                return "Database error. Please try again later.".to_string();
+            }
+        }
+    };
+
+    if sentences.is_empty() {
+        if search_text.is_empty() {
+            return "No sentences found in the database.".to_string();
+        } else {
+            return format!("No sentence found containing \"{}\"", search_text);
+        }
+    }
+
+    let random_sentence = {
+        let mut rng = rand::thread_rng();
+        sentences.choose(&mut rng).unwrap().to_string()
+    };
+
+    let actual_voice = if voice == "random" {
+        let mut rng = rand::thread_rng();
+        tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
+    } else {
+        voice
+    };
+
+    if !tts::is_valid_voice(&actual_voice) {
+        return "Invalid voice selected.".to_string();
+    }
+
+    let actual_effect = if effect == "random" {
+        let mut rng = rand::thread_rng();
+        tts::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+    } else {
+        effect
+    };
+
+    if !tts::is_valid_effect(&actual_effect) {
+        return "Invalid audio effect selected.".to_string();
+    }
+
+    match tts::get_or_generate_tts_with_effect(&random_sentence, &actual_voice, &actual_effect).await {
+        Ok(tts_result) => {
+            send_audio(state, &payload.from, &tts_result.file_path).await;
+            let warning = if tts_result.fallback { " (fallback to Google)" } else { "" };
+            format!("Playing: {} with voice: {}{}", random_sentence, tts_result.actual_voice, warning)
+        }
+        Err(e) => {
+            log::error!("TTS generation failed: {}", e);
+            "Error generating audio. Please try again later.".to_string()
+        }
+    }
+}
+
+async fn cmd_ask(state: &AppState, payload: &WebhookPayload, args: &str) -> String {
+    if !llm::is_configured() {
+        return "AI is not configured. Set LLM_ENDPOINTS and LLM_MODELS to enable this command.".to_string();
+    }
+
+    let (text, _voice, _effect) = parse_voice_effect(args);
+
+    if text.is_empty() {
+        return "Usage: /ask <question>".to_string();
+    }
+
+    if text.chars().count() > 500 {
+        return "Question too long (max 500 characters).".to_string();
+    }
+
+    // Fetch database sentences for personality context
+    let db_sentences = database::select_all_sentence(&state.db_pool).await.unwrap_or_default();
+
+    // Fetch conversation history for this group
+    let history = {
+        let conversations = state.conversations.lock().unwrap();
+        conversations.get(&payload.from).cloned().unwrap_or_default()
+    };
+
+    // Query the LLM
+    match llm::ask(&text, &db_sentences, "WhatsApp Bot", &history).await {
+        Ok(response) => {
+            log::info!("wapp-bot: LLM response: {:?}", response);
+
+            // Save response to database
+            if let Err(e) = database::insert_sentence(&state.db_pool, &response).await {
+                log::error!("Failed to insert LLM response: {}", e);
+            }
+
+            // Store in conversation history
+            {
+                let mut conversations = state.conversations.lock().unwrap();
+                let group_history = conversations.entry(payload.from.clone()).or_insert_with(Vec::new);
+                group_history.push(llm::ConversationMessage { role: "user".to_string(), content: text.clone() });
+                group_history.push(llm::ConversationMessage { role: "assistant".to_string(), content: response.clone() });
+                if group_history.len() > 20 {
+                    let start = group_history.len() - 20;
+                    group_history.drain(0..start);
+                }
+            }
+
+            response
+        }
+        Err(e) => {
+            log::error!("LLM failed: {}", e);
+            "The AI is currently unavailable. Please try again later.".to_string()
+        }
+    }
+}
+
+async fn cmd_translate(state: &AppState, _payload: &WebhookPayload, args: &str) -> String {
+    if !llm::is_configured() {
+        return "AI is not configured. Set LLM_ENDPOINTS and LLM_MODELS to enable this command.".to_string();
+    }
+
+    // Format: /translate <text> <target_lang>
+    // We need to split the last word as the target language
+    let parts: Vec<&str> = args.rsplitn(2, ' ').collect();
+    if parts.len() < 2 {
+        return "Usage: /translate <text> <target_lang>".to_string();
+    }
+    let target_lang = parts[0].to_string();
+    let text = parts[1].trim().to_string();
+
+    if text.is_empty() {
+        return "Usage: /translate <text> <target_lang>".to_string();
+    }
+
+    match llm::translate(&text, &target_lang).await {
+        Ok(response) => {
+            if let Err(e) = database::insert_sentence(&state.db_pool, &response).await {
+                log::error!("Failed to insert translation: {}", e);
+            }
+            response
+        }
+        Err(e) => {
+            log::error!("Translation failed: {}", e);
+            "Translation failed. Please try again later.".to_string()
+        }
+    }
+}
+
+async fn cmd_joke(state: &AppState, payload: &WebhookPayload) -> String {
+    let joke_url = "https://v2.jokeapi.dev/joke/Any?safe-mode&type=twopart&format=json";
+    let client = tts::http_client();
+
+    match client.get(joke_url).send().await {
+        Ok(resp) => {
+            if !resp.status().is_success() {
+                return "Failed to fetch a joke. Please try again later.".to_string();
+            }
+            match resp.json::<serde_json::Value>().await {
+                Ok(json) => {
+                    if json.get("error").is_some_and(|e| e.as_bool().unwrap_or(false)) {
+                        return "Failed to fetch a joke. Please try again later.".to_string();
+                    }
+                    let setup = json.get("setup").and_then(|s| s.as_str()).unwrap_or("");
+                    let delivery = json.get("delivery").and_then(|d| d.as_str()).unwrap_or("");
+                    let single = json.get("joke").and_then(|j| j.as_str()).unwrap_or("");
+                    let joke_text = if !setup.is_empty() && !delivery.is_empty() {
+                        format!("{}. {}", setup, delivery)
+                    } else if !single.is_empty() {
+                        single.to_string()
+                    } else {
+                        return "Failed to fetch a joke. Please try again later.".to_string();
+                    };
+
+                    // Save joke to database
+                    if let Err(e) = database::insert_sentence(&state.db_pool, &joke_text).await {
+                        log::error!("Failed to insert joke: {}", e);
+                    }
+
+                    // Also send as audio
+                    match tts::get_or_generate_tts(&joke_text, "Google").await {
+                        Ok(tts_result) => {
+                            send_audio(state, &payload.from, &tts_result.file_path).await;
+                        }
+                        Err(e) => log::error!("Joke TTS failed: {}", e),
+                    }
+
+                    joke_text
+                }
+                Err(_) => "Failed to fetch a joke. Please try again later.".to_string(),
+            }
+        }
+        Err(e) => {
+            log::error!("JokeAPI request failed: {}", e);
+            "Failed to fetch a joke. Please try again later.".to_string()
+        }
+    }
+}
+
+async fn cmd_stats(state: &AppState, _payload: &WebhookPayload) -> String {
+    let db_stats = database::get_db_statistics(&state.db_pool).await.unwrap_or_else(|e| format!("Error: {}", e));
+
+    let cache_info = match tokio::fs::read_dir("audios").await {
+        Ok(mut entries) => {
+            let mut count = 0u64;
+            let mut size_bytes: u64 = 0;
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if entry.path().extension().is_some_and(|ext| ext == "mp3") {
+                    count += 1;
+                    if let Ok(meta) = entry.metadata().await {
+                        size_bytes += meta.len();
+                    }
+                }
+            }
+            let size_mb = size_bytes as f64 / (1024.0 * 1024.0);
+            format!("{} files ({:.1} MB)", count, size_mb)
+        }
+        Err(_) => "N/A".to_string(),
+    };
+
+    let fakeyou_status = if env::var("FAKEYOU_USERNAME").unwrap_or_default().is_empty() {
+        "Not configured".to_string()
+    } else {
+        "Authenticated".to_string()
+    };
+
+    let llm_status = if llm::is_configured() {
+        let endpoints = env::var("LLM_ENDPOINTS").unwrap_or_default();
+        let count = endpoints.split(',').filter(|s| !s.trim().is_empty()).count();
+        format!("{} endpoint(s)", count)
+    } else {
+        "Not configured".to_string()
+    };
+
+    format!(
+        "📊 Bot Statistics\n\n🗄️ Database: {}\n🎵 TTS Cache: {}\n🎭 FakeYou: {}\n🤖 LLM: {}",
+        db_stats, cache_info, fakeyou_status, llm_status
+    )
+}
+
+async fn cmd_help(state: &AppState, _payload: &WebhookPayload) -> String {
+    format!(
+        "{}\n\n\
+        *Voice & Audio:*\n\
+        /speak <text> [--voice Google] [--effect none] — Speak text via TTS (sends audio)\n\
+        /random [search] [--voice Google] [--effect none] — Random sentence from database (sends audio)\n\
+        /joke — Fetch a random joke (sends audio)\n\n\
+        *AI & LLM:*\n\
+        /ask <question> — Ask the AI a question (text response)\n\
+        /translate <text> <lang> — Translate text via LLM (text response)\n\n\
+        *Utility:*\n\
+        /stats — Show bot statistics\n\
+        /help — Show this help message\n\n\
+        *Available voices:* {}\n\
+        *Available effects:* {}",
+        state.lang.help_title,
+        tts::AVAILABLE_VOICES.iter().map(|v| format!("`{}`", v)).collect::<Vec<_>>().join(", "),
+        tts::AVAILABLE_EFFECTS.iter().map(|e| format!("`{}`", e)).collect::<Vec<_>>().join(", "),
+    )
+}
