@@ -1204,7 +1204,15 @@ async fn main() {
                                         )).await?;
                                         return Ok(());
                                     }
-                                    let manager = songbird::get(ctx).await.unwrap();
+                                    let manager = match songbird::get(ctx).await {
+                                        Some(m) => m,
+                                        None => {
+                                            component.create_response(ctx, serenity::CreateInteractionResponse::Message(
+                                                serenity::CreateInteractionResponseMessage::new().content(&data.lang.bot_not_ready).ephemeral(true)
+                                            )).await?;
+                                            return Ok(());
+                                        }
+                                    };
                                     if let Some(handler) = manager.get(guild_id) {
                                         let mut handler = handler.lock().await;
                                         handler.stop();
@@ -1235,7 +1243,13 @@ async fn main() {
                                         component.edit_response(ctx, serenity::EditInteractionResponse::new().content(&data.lang.file_expired)).await?;
                                         return Ok(());
                                     }
-                                    let manager = songbird::get(ctx).await.unwrap();
+                                    let manager = match songbird::get(ctx).await {
+                                        Some(m) => m,
+                                        None => {
+                                            component.edit_response(ctx, serenity::EditInteractionResponse::new().content(&data.lang.bot_not_ready)).await?;
+                                            return Ok(());
+                                        }
+                                    };
                                     if let Some(handler_lock) = manager.get(guild_id) {
                                         let mut handler = handler_lock.lock().await;
                                         // Check if bot is still connected
