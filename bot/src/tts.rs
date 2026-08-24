@@ -1,8 +1,31 @@
 use id3::{Tag, TagLike, Version};
 use md5::compute as md5_compute;
 use std::path::Path;
+use std::sync::OnceLock;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+
+/// Shared reqwest client for standard HTTP requests (Google TTS, downloads).
+/// Reusing a single client avoids creating a new TLS context and connection
+/// pool on every request, reducing latency and resource usage.
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+/// Shared reqwest client with a generous timeout for FakeYou jobs, which
+/// can take a while to complete.
+static FAKEYOU_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| reqwest::Client::new())
+}
+
+fn fakeyou_client() -> &'static reqwest::Client {
+    FAKEYOU_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .expect("Failed to build FakeYou HTTP client")
+    })
+}
 
 /// All available voices (matches Python's get_available_voices)
 pub const AVAILABLE_VOICES: &[&str] = &[
@@ -85,7 +108,7 @@ pub async fn get_tts_google(text: &str) -> Result<Vec<u8>, Box<dyn std::error::E
         urlencoding::encode(text),
         tts_lang
     );
-    let client = reqwest::Client::new();
+    let client = http_client();
 
     // Retry up to 3 times with short backoff to handle transient network errors
     let max_attempts = 3;
@@ -164,10 +187,8 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
         return Err(format!("Invalid or non-FakeYou voice: {}", voice).into());
     }
 
-    // Build client with a generous timeout (FakeYou jobs can take a while)
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()?;
+    // Use a shared client with a generous timeout (FakeYou jobs can take a while)
+    let client = fakeyou_client();
 
     let idempotency_token = uuid::Uuid::new_v4().to_string();
     let body = serde_json::json!({
