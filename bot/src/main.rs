@@ -291,11 +291,11 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
             } else {
                 ctx.data().lang.join_success.clone()
             };
-            ctx.say(&message).await?;
+            ctx.send(poise::CreateReply::default().content(&message).ephemeral(true)).await?;
         }
         Err(e) => {
             log::error!("Failed to join voice channel: {:?}", e);
-            ctx.say(&ctx.data().lang.join_error).await?;
+            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.join_error).ephemeral(true)).await?;
         }
     }
     Ok(())
@@ -311,9 +311,9 @@ async fn leave(ctx: Context<'_>) -> Result<(), Error> {
     let manager = songbird::get(ctx.serenity_context()).await.unwrap();
     if manager.get(guild_id).is_some() {
         let _ = manager.remove(guild_id).await;
-        ctx.say(&ctx.data().lang.leave_success).await?;
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.leave_success).ephemeral(true)).await?;
     } else {
-        ctx.say(&ctx.data().lang.not_connected).await?;
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.not_connected).ephemeral(true)).await?;
     }
     Ok(())
 }
@@ -329,9 +329,9 @@ async fn stop(ctx: Context<'_>) -> Result<(), Error> {
     if let Some(handler) = manager.get(guild_id) {
         let mut handler = handler.lock().await;
         handler.stop();
-        ctx.say(&ctx.data().lang.stop_success).await?;
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.stop_success).ephemeral(true)).await?;
     } else {
-        ctx.say(&ctx.data().lang.not_connected).await?;
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.not_connected).ephemeral(true)).await?;
     }
     Ok(())
 }
@@ -696,7 +696,7 @@ async fn audio(
     let allowed_extensions = ["mp3", "wav", "ogg", "m4a", "flac"];
     let ext = audio.filename.split('.').next_back().unwrap_or("").to_lowercase();
     if !allowed_extensions.contains(&ext.as_str()) {
-        ctx.say(&ctx.data().lang.invalid_extension).await?;
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_extension).ephemeral(true)).await?;
         return Ok(());
     }
 
@@ -713,14 +713,14 @@ async fn audio(
     let handler_lock = match manager.get(guild_id) {
         Some(h) => h,
         None => {
-            ctx.say(&ctx.data().lang.bot_not_ready).await?;
+            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.bot_not_ready).ephemeral(true)).await?;
             return Ok(());
         }
     };
     {
         let handler = handler_lock.lock().await;
         if handler.current_channel().is_none() {
-            ctx.say(&ctx.data().lang.initializing_connection).await?;
+            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.initializing_connection).ephemeral(true)).await?;
             return Ok(());
         }
     }
@@ -783,7 +783,7 @@ async fn restart(ctx: Context<'_>) -> Result<(), Error> {
     let admin_id = env::var("ADMIN_ID").expect("ADMIN_ID must be set");
     let _guild_id = env::var("GUILD_ID").expect("GUILD_ID must be set");
     if ctx.guild_id().unwrap().to_string() != _guild_id || ctx.author().id.to_string() != admin_id {
-        ctx.say(&ctx.data().lang.admin_parent_server).await?;
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.admin_parent_server).ephemeral(true)).await?;
         return Ok(());
     }
     let _guild_id = ctx.guild_id().unwrap();
@@ -791,10 +791,10 @@ async fn restart(ctx: Context<'_>) -> Result<(), Error> {
     let member = guild_id.member(ctx.http(), ctx.author().id).await?;
     #[allow(deprecated)]
     if !member.permissions(ctx)?.administrator() {
-        ctx.say(&ctx.data().lang.admin_only).await?;
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.admin_only).ephemeral(true)).await?;
         return Ok(());
     }
-    ctx.say(&ctx.data().lang.restarting).await?;
+    ctx.send(poise::CreateReply::default().content(&ctx.data().lang.restarting).ephemeral(true)).await?;
     std::process::exit(0);
 }
 
@@ -807,12 +807,12 @@ async fn rename(
     ctx.defer_ephemeral().await?;
     log::info!("[GUILDID : {}] rename command invoked by user {} with name: {}", ctx.guild_id().unwrap(), ctx.author().id, name);
     if name.chars().count() > 32 {
-        ctx.say(&ctx.data().lang.nickname_too_long).await?;
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.nickname_too_long).ephemeral(true)).await?;
         return Ok(());
     }
     let guild_id = ctx.guild_id().unwrap();
     guild_id.edit_nickname(ctx.http(), Some(&name)).await?;
-    ctx.say(ctx.data().lang.nickname_changed.replacen("{}", &name, 1)).await?;
+    ctx.send(poise::CreateReply::default().content(ctx.data().lang.nickname_changed.replacen("{}", &name, 1)).ephemeral(true)).await?;
     Ok(())
 }
 
@@ -830,7 +830,7 @@ async fn avatar(
     // Verify admin permissions and guild restrictions first (like Python's flow)
     if ctx.guild_id().unwrap().to_string() != guild_id || ctx.author().id.to_string() != admin_id {
         log::info!("Avatar update restricted to parent server administrators only");
-        ctx.say(&ctx.data().lang.admin_parent_server).await?;
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.admin_parent_server).ephemeral(true)).await?;
         return Ok(());
     }
 
@@ -839,7 +839,7 @@ async fn avatar(
 
     // Check content type (like Python's check_image_with_pil)
     if !image.content_type.as_deref().is_some_and(|ct| ct.starts_with("image/")) {
-        ctx.say(&ctx.data().lang.unsupported_file).await?;
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.unsupported_file).ephemeral(true)).await?;
         return Ok(());
     }
 
@@ -848,7 +848,7 @@ async fn avatar(
 
     // Validate image using the image crate (like Python's check_image_with_pil)
     if !validate_image_bytes(&bytes) {
-        ctx.say(&ctx.data().lang.unsupported_file).await?;
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.unsupported_file).ephemeral(true)).await?;
         return Ok(());
     }
 
@@ -859,11 +859,11 @@ async fn avatar(
     match current_user.edit(ctx.http(), serenity::builder::EditProfile::new().avatar(&avatar)).await {
         Ok(_) => {
             log::info!("Bot avatar updated successfully");
-            ctx.say(&ctx.data().lang.avatar_changed).await?;
+            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.avatar_changed).ephemeral(true)).await?;
         }
         Err(e) => {
             log::error!("Failed to update bot avatar: {}", e);
-            ctx.say(&ctx.data().lang.discord_api_error).await?;
+            ctx.send(poise::CreateReply::default().content(&ctx.data().lang.discord_api_error).ephemeral(true)).await?;
         }
     }
 
@@ -936,7 +936,7 @@ async fn main() {
                     }
                     let allowed_guild_id = env::var("GUILD_ID").unwrap_or_default();
                     if ctx.guild_id().map(|g| g.to_string()) != Some(allowed_guild_id) {
-                        let _ = ctx.say(&ctx.data().lang.wrong_guild).await;
+                        let _ = ctx.send(poise::CreateReply::default().content(&ctx.data().lang.wrong_guild).ephemeral(true)).await;
                         log::warn!("Command {} invoked in wrong guild by user {}", command_name, ctx.author().id);
                     }
                 })
