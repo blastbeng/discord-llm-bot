@@ -5,22 +5,16 @@ target/
 # SQLite databases
 *.sqlite
 *.sqlite3
-bot/discord_bot_cache.sqlite
-bot/audios
-discord_bot_cache.sqlite
 bot/discord-bot.sqlite3
 
 # Environment files
 .env
 .env.prod
 .env.local
-.env.anyllm
-.env.waha
 config.json
 
 # Config directory (runtime data, not source)
 config/
-config_old
 
 # Docker
 docker-compose.yml
@@ -28,39 +22,7 @@ docker-compose.yml.bak
 
 # Audios (runtime generated)
 audios/
-
-# Models
-models/
-models_bak/
-
-# Backups
-backups
-backups_old
-manual_backup_*
-
-# Volumes and external dependencies
-volumes
-storage/
-battuteapi_data/
-ollama/
-llama.cpp/
-koboldcpp/
-fastsdcpu/
-proxy-queue
-nginx/config
-rclone/rclone.conf
-
-# Web services
-wwebjs_auth
-.wwebjs_auth
-.wwebjs_cache
-waha_sessions/
-waha_media/
-.env.waha
-
-# ChromaDB
-chroma/data
-chroma/chromadb
+bot/audios
 
 # IDE
 .vscode/
