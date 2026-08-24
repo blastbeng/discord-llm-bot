@@ -410,8 +410,10 @@ pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<TtsResult, B
         // When disk saving is disabled, save to a temp file for playback.
         // Include the voice token in the filename so that the same text
         // requested with different voices doesn't overwrite each other.
+        // Use actual_voice (not the requested voice) so that a fallback
+        // Google file is named with the Google token, not the FakeYou token.
         let hash = format!("{:x}", md5_compute(text));
-        let voice_token = get_voice_token(voice);
+        let voice_token = get_voice_token(&actual_voice);
         let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
         format!("{}/tts_{}_{}.mp3", temp_dir, voice_token, hash)
     };
