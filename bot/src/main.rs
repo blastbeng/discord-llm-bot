@@ -778,7 +778,7 @@ async fn audio(
     let file_path = format!("{}/{}_{}", temp_dir, uuid::Uuid::new_v4(), safe_filename);
     
     // Download the attachment with proper error handling
-    let bytes = match reqwest::get(&audio.url).await {
+    let bytes = match tts::http_client().get(&audio.url).send().await {
         Ok(resp) => match resp.bytes().await {
             Ok(b) => b.to_vec(),
             Err(e) => {
@@ -908,7 +908,7 @@ async fn avatar(
     }
 
     // Download image bytes with proper error handling
-    let bytes = match reqwest::get(&image.url).await {
+    let bytes = match tts::http_client().get(&image.url).send().await {
         Ok(resp) => match resp.bytes().await {
             Ok(b) => b.to_vec(),
             Err(e) => {
