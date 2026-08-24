@@ -132,6 +132,33 @@ pub async fn init_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         log::info!("init_db: UNIQUE constraint on sentence column added successfully");
     }
 
+    // Always deduplicate on startup, regardless of whether the UNIQUE
+    // constraint migration above ran. This catches duplicates that may have
+    // been introduced by external tools, manual edits, or edge cases in the
+    // migration logic. Keeps the row with the lowest id (oldest entry) and
+    // removes all others with the same sentence text.
+    let dupe_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sentences WHERE id NOT IN (
+            SELECT MIN(id) FROM sentences GROUP BY sentence
+        )"
+    )
+    .fetch_one(pool)
+    .await?;
+
+    if dupe_count > 0 {
+        log::info!("init_db: found {} duplicate sentences, removing them", dupe_count);
+        let result = sqlx::query(
+            "DELETE FROM sentences WHERE id NOT IN (
+                SELECT MIN(id) FROM sentences GROUP BY sentence
+            )"
+        )
+        .execute(pool)
+        .await?;
+        log::info!("init_db: removed {} duplicate sentences", result.rows_affected());
+    } else {
+        log::debug!("init_db: no duplicate sentences found");
+    }
+
     // Create index for better query performance
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_sentence ON sentences(sentence)"
