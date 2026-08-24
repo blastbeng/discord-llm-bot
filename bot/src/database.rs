@@ -51,6 +51,87 @@ pub async fn init_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             .execute(pool).await?;
     }
 
+    // The legacy Python DB has an index on sentence but no UNIQUE constraint.
+    // Our insert_sentence uses ON CONFLICT(sentence), which requires a UNIQUE
+    // constraint or PRIMARY KEY on that column. SQLite doesn't support
+    // ALTER TABLE ADD CONSTRAINT, so we must recreate the table.
+    //
+    // Steps:
+    //   1. Check if a UNIQUE constraint exists on the sentence column.
+    //   2. If not, deduplicate existing rows (keep lowest id per sentence).
+    //   3. Rename the old table, create a new one with the UNIQUE constraint,
+    //      copy data over, and drop the old table.
+    let has_unique_on_sentence: bool = {
+        // sqlite_master's sql field contains the full CREATE TABLE statement.
+        // If the original schema had UNIQUE(sentence), it would appear in the
+        // CREATE TABLE sql. The legacy Python bot's schema only has PRIMARY KEY(id)
+        // and a plain INDEX on sentence — no UNIQUE constraint.
+        let row: Option<(String,)> = sqlx::query_as(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='sentences'"
+        )
+        .fetch_optional(pool)
+        .await?;
+        match row {
+            Some((sql,)) => {
+                let lower = sql.to_lowercase();
+                // Check for "unique" keyword applied to the sentence column.
+                // Matches both "sentence TEXT UNIQUE" and "UNIQUE(sentence)".
+                lower.contains("unique")
+                    && (lower.contains("sentence unique")
+                        || lower.contains("unique(sentence)")
+                        || lower.contains("unique (sentence)"))
+            }
+            None => false,
+        }
+    };
+
+    if !has_unique_on_sentence {
+        log::info!("init_db: migrating legacy table — adding UNIQUE constraint on sentence column");
+
+        // Step 1: Remove duplicate sentences, keeping the one with the lowest id
+        let result = sqlx::query(
+            "DELETE FROM sentences WHERE id NOT IN (
+                SELECT MIN(id) FROM sentences GROUP BY sentence
+            )"
+        )
+        .execute(pool)
+        .await?;
+        let dupes_deleted: i64 = result.rows_affected() as i64;
+        log::info!("init_db: removed {} duplicate sentences", dupes_deleted);
+
+        // Step 2: Recreate the table with the UNIQUE constraint.
+        // Rename old table, create new one, copy data, drop old.
+        sqlx::query("ALTER TABLE sentences RENAME TO sentences_old")
+            .execute(pool)
+            .await?;
+
+        sqlx::query(
+            "CREATE TABLE sentences (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sentence TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                usage_count INTEGER DEFAULT 0,
+                last_used_at TIMESTAMP
+            )"
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "INSERT INTO sentences (id, sentence, created_at, usage_count, last_used_at)
+             SELECT id, sentence, created_at, usage_count, last_used_at
+             FROM sentences_old"
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query("DROP TABLE sentences_old")
+            .execute(pool)
+            .await?;
+
+        log::info!("init_db: UNIQUE constraint on sentence column added successfully");
+    }
+
     // Create index for better query performance
     sqlx::query(
         "CREATE INDEX IF NOT EXISTS idx_sentence ON sentences(sentence)"
