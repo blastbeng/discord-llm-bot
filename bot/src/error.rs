@@ -4,7 +4,7 @@ use std::fmt;
 use thiserror::Error;
 
 /// Comprehensive error types for the Discord bot
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum BotError {
     #[error("Database error: {0}")]
     Database(String),
@@ -123,7 +123,7 @@ impl BotError {
             BotError::VoiceConnection(msg) => format!("VOICE: {}", msg),
             BotError::PermissionError(msg) => format!("PERMISSIONS: {}", msg),
             BotError::Configuration(msg) => format!("CONFIG: {}", msg),
-            BotError::ExternalApi { api, message } => format!("{API}: {}", message),
+            BotError::ExternalApi { api, message } => format!("{api}: {}", message),
             BotError::FileError(msg) => format!("FILE: {}", msg),
             BotError::CommandError { context, message } => format!("[{}] {}", context, message),
             BotError::RateLimitExceeded { user_id, retry_after } => {
@@ -153,9 +153,9 @@ impl BotError {
     pub fn to_user_message(&self) -> String {
         let base_msg = self.to_string();
         match self.severity() {
-            ErrorSeverity::High => format!("⚠️ {}", base_msg),
+            ErrorSeverity::Critical | ErrorSeverity::High => format!("⚠️ {}", base_msg),
             ErrorSeverity::Medium => format!("📋 {}", base_msg),
-            ErrorSeverity::Info => format!("ℹ️ {}", base_msg),
+            ErrorSeverity::Low | ErrorSeverity::Info => format!("ℹ️ {}", base_msg),
         }
     }
 }
@@ -391,7 +391,7 @@ impl ErrorTracker {
     /// Get recent errors with optional time filter
     pub fn get_recent_errors(&self, hours: u64) -> Vec<(std::time::SystemTime, BotError)> {
         let now = std::time::SystemTime::now();
-        let cutoff = now - std::time::Duration::from_hours(hours as i64);
+        let cutoff = now - std::time::Duration::from_secs(hours * 3600);
 
         self.recent_errors
             .lock()
@@ -409,5 +409,11 @@ impl Default for ErrorTracker {
     }
 }
 
-// Re-export commonly used types
-pub use self::{BotError, ErrorSeverity, Logger, ErrorTracker};
+impl std::fmt::Debug for ErrorTracker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let total = self.total_errors.load(std::sync::atomic::Ordering::SeqCst);
+        f.debug_struct("ErrorTracker")
+            .field("total_errors", &total)
+            .finish()
+    }
+}
