@@ -1127,10 +1127,17 @@ async fn main() {
                         let msg = format!("{}\nCooldown: {:.2}s", random_msg_filled, remaining_cooldown.as_secs_f32());
                         let _ = ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await;
                     } else {
-                        log::error!("Error: {}", error);
                         if let poise::FrameworkError::Command { ctx, error, .. } = error {
-                            log::error!("Command error: {}", error);
                             let error_str = error.to_string();
+                            // "Unknown interaction" and "already been acknowledged" happen
+                            // when a command takes long enough that Discord expires the
+                            // interaction token. The command already sent its reply, so
+                            // these are expected and not real errors — log at debug level.
+                            if error_str.contains("Unknown interaction") || error_str.contains("already been acknowledged") {
+                                log::debug!("Command completed but interaction expired (expected for long-running commands): {}", error_str);
+                            } else {
+                                log::error!("Error in command: {}", error_str);
+                            }
                             let msg = if error_str.is_empty() {
                                 ctx.data().lang.discord_api_error.clone()
                             } else {
@@ -1247,8 +1254,10 @@ async fn main() {
                                         component.edit_response(ctx, serenity::EditInteractionResponse::new().content(&data.lang.must_be_in_voice)).await?;
                                         return Ok(());
                                     }
-                                    // Check if the file still exists — temp files are cleaned up
-                                    // after 5 minutes, so the Play button may outlive the file.
+                                    // Check if the file still exists — temp files (in /tmp)
+                                    // are cleaned up after 5 minutes, so the Play button
+                                    // may outlive the file. Permanent files in audios/
+                                    // (SAVE_MP3_ON_DISK=true) should never expire.
                                     if !std::path::Path::new(file_path).exists() {
                                         log::warn!("Play button: file no longer exists: {}", file_path);
                                         component.edit_response(ctx, serenity::EditInteractionResponse::new().content(&data.lang.file_expired)).await?;
@@ -1297,7 +1306,10 @@ async fn main() {
                                         }
                                     }
                                 }
-                                component.edit_response(ctx, serenity::EditInteractionResponse::new().content(&data.lang.replaying_audio)).await?;
+                            // Use let _ to ignore edit_response errors — the interaction
+                            // token may have expired if the user clicked after a long delay,
+                            // and playback already succeeded at this point.
+                            let _ = component.edit_response(ctx, serenity::EditInteractionResponse::new().content(&data.lang.replaying_audio)).await;
                             }
                     }
                     Ok(())
