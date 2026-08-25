@@ -23,9 +23,11 @@ struct AppState {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct WebhookPayload {
     from: String,
     is_group: bool,
+    #[allow(dead_code)] // sender is sent by the bridge but not currently used
     sender: String,
     #[allow(dead_code)]
     message_id: String,
@@ -142,9 +144,22 @@ async fn send_text(state: &AppState, chat_id: &str, text: &str) {
 // ─── Helper: send audio via bridge ─────────────────────────────────
 
 async fn send_audio(state: &AppState, chat_id: &str, file_path: &str) {
+    // Read the audio file and send it as base64-encoded bytes to the bridge.
+    // The bridge and the bot run in separate containers, so a file path
+    // would not be accessible across them — sending the bytes avoids
+    // sharing volumes and works regardless of where the file is stored.
+    let bytes = match tokio::fs::read(file_path).await {
+        Ok(b) => b,
+        Err(e) => {
+            log::error!("wapp-bot: failed to read audio file {}: {}", file_path, e);
+            return;
+        }
+    };
+    let audio_base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
+
     let url = format!("{}/sendAudio", state.bridge_url);
     let client = reqwest::Client::new();
-    match client.post(&url).json(&serde_json::json!({"chatId": chat_id, "filePath": file_path})).send().await {
+    match client.post(&url).json(&serde_json::json!({"chatId": chat_id, "audioBase64": audio_base64})).send().await {
         Ok(r) => {
             if !r.status().is_success() {
                 log::error!("wapp-bot: sendAudio failed with status {}", r.status());
@@ -486,7 +501,7 @@ async fn cmd_help(state: &AppState, _payload: &WebhookPayload) -> String {
         *Voice & Audio:*\n\
         /speak <text> [--voice Google] [--effect none] — Speak text via TTS (sends audio)\n\
         /random [search] [--voice Google] [--effect none] — Random sentence from database (sends audio)\n\
-        /joke — Fetch a random joke (sends audio)\n\n\
+        /joke — Fetch a random joke (text response)\n\n\
         *AI & LLM:*\n\
         /ask <question> — Ask the AI a question (text response)\n\
         /translate <text> <lang> — Translate text via LLM (text response)\n\n\

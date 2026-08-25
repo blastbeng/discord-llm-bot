@@ -148,41 +148,45 @@ app.post('/sendText', async (req, res) => {
     }
 });
 
-// POST /sendAudio — send an audio file as a WhatsApp voice message
-// The Rust bot sends the file path; the bridge reads it and sends it.
-// WhatsApp requires OGG Opus format for voice messages — we use ffmpeg
-// to convert MP3 to OGG Opus if the file is not already in that format.
-import { readFileSync, existsSync } from 'fs';
+// POST /sendAudio — send audio as a WhatsApp voice message.
+// The Rust bot sends the audio as base64-encoded bytes (the bridge and
+// the bot run in separate containers, so a file path would not be
+// accessible across them). WhatsApp requires OGG Opus format for voice
+// messages — we use ffmpeg to convert the audio to OGG Opus.
+import { writeFileSync, readFileSync, unlinkSync } from 'fs';
 import { execSync } from 'child_process';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
 app.post('/sendAudio', async (req, res) => {
-    const { chatId, filePath } = req.body;
-    if (!chatId || !filePath) {
-        return res.status(400).json({ error: 'chatId and filePath are required' });
-    }
-    if (!existsSync(filePath)) {
-        return res.status(404).json({ error: 'File not found: ' + filePath });
+    const { chatId, audioBase64 } = req.body;
+    if (!chatId || !audioBase64) {
+        return res.status(400).json({ error: 'chatId and audioBase64 are required' });
     }
     try {
-        // Convert MP3 to OGG Opus (WhatsApp voice message format) using ffmpeg
+        // Decode base64 audio bytes to a temp file
+        const audioBuffer = Buffer.from(audioBase64, 'base64');
+        const inputPath = join(tmpdir(), `wapp_in_${Date.now()}.mp3`);
+        writeFileSync(inputPath, audioBuffer);
+
+        // Convert to OGG Opus (WhatsApp voice message format) using ffmpeg
         const oggPath = join(tmpdir(), `wapp_${Date.now()}.ogg`);
-        execSync(`ffmpeg -i "${filePath}" -c:a libopus -b:a 64k -ac 1 -y "${oggPath}"`, {
+        execSync(`ffmpeg -i "${inputPath}" -c:a libopus -b:a 64k -ac 1 -y "${oggPath}"`, {
             stdio: 'pipe',
         });
 
-        const audioBuffer = readFileSync(oggPath);
+        const oggBuffer = readFileSync(oggPath);
 
         // Send as PTT (push-to-talk / voice message)
         await sock.sendMessage(chatId, {
-            audio: audioBuffer,
+            audio: oggBuffer,
             mimetype: 'audio/ogg; codecs=opus',
             ptt: true,
         });
 
-        // Clean up temp file
-        try { require('fs').unlinkSync(oggPath); } catch {}
+        // Clean up temp files
+        try { unlinkSync(inputPath); } catch {}
+        try { unlinkSync(oggPath); } catch {}
 
         res.json({ success: true });
     } catch (e) {

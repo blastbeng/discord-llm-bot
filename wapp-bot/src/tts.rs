@@ -129,6 +129,7 @@ pub fn is_valid_voice(voice: &str) -> bool {
 /// Reverse-lookup a voice name from its token.
 /// Used to display human-readable voice names for cached MP3 files
 /// whose filenames contain the voice token (e.g. "weight_abc123_hash.mp3").
+#[allow(dead_code)] // Used by the Discord bot's /random, not by the wapp-bot
 pub fn get_voice_name_from_token(token: &str) -> &'static str {
     match token {
         "weight_gc8gsr41974q5ax35gvttr85v" => "Papa Francesco (FakeYou.com)",
@@ -145,6 +146,7 @@ pub fn get_voice_name_from_token(token: &str) -> &'static str {
 /// Read the lyrics (sentence text) from an MP3 file's ID3 tags.
 /// Returns None if the file doesn't exist, has no ID3 tags, or has no lyrics frame.
 /// Used by /random to recover the original sentence text from cached MP3 files.
+#[allow(dead_code)] // Used by the Discord bot's /random, not by the wapp-bot
 pub fn read_id3_lyrics(file_path: &str) -> Option<String> {
     match Tag::read_from_path(file_path) {
         Ok(tag) => {
@@ -176,6 +178,7 @@ pub fn write_id3_tags(file_path: &str, artist: &str, title: &str, lyrics: &str) 
     }
 }
 
+#[allow(dead_code)] // Used by the Discord bot, not by the wapp-bot
 pub fn get_file_path(voice: &str, text: &str) -> String {
     get_file_path_with_effect(voice, text, "none")
 }
@@ -611,10 +614,13 @@ async fn poll_fakeyou_job(
 
 pub struct TtsResult {
     pub file_path: String,
+    #[allow(dead_code)] // Used by the Discord bot, not by the wapp-bot
     pub actual_voice: String,
+    #[allow(dead_code)] // Used by the Discord bot, not by the wapp-bot
     pub fallback: bool,
 }
 
+#[allow(dead_code)] // Used by the Discord bot's background generator, not by the wapp-bot
 pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<TtsResult, Box<dyn std::error::Error + Send + Sync>> {
     get_or_generate_tts_with_effect(text, voice, "none").await
 }

@@ -1,6 +1,7 @@
 use std::env;
 
 #[derive(Debug)]
+#[allow(dead_code)] // The wapp-bot only uses a subset of these fields (help_title)
 pub struct Lang {
     pub join_success: String,
     pub join_success_to_self: String,

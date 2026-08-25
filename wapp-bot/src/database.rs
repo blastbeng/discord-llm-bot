@@ -214,6 +214,7 @@ pub async fn select_all_sentence(pool: &SqlitePool) -> Result<Vec<String>, sqlx:
 /// Unlike select_all_sentence which uses weighted-random ordering for variety
 /// in user-facing commands, this deterministic ordering ensures the generator
 /// processes the least-cached sentences first and eventually covers all entries.
+#[allow(dead_code)] // Used by the Discord bot's background generator, not by the wapp-bot
 pub async fn select_sentences_for_generation(pool: &SqlitePool) -> Result<Vec<String>, sqlx::Error> {
     log::debug!("select_sentences_for_generation: fetching sentences ordered by usage_count ASC");
     let rows = sqlx::query_scalar::<_, String>(
