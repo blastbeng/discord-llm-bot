@@ -1915,6 +1915,13 @@ fn soundboard_view(
         total_pages
     ));
 
+    let effect_label = if session.effect == "none" {
+        "nessuno".to_string()
+    } else {
+        session.effect.clone()
+    };
+    desc.push_str(&format!("\n🎛️ Effetto: **{}**", effect_label));
+
     let embed = serenity::CreateEmbed::new()
         .title(format!("🔊 Soundboard: {}", session.query))
         .description(desc)
