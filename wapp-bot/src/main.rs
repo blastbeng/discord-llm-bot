@@ -104,8 +104,15 @@ async fn handle_webhook(
     };
 
     let response = match command.as_str() {
-        "/speak" | "/s" => cmd_speak(&state, &payload, &args).await,
-        "/random" | "/r" => cmd_random(&state, &payload, &args).await,
+        // /speak and /random send audio directly via the bridge — no text reply needed
+        "/speak" | "/s" => {
+            cmd_speak(&state, &payload, &args).await;
+            String::new()
+        }
+        "/random" | "/r" => {
+            cmd_random(&state, &payload, &args).await;
+            String::new()
+        }
         "/ask" | "/a" => cmd_ask(&state, &payload, &args).await,
         "/translate" | "/t" => cmd_translate(&state, &payload, &args).await,
         "/joke" | "/j" => cmd_joke(&state, &payload).await,
@@ -175,15 +182,17 @@ fn parse_voice_effect(args: &str) -> (String, String, String) {
 
 // ─── Commands ──────────────────────────────────────────────────────
 
-async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) -> String {
+async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) {
     let (text, voice, effect) = parse_voice_effect(args);
 
     if text.is_empty() {
-        return "Usage: /speak <text> [--voice Google] [--effect none]".to_string();
+        send_text(state, &payload.from, "Usage: /speak <text> [--voice Google] [--effect none]").await;
+        return;
     }
 
     if text.chars().count() > 200 {
-        return "Text too long (max 200 characters).".to_string();
+        send_text(state, &payload.from, "Text too long (max 200 characters).").await;
+        return;
     }
 
     let actual_voice = if voice == "random" {
@@ -194,7 +203,8 @@ async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) -> St
     };
 
     if !tts::is_valid_voice(&actual_voice) {
-        return "Invalid voice selected.".to_string();
+        send_text(state, &payload.from, "Invalid voice selected.").await;
+        return;
     }
 
     let actual_effect = if effect == "random" {
@@ -205,7 +215,8 @@ async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) -> St
     };
 
     if !tts::is_valid_effect(&actual_effect) {
-        return "Invalid audio effect selected.".to_string();
+        send_text(state, &payload.from, "Invalid audio effect selected.").await;
+        return;
     }
 
     // Generate TTS
@@ -218,18 +229,15 @@ async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) -> St
 
             // Send audio via bridge
             send_audio(state, &payload.from, &tts_result.file_path).await;
-
-            let warning = if tts_result.fallback { " (fallback to Google)" } else { "" };
-            format!("Playing: {} with voice: {}{}", text, tts_result.actual_voice, warning)
         }
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
-            "Error generating audio. Please try again later.".to_string()
+            send_text(state, &payload.from, "Error generating audio. Please try again later.").await;
         }
     }
 }
 
-async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) -> String {
+async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
     let (search_text, voice, effect) = parse_voice_effect(args);
 
     // Fetch sentences from database
@@ -238,7 +246,8 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) -> S
             Ok(s) => s,
             Err(e) => {
                 log::error!("Database error: {}", e);
-                return "Database error. Please try again later.".to_string();
+                send_text(state, &payload.from, "Database error. Please try again later.").await;
+                return;
             }
         }
     } else {
@@ -246,17 +255,19 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) -> S
             Ok(s) => s,
             Err(e) => {
                 log::error!("Database error: {}", e);
-                return "Database error. Please try again later.".to_string();
+                send_text(state, &payload.from, "Database error. Please try again later.").await;
+                return;
             }
         }
     };
 
     if sentences.is_empty() {
         if search_text.is_empty() {
-            return "No sentences found in the database.".to_string();
+            send_text(state, &payload.from, "No sentences found in the database.").await;
         } else {
-            return format!("No sentence found containing \"{}\"", search_text);
+            send_text(state, &payload.from, &format!("No sentence found containing \"{}\"", search_text)).await;
         }
+        return;
     }
 
     let random_sentence = {
@@ -272,7 +283,8 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) -> S
     };
 
     if !tts::is_valid_voice(&actual_voice) {
-        return "Invalid voice selected.".to_string();
+        send_text(state, &payload.from, "Invalid voice selected.").await;
+        return;
     }
 
     let actual_effect = if effect == "random" {
@@ -283,18 +295,17 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) -> S
     };
 
     if !tts::is_valid_effect(&actual_effect) {
-        return "Invalid audio effect selected.".to_string();
+        send_text(state, &payload.from, "Invalid audio effect selected.").await;
+        return;
     }
 
     match tts::get_or_generate_tts_with_effect(&random_sentence, &actual_voice, &actual_effect).await {
         Ok(tts_result) => {
             send_audio(state, &payload.from, &tts_result.file_path).await;
-            let warning = if tts_result.fallback { " (fallback to Google)" } else { "" };
-            format!("Playing: {} with voice: {}{}", random_sentence, tts_result.actual_voice, warning)
         }
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
-            "Error generating audio. Please try again later.".to_string()
+            send_text(state, &payload.from, "Error generating audio. Please try again later.").await;
         }
     }
 }
@@ -386,7 +397,7 @@ async fn cmd_translate(state: &AppState, _payload: &WebhookPayload, args: &str) 
     }
 }
 
-async fn cmd_joke(state: &AppState, payload: &WebhookPayload) -> String {
+async fn cmd_joke(state: &AppState, _payload: &WebhookPayload) -> String {
     let joke_url = "https://v2.jokeapi.dev/joke/Any?safe-mode&type=twopart&format=json";
     let client = tts::http_client();
 
@@ -414,14 +425,6 @@ async fn cmd_joke(state: &AppState, payload: &WebhookPayload) -> String {
                     // Save joke to database
                     if let Err(e) = database::insert_sentence(&state.db_pool, &joke_text).await {
                         log::error!("Failed to insert joke: {}", e);
-                    }
-
-                    // Also send as audio
-                    match tts::get_or_generate_tts(&joke_text, "Google").await {
-                        Ok(tts_result) => {
-                            send_audio(state, &payload.from, &tts_result.file_path).await;
-                        }
-                        Err(e) => log::error!("Joke TTS failed: {}", e),
                     }
 
                     joke_text

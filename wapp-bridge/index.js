@@ -107,11 +107,21 @@ async function connectToWhatsApp() {
             };
 
             try {
-                await fetch(WEBHOOK_URL, {
+                const webhookResp = await fetch(WEBHOOK_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
                 });
+
+                // The Rust bot returns {"status":"processed","response":"..."}.
+                // If there's a text response, send it back to the chat.
+                if (webhookResp.ok) {
+                    const data = await webhookResp.json();
+                    if (data && data.response && data.response.length > 0) {
+                        await sock.sendMessage(from, { text: data.response });
+                    }
+                }
+
                 // Mark as read to avoid "unread" indicators
                 await sock.readMessages([msg.key]);
             } catch (e) {
