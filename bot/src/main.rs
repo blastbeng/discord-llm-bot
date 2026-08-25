@@ -1523,30 +1523,30 @@ async fn stats(ctx: Context<'_>) -> Result<(), Error> {
 
     // FakeYou session status
     let fakeyou_status = if std::env::var("FAKEYOU_USERNAME").unwrap_or_default().is_empty() {
-        "Not configured".to_string()
+        ctx.data().lang.not_configured.clone()
     } else {
-        "Authenticated".to_string()
+        ctx.data().lang.authenticated.clone()
     };
 
     // LLM status
     let llm_status = if llm::is_configured() {
         let endpoints = std::env::var("LLM_ENDPOINTS").unwrap_or_default();
         let count = endpoints.split(',').filter(|s| !s.trim().is_empty()).count();
-        format!("{} endpoint(s)", count)
+        format!("{} {}", count, ctx.data().lang.endpoint_label)
     } else {
-        "Not configured".to_string()
+        ctx.data().lang.not_configured.clone()
     };
 
     let embed = serenity::CreateEmbed::new()
-        .title("📊 Bot Statistics")
+        .title(&ctx.data().lang.stats_title)
         .color(0x57F287)
-        .field("🗄️ Database", db_stats, false)
-        .field("🎵 TTS Cache", cache_info, true)
-        .field("⏱️ Uptime", uptime, true)
-        .field("💻 CPU", format!("{:.1}%", cpu_usage), true)
-        .field("💾 RAM", format!("{:.1}%", ram_usage), true)
-        .field("🎭 FakeYou", fakeyou_status, true)
-        .field("🤖 LLM", llm_status, true);
+        .field(&ctx.data().lang.stats_database, db_stats, false)
+        .field(&ctx.data().lang.stats_cache, cache_info, true)
+        .field(&ctx.data().lang.stats_uptime, uptime, true)
+        .field(&ctx.data().lang.stats_cpu, format!("{:.1}%", cpu_usage), true)
+        .field(&ctx.data().lang.stats_ram, format!("{:.1}%", ram_usage), true)
+        .field(&ctx.data().lang.stats_fakeyou, fakeyou_status, true)
+        .field(&ctx.data().lang.stats_llm, llm_status, true);
 
     ctx.send(poise::CreateReply::default().embed(embed).ephemeral(true)).await?;
     Ok(())

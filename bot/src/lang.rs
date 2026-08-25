@@ -59,6 +59,17 @@ pub struct Lang {
     pub help_button_admin: String,
     pub help_button_all: String,
     pub joke_error: String,
+    pub stats_title: String,
+    pub stats_database: String,
+    pub stats_cache: String,
+    pub stats_uptime: String,
+    pub stats_cpu: String,
+    pub stats_ram: String,
+    pub stats_fakeyou: String,
+    pub stats_llm: String,
+    pub not_configured: String,
+    pub authenticated: String,
+    pub endpoint_label: String,
 }
 
 impl Lang {
@@ -132,6 +143,17 @@ impl Lang {
                 help_button_admin: "🔧 Admin".to_string(),
                 help_button_all: "📋 All Commands".to_string(),
                 joke_error: "Failed to fetch a joke. Please try again later.".to_string(),
+                stats_title: "📊 Bot Statistics".to_string(),
+                stats_database: "Database".to_string(),
+                stats_cache: "TTS Cache".to_string(),
+                stats_uptime: "Uptime".to_string(),
+                stats_cpu: "CPU".to_string(),
+                stats_ram: "RAM".to_string(),
+                stats_fakeyou: "FakeYou".to_string(),
+                stats_llm: "LLM".to_string(),
+                not_configured: "Not configured".to_string(),
+                authenticated: "Authenticated".to_string(),
+                endpoint_label: "endpoint(s)".to_string(),
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
@@ -200,6 +222,17 @@ impl Lang {
                 help_button_admin: "🔧 Admin".to_string(),
                 help_button_all: "📋 Tutti i Comandi".to_string(),
                 joke_error: "Impossibile recuperare una battuta. Riprova piú tardi.".to_string(),
+                stats_title: "📊 Statistiche del Bot".to_string(),
+                stats_database: "Database".to_string(),
+                stats_cache: "Cache TTS".to_string(),
+                stats_uptime: "Uptime".to_string(),
+                stats_cpu: "CPU".to_string(),
+                stats_ram: "RAM".to_string(),
+                stats_fakeyou: "FakeYou".to_string(),
+                stats_llm: "LLM".to_string(),
+                not_configured: "Non configurato".to_string(),
+                authenticated: "Autenticato".to_string(),
+                endpoint_label: "endpoint".to_string(),
             }
         }
     }
