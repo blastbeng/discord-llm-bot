@@ -404,7 +404,7 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
 
 async fn cmd_ask(state: &AppState, payload: &WebhookPayload, args: &str) -> String {
     if !llm::is_configured() {
-        return "AI is not configured. Set LLM_ENDPOINTS and LLM_MODELS to enable this command.".to_string();
+        return state.lang.ask_not_configured.clone();
     }
 
     let (text, _voice, _effect) = parse_voice_effect(args);
@@ -459,7 +459,7 @@ async fn cmd_ask(state: &AppState, payload: &WebhookPayload, args: &str) -> Stri
 
 async fn cmd_translate(state: &AppState, _payload: &WebhookPayload, args: &str) -> String {
     if !llm::is_configured() {
-        return "AI is not configured. Set LLM_ENDPOINTS and LLM_MODELS to enable this command.".to_string();
+        return state.lang.ask_not_configured.clone();
     }
 
     // Format: /translate <text> <target_lang>
