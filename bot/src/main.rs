@@ -625,8 +625,13 @@ async fn random(
         .to_lowercase() == "true";
 
     let mut cached_audio_path: Option<String> = None;
-    if !voice_explicitly_set && !effect_explicitly_set && save_mp3 {
-        log::info!("random: no voice specified and SAVE_MP3_ON_DISK=true, scanning audios/ folder");
+    // The cached-MP3 shortcut only makes sense when there is NO search text.
+    // When the user passes a text to search, they expect a matching sentence
+    // from the database — picking an unrelated random cached file would be
+    // logically wrong (the audio wouldn't match their query).
+    let has_search = text.as_ref().map_or(false, |t| !t.trim().is_empty());
+    if !voice_explicitly_set && !effect_explicitly_set && save_mp3 && !has_search {
+        log::info!("random: no voice/effect/search and SAVE_MP3_ON_DISK=true, scanning audios/ folder");
         if let Ok(mut entries) = tokio::fs::read_dir("audios").await {
             let mut mp3_files = Vec::new();
             while let Ok(Some(entry)) = entries.next_entry().await {
