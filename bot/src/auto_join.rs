@@ -287,9 +287,13 @@ async fn speak_welcome(
         if let Some(handler) = manager.get(guild_id) {
             let mut h = handler.lock().await;
             if h.current_channel().is_some() {
+                // Play the welcome, applying the user-set volume so it matches
+                // /speak and other commands (which go through play_with_volume).
                 let source = songbird::input::File::new(tts_result.file_path.clone());
-                h.play_only(source.into());
-                log::info!("auto_join: playing welcome for {} (effect: {}): {}", user_name, effect, phrase);
+                let track = h.play_only(source.into());
+                let vol = *data.volume.lock().unwrap();
+                let _ = track.set_volume(vol);
+                log::info!("auto_join: playing welcome for {} (effect: {}, volume: {}): {}", user_name, effect, vol, phrase);
             }
         }
     }
