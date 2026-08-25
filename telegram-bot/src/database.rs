@@ -386,16 +386,18 @@ pub async fn get_db_statistics(pool: &SqlitePool) -> Result<String, sqlx::Error>
     // Fetch various metrics from the database
     let total_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sentences").fetch_one(pool).await?;
     
+    // COALESCE handles the empty-database case: MIN/MAX/AVG return NULL when
+    // there are no rows, which would otherwise fail to deserialize into i64/f64.
     let min_usage: i64 = sqlx::query_scalar(
-        "SELECT MIN(usage_count) FROM sentences"
+        "SELECT COALESCE(MIN(usage_count), 0) FROM sentences"
     ).fetch_one(pool).await?;
 
     let max_usage: i64 = sqlx::query_scalar(
-        "SELECT MAX(usage_count) FROM sentences"
+        "SELECT COALESCE(MAX(usage_count), 0) FROM sentences"
     ).fetch_one(pool).await?;
 
     let avg_usage: f64 = sqlx::query_scalar::<_, f64>(
-        "SELECT AVG(usage_count) FROM sentences"
+        "SELECT COALESCE(AVG(usage_count), 0) FROM sentences"
     ).fetch_one(pool).await?;
 
     Ok(format!(
