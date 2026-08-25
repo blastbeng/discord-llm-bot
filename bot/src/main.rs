@@ -21,6 +21,11 @@ use image::GenericImageView;
 /// than the first time /stats happens to be called.
 static BOOT_TIME: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
+/// Cached system resource stats (CPU%, RAM%) refreshed periodically in the
+/// background so command handlers read the last value instantly instead of
+/// blocking ~200ms on CPU sampling. Stored as `(cpu_percent, ram_percent)`.
+static SYSTEM_STATS: std::sync::Mutex<Option<(f32, f32)>> = std::sync::Mutex::new(None);
+
 /// Play an audio file through Songbird's built-in FFmpeg decoder.
 /// Returns an error string if the bot is not connected or no handler is found,
 /// so callers can inform the user instead of silently failing.
@@ -180,19 +185,29 @@ async fn change_presence_loop(ctx: serenity::Context) {
     }
 }
 
-async fn get_queue_message(lang: &lang::Lang) -> String {
+/// Periodically sample CPU/RAM usage and cache it in SYSTEM_STATS, so command
+/// handlers don't block ~200ms on CPU sampling for every reply.
+async fn sample_system_stats_loop() {
     let mut sys = System::new_all();
-    sys.refresh_cpu();
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    sys.refresh_cpu();
-    let cpu_usage = sys.global_cpu_info().cpu_usage();
-    let total_memory = sys.total_memory();
-    let used_memory = sys.used_memory();
-    let ram_usage = (used_memory as f64 / total_memory as f64) * 100.0;
-    
-    log::debug!("get_queue_message: CPU {:.1}%, RAM {:.2}%", 
-        cpu_usage, ram_usage);
-    
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+    loop {
+        interval.tick().await;
+        // Two refreshes with a short delay are needed for a meaningful CPU delta.
+        sys.refresh_cpu();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        sys.refresh_cpu();
+        let cpu = sys.global_cpu_info().cpu_usage();
+        let total = sys.total_memory();
+        let used = sys.used_memory();
+        let ram = if total > 0 { (used as f64 / total as f64) * 100.0 } else { 0.0 };
+        *SYSTEM_STATS.lock().unwrap() = Some((cpu, ram as f32));
+    }
+}
+
+async fn get_queue_message(lang: &lang::Lang) -> String {
+    let (cpu_usage, ram_usage) = SYSTEM_STATS.lock().unwrap().unwrap_or((0.0, 0.0));
+    log::debug!("get_queue_message: CPU {:.1}%, RAM {:.2}%", cpu_usage, ram_usage);
+
     // Format comprehensive queue message with all metrics for user visibility (like Python's get_queue_message)
     lang.queue_overload
         .replacen("{:.1}", &format!("{:.1}", cpu_usage), 1)
@@ -2844,6 +2859,11 @@ async fn main() {
                 let ctx_clone = ctx.clone();
                 tokio::spawn(async move {
                     change_presence_loop(ctx_clone).await;
+                });
+                // Background CPU/RAM sampler so commands read cached stats
+                // instead of blocking ~200ms sampling CPU on every reply.
+                tokio::spawn(async move {
+                    sample_system_stats_loop().await;
                 });
                 
                 // Initialize error tracker and language settings
