@@ -30,7 +30,9 @@ COPY src ./src
 RUN cargo build --release
 RUN test -f target/release/telegram-bot
 
-FROM debian:bookworm-slim
+# teloxide 0.17 requires rustc 1.96, whose binary needs a newer glibc than
+# bookworm provides — so use trixie-slim (glibc 2.39) for the runtime.
+FROM debian:trixie-slim
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
