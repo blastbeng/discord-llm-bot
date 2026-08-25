@@ -683,42 +683,37 @@ pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &s
         }
     };
 
-    let save_path = if save_mp3 {
-        // When disk saving is enabled, save permanently to audios/ with proper naming.
-        // Include the effect in the filename so filtered audio is cached separately.
-        if fallback {
-            get_file_path_with_effect("Google", text, effect)
-        } else {
-            get_file_path_with_effect(voice, text, effect)
-        }
+    // Effects are applied on-the-fly and never persisted to the audios/ cache,
+    // which stores only plain (no-effect) audio so it stays reusable. When an
+    // effect is requested, the filtered audio is written to a temporary file
+    // for playback instead of being cached.
+    let apply_effect = effect != "none" && effect != "random";
+    let hash = format!("{:x}", md5_compute(text));
+    let voice_token = get_voice_token(&actual_voice);
+    let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
+
+    let save_path = if apply_effect {
+        // Effect requested → play through a temp file; never persist it.
+        format!("{}/tts_{}_{}_{}.mp3", temp_dir, voice_token, effect, hash)
+    } else if save_mp3 {
+        // No effect + disk saving → cache the plain audio in audios/.
+        // Use actual_voice so a fallback Google file is cached under Google.
+        get_file_path(&actual_voice, text)
     } else {
-        // When disk saving is disabled, save to a temp file for playback.
-        // Include the voice token and effect in the filename so that the same text
-        // requested with different voices/effects doesn't overwrite each other.
-        // Use actual_voice (not the requested voice) so that a fallback
-        // Google file is named with the Google token, not the FakeYou token.
-        let hash = format!("{:x}", md5_compute(text));
-        let voice_token = get_voice_token(&actual_voice);
-        let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
-        if effect != "none" && effect != "random" {
-            format!("{}/tts_{}_{}_{}.mp3", temp_dir, voice_token, effect, hash)
-        } else {
-            format!("{}/tts_{}_{}.mp3", temp_dir, voice_token, hash)
-        }
+        // No effect + no disk saving → plain temp file.
+        format!("{}/tts_{}_{}.mp3", temp_dir, voice_token, hash)
     };
 
-    // Ensure temp directory exists when not saving to disk
-    if !save_mp3 {
-        let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
+    // Ensure the temp directory exists when writing temp files (an effect is
+    // applied, or disk saving is disabled).
+    if apply_effect || !save_mp3 {
         tokio::fs::create_dir_all(&temp_dir).await?;
     }
 
     compress_and_save_mp3_with_effect(bytes, &save_path, effect).await?;
 
-    if save_mp3 {
-        // Write ID3 tags (artist, title, lyrics) into the MP3 file (only for permanent files).
-        // Use actual_voice (not the requested voice) so that a fallback Google
-        // file is tagged with "Google" as the artist, matching its filename.
+    // Only write ID3 tags to persisted plain files (not temp/effect files).
+    if save_mp3 && !apply_effect {
         let (artist, title) = if actual_voice == "Google" {
             ("Google", "Google")
         } else {
@@ -727,8 +722,9 @@ pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &s
         write_id3_tags(&save_path, artist, title, text);
     }
 
-    // Schedule temp file cleanup when not saving to disk
-    if !save_mp3 {
+    // Schedule temp file cleanup for temp files (an effect is applied, or disk
+    // saving is disabled).
+    if apply_effect || !save_mp3 {
         let path_clone = save_path.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(300)).await;

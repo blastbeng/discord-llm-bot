@@ -596,12 +596,13 @@ async fn random(
     log::info!("[GUILDID : {}] random command invoked by user {} with voice: {:?}, text: {:?}, effect: {:?}", ctx.guild_id().unwrap(), ctx.author().id, voice, text, effect);
 
     // Track whether the user explicitly specified a voice or effect.
-    // The cached-MP3 shortcut below must only trigger when neither is set,
-    // because a cached file was generated without any effect filter.
+    // The cached-MP3 shortcut below must only trigger when no effect will be
+    // applied, because a cached file was generated without any effect filter.
+    // When the user does not pick an effect, /random applies a random one, so
+    // the shortcut only fires when the effect resolves to "none".
     let voice_explicitly_set = voice.is_some();
-    let effect_explicitly_set = effect.is_some();
     let voice = voice.unwrap_or_else(|| "Google".to_string());
-    let effect = effect.unwrap_or_else(|| "none".to_string());
+    let effect = effect.unwrap_or_else(|| "random".to_string());
     let actual_voice = if voice == "random" {
         let mut rng = rand::thread_rng();
         tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
@@ -660,7 +661,7 @@ async fn random(
     // from the database — picking an unrelated random cached file would be
     // logically wrong (the audio wouldn't match their query).
     let has_search = text.as_ref().map_or(false, |t| !t.trim().is_empty());
-    if !voice_explicitly_set && !effect_explicitly_set && save_mp3 && !has_search {
+    if !voice_explicitly_set && actual_effect == "none" && save_mp3 && !has_search {
         log::info!("random: no voice/effect/search and SAVE_MP3_ON_DISK=true, scanning audios/ folder");
         if let Ok(mut entries) = tokio::fs::read_dir("audios").await {
             let mut mp3_files = Vec::new();
