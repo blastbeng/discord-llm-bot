@@ -888,7 +888,7 @@ async fn ask(
     }
 
     if text.chars().count() > 500 {
-        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.text_too_long).ephemeral(true)).await?;
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.ask_text_too_long).ephemeral(true)).await?;
         return Ok(());
     }
 
