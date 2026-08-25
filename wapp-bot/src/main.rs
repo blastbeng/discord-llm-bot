@@ -303,15 +303,18 @@ async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) {
 async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
     let (search_text, voice, effect) = parse_voice_effect(args);
 
-    // When no voice, no search text, and disk caching is enabled, pick a random
-    // already-cached MP3 from audios/ and send it directly — much faster and
-    // avoids unnecessary TTS API calls (mirrors the Discord bot's /random).
+    // When no voice, no effect, no search text, and disk caching is enabled,
+    // pick a random already-cached MP3 from audios/ and send it directly —
+    // much faster and avoids unnecessary TTS API calls (mirrors the Discord
+    // bot's /random). A cached file has no effect filter applied, so if the
+    // user requested an effect we must fall through to real TTS generation.
     let voice_explicitly_set = args.contains("--voice");
+    let effect_explicitly_set = args.contains("--effect");
     let save_mp3 = std::env::var("SAVE_MP3_ON_DISK")
         .unwrap_or_else(|_| "false".to_string())
         .to_lowercase() == "true";
 
-    if !voice_explicitly_set && search_text.is_empty() && save_mp3 {
+    if !voice_explicitly_set && !effect_explicitly_set && search_text.is_empty() && save_mp3 {
         if let Some(chosen) = pick_cached_mp3().await {
             log::info!("wapp-bot random: picked cached MP3: {}", chosen);
             send_audio(state, &payload.from, &chosen).await;

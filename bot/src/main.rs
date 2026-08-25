@@ -565,8 +565,11 @@ async fn random(
 ) -> Result<(), Error> {
     log::info!("[GUILDID : {}] random command invoked by user {} with voice: {:?}, text: {:?}, effect: {:?}", ctx.guild_id().unwrap(), ctx.author().id, voice, text, effect);
 
-    // Track whether the user explicitly specified a voice
+    // Track whether the user explicitly specified a voice or effect.
+    // The cached-MP3 shortcut below must only trigger when neither is set,
+    // because a cached file was generated without any effect filter.
     let voice_explicitly_set = voice.is_some();
+    let effect_explicitly_set = effect.is_some();
     let voice = voice.unwrap_or_else(|| "Google".to_string());
     let effect = effect.unwrap_or_else(|| "none".to_string());
     let actual_voice = if voice == "random" {
@@ -622,7 +625,7 @@ async fn random(
         .to_lowercase() == "true";
 
     let mut cached_audio_path: Option<String> = None;
-    if !voice_explicitly_set && save_mp3 {
+    if !voice_explicitly_set && !effect_explicitly_set && save_mp3 {
         log::info!("random: no voice specified and SAVE_MP3_ON_DISK=true, scanning audios/ folder");
         if let Ok(mut entries) = tokio::fs::read_dir("audios").await {
             let mut mp3_files = Vec::new();
