@@ -70,7 +70,12 @@ async function connectToWhatsApp() {
         }
     });
 
-    sock.ev.on('messages.upsert', async ({ messages }) => {
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        // Only process brand-new incoming messages ("notify"). Baileys also fires
+        // this event with type "append" when loading older messages on reconnect,
+        // and re-processing those would re-trigger commands (duplicate audio/TTS).
+        if (type !== 'notify') return;
+
         for (const msg of messages) {
             if (!msg.message || msg.key.fromMe) continue;
 

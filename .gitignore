@@ -11,6 +11,7 @@ bot/discord-bot.sqlite3
 .env
 .env.prod
 .env.local
+.env.wapp
 config.json
 
 # Config directory (runtime data, not source)
