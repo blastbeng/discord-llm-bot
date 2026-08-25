@@ -2388,7 +2388,14 @@ async fn main() {
     let _ = BOOT_TIME.get_or_init(std::time::Instant::now);
     dotenv::dotenv().ok();
     let mut builder = env_logger::Builder::from_env(env_logger::Env::default().filter_or("LOG_LEVEL", "info"));
+    // Keep the bot's own logs at the configured level, but silence the very
+    // verbose per-request/connection logging from third-party libraries so the
+    // output stays readable (serenity logs every HTTP request at INFO).
     builder.filter_module("tracing", log::LevelFilter::Warn);
+    builder.filter_module("serenity", log::LevelFilter::Warn);
+    builder.filter_module("songbird", log::LevelFilter::Warn);
+    builder.filter_module("reqwest", log::LevelFilter::Warn);
+    builder.filter_module("sqlx", log::LevelFilter::Warn);
     builder.init();
 
     let token = env::var("BOT_TOKEN").expect("BOT_TOKEN must be set");
