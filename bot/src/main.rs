@@ -1041,7 +1041,17 @@ async fn ask(
         }
     }
 
-    let tts_result = match tts::get_or_generate_tts_with_effect(&llm_response, &actual_voice, &actual_effect).await {
+    // Google TTS silently fails or truncates on text longer than ~200 chars.
+    // The LLM response can be up to 500 chars, so truncate only the spoken
+    // text while keeping the full response in the displayed message.
+    let tts_text: String = if llm_response.chars().count() > 200 {
+        let truncated: String = llm_response.chars().take(200).collect();
+        format!("{truncated}...")
+    } else {
+        llm_response.clone()
+    };
+
+    let tts_result = match tts::get_or_generate_tts_with_effect(&tts_text, &actual_voice, &actual_effect).await {
         Ok(result) => result,
         Err(e) => {
             log::error!("ask: TTS generation failed: {}", e);
@@ -1228,7 +1238,17 @@ async fn translate(
         }
     }
 
-    let tts_result = match tts::get_or_generate_tts_with_effect(&translated, &actual_voice, &actual_effect).await {
+    // Google TTS silently fails or truncates on text longer than ~200 chars.
+    // Truncate only the spoken text, keeping the full translation in the
+    // displayed message (consistent with /random and /joke).
+    let tts_text: String = if translated.chars().count() > 200 {
+        let truncated: String = translated.chars().take(200).collect();
+        format!("{truncated}...")
+    } else {
+        translated.clone()
+    };
+
+    let tts_result = match tts::get_or_generate_tts_with_effect(&tts_text, &actual_voice, &actual_effect).await {
         Ok(result) => result,
         Err(e) => {
             log::error!("translate: TTS generation failed: {}", e);
