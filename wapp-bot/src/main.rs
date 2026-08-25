@@ -36,6 +36,15 @@ struct WebhookPayload {
 async fn main() {
     eprintln!("=== wapp-bot starting ===");
     dotenv::dotenv().ok();
+
+    // Gate: if WAPP_ENABLED is not "true", exit immediately without starting
+    // the webhook server. This allows keeping the service in docker-compose
+    // without it actually running when WhatsApp is not configured.
+    let enabled = std::env::var("WAPP_ENABLED").unwrap_or_else(|_| "false".to_string());
+    if enabled.to_lowercase() != "true" {
+        eprintln!("wapp-bot: WAPP_ENABLED is not 'true' — exiting. Set WAPP_ENABLED=true in .env.wapp to enable.");
+        return;
+    }
     let mut builder = env_logger::Builder::from_env(env_logger::Env::default().filter_or("LOG_LEVEL", "info"));
     builder.init();
 

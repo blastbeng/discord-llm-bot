@@ -9,6 +9,12 @@ import express from 'express';
 import pino from 'pino';
 
 const logger = pino({ level: 'silent' });
+
+// Gate: if WAPP_ENABLED is not "true", don't connect to WhatsApp.
+// The HTTP API still starts so docker healthcheck passes, but no
+// QR code is shown and no messages are processed.
+const ENABLED = (process.env.WAPP_ENABLED || 'false').toLowerCase() === 'true';
+
 const app = express();
 app.use(express.json({ limit: '50mb' }));
 
@@ -187,8 +193,15 @@ app.get('/status', (req, res) => {
 
 app.listen(PORT, () => {
     console.log(`[bridge] HTTP API listening on port ${PORT}`);
-    console.log(`[bridge] Webhook URL: ${WEBHOOK_URL}`);
-    console.log(`[bridge] Allowed groups: ${ALLOWED_GROUPS.length > 0 ? ALLOWED_GROUPS.join(', ') : 'all'}`);
+    if (!ENABLED) {
+        console.log('[bridge] WAPP_ENABLED is not "true" — WhatsApp connection disabled.');
+        console.log('[bridge] Set WAPP_ENABLED=true in .env.wapp to enable.');
+    } else {
+        console.log(`[bridge] Webhook URL: ${WEBHOOK_URL}`);
+        console.log(`[bridge] Allowed groups: ${ALLOWED_GROUPS.length > 0 ? ALLOWED_GROUPS.join(', ') : 'all'}`);
+    }
 });
 
-connectToWhatsApp();
+if (ENABLED) {
+    connectToWhatsApp();
+}
