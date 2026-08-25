@@ -256,10 +256,23 @@ pub async fn select_like_sentence(pool: &SqlitePool, text: &str) -> Result<Vec<S
     // usage_count ASC (least-used first) prefers sentences that haven't been
     // spoken as often, improving variety. (This is a real ordering, unlike
     // select_all_sentence which just randomizes the full set.)
-    let pattern = format!("%{}%", text);
+    //
+    // Escape LIKE wildcards in the user's search text. SQLite treats '%' as "any
+    // sequence" and '_' as "any single character" in LIKE patterns, so without
+    // escaping a search for "100% real" or "a_b" would match unrelated sentences.
+    // We treat the user's input literally by escaping the wildcards and the escape
+    // character itself, then use the ESCAPE clause so they match only themselves.
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c == '\\' || c == '%' || c == '_' {
+            escaped.push('\\');
+        }
+        escaped.push(c);
+    }
+    let pattern = format!("%{}%", escaped);
     let rows = sqlx::query_scalar::<_, String>(
         "SELECT sentence FROM sentences 
-         WHERE sentence LIKE ? COLLATE NOCASE
+         WHERE sentence LIKE ? ESCAPE '\\' COLLATE NOCASE
          ORDER BY 
             CASE 
                 WHEN sentence = ? COLLATE NOCASE THEN 0 
