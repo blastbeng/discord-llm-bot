@@ -12,6 +12,7 @@ bot/discord-bot.sqlite3
 .env.prod
 .env.local
 .env.wapp
+.env.telegram
 config.json
 
 # Config directory (runtime data, not source)
