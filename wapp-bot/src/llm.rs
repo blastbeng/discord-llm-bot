@@ -163,10 +163,11 @@ pub async fn ask(
 
         let attempt = loop {
             log::info!(
-                "llm::ask: trying endpoint {}/{} (model: {})",
+                "llm::ask: trying endpoint {}/{} (model: {}, url: {})",
                 i + 1,
                 endpoints.len(),
-                endpoint.model
+                endpoint.model,
+                url
             );
 
             let resp = client
@@ -220,6 +221,14 @@ pub async fn ask(
                         .unwrap_or("");
 
                     if content.is_empty() {
+                        // Log the raw response body — for reasoning models the
+                        // "reasoning" field often explains why content is empty
+                        // (e.g. token budget exhausted on chain-of-thought).
+                        log::warn!(
+                            "llm::ask: endpoint {} returned empty content, raw body: {}",
+                            endpoint.base_url,
+                            json
+                        );
                         empty_retries += 1;
                         if empty_retries <= MAX_EMPTY_RETRIES {
                             log::warn!(
@@ -268,8 +277,8 @@ pub async fn ask(
                 }
                 Err(e) => {
                     log::warn!(
-                        "llm::ask: endpoint {} connection failed: {}, trying next",
-                        endpoint.base_url, e
+                        "llm::ask: endpoint {} connection failed (URL: {}), error: {}, trying next",
+                        endpoint.base_url, url, e
                     );
                     break Err(format!("Connection error at {}: {}", endpoint.base_url, e));
                 }
@@ -335,10 +344,11 @@ pub async fn translate(text: &str, target_lang: &str) -> Result<String, String> 
 
         let attempt = loop {
             log::info!(
-                "llm::translate: trying endpoint {}/{} (model: {})",
+                "llm::translate: trying endpoint {}/{} (model: {}, url: {})",
                 i + 1,
                 endpoints.len(),
-                endpoint.model
+                endpoint.model,
+                url
             );
 
             let resp = client
@@ -380,6 +390,13 @@ pub async fn translate(text: &str, target_lang: &str) -> Result<String, String> 
                         .unwrap_or("");
 
                     if content.is_empty() {
+                        // Log the raw response body — for reasoning models the
+                        // "reasoning" field often explains why content is empty.
+                        log::warn!(
+                            "llm::translate: endpoint {} returned empty content, raw body: {}",
+                            endpoint.base_url,
+                            json
+                        );
                         empty_retries += 1;
                         if empty_retries <= MAX_EMPTY_RETRIES {
                             log::warn!(
@@ -409,7 +426,10 @@ pub async fn translate(text: &str, target_lang: &str) -> Result<String, String> 
                     break Ok(truncated);
                 }
                 Err(e) => {
-                    log::warn!("llm::translate: endpoint {} failed: {}, trying next", endpoint.base_url, e);
+                    log::warn!(
+                        "llm::translate: endpoint {} connection failed (URL: {}), error: {}, trying next",
+                        endpoint.base_url, url, e
+                    );
                     break Err(format!("Connection error at {}: {}", endpoint.base_url, e));
                 }
             }
