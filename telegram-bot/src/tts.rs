@@ -726,12 +726,10 @@ pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &s
                 compress_and_save_mp3_with_effect(bytes.clone(), &temp_path, effect).await?;
                 // …and cache the plain audio for future reuse.
                 compress_and_save_mp3(bytes, &plain_path).await?;
-                let (artist, title) = if actual_voice == "Google" {
-                    ("Google", "Google")
-                } else {
-                    (actual_voice.as_str(), get_voice_token(&actual_voice))
-                };
-                write_id3_tags(&plain_path, artist, title, text);
+                // Title is the spoken text, artist is the voice — so the audio
+                // shows e.g. "Google - <sentence>" in Telegram instead of
+                // "Google - Google".
+                write_id3_tags(&plain_path, &actual_voice, text, text);
                 let path_clone = temp_path.clone();
                 tokio::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_secs(300)).await;
@@ -740,12 +738,8 @@ pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &s
                 return Ok(TtsResult { file_path: temp_path, actual_voice, fallback });
             } else {
                 compress_and_save_mp3(bytes, &plain_path).await?;
-                let (artist, title) = if actual_voice == "Google" {
-                    ("Google", "Google")
-                } else {
-                    (actual_voice.as_str(), get_voice_token(&actual_voice))
-                };
-                write_id3_tags(&plain_path, artist, title, text);
+                // The title is the spoken text, the artist is the voice.
+                write_id3_tags(&plain_path, &actual_voice, text, text);
             }
         }
         // Plain audio now cached — return it (no effect path).
