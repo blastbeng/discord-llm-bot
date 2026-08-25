@@ -1,4 +1,5 @@
 mod database;
+mod auto_join;
 mod error;
 mod generator;
 mod lang;
@@ -97,6 +98,22 @@ pub struct Data {
     /// so the LLM can have a back-and-forth conversation instead of one-off
     /// questions. Keyed by guild ID.
     pub conversations: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, Vec<ConversationMessage>>>>,
+    /// Whether the bot automatically joins voice channels when a user joins
+    /// (and switches/leaves according to the auto-join rules). Config: AUTO_JOIN_VOICE.
+    pub auto_join_enabled: bool,
+    /// Whether to speak a (humorous) welcome phrase when auto-joining/welcoming.
+    /// Config: AUTO_JOIN_WELCOME.
+    pub auto_join_welcome: bool,
+    /// Seconds the bot stays in a voice channel alone before disconnecting.
+    /// Config: AUTO_JOIN_IDLE_DISCONNECT_SECS.
+    pub idle_disconnect_secs: u64,
+    /// Per-channel timestamp of the last spoken welcome phrase, used to throttle
+    /// so multiple rapid joins don't trigger an LLM call each time. Keyed by
+    /// channel id so different channels get independent throttling.
+    pub last_welcome: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, std::time::Instant>>>,
+    /// Per-guild timestamp of when the bot first became alone in a voice
+    /// channel, used by the idle-disconnect loop.
+    pub alone_since: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, std::time::Instant>>>,
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -2210,6 +2227,13 @@ async fn main() {
                             log::error!("Failed to sync commands for guild {}: {}", guild.id, e);
                         }
                     }
+                    // Auto-join / auto-welcome / auto-switch behaviour driven by
+                    // voice state changes. Only acts when AUTO_JOIN_VOICE is enabled.
+                    if data.auto_join_enabled {
+                        if let serenity::FullEvent::VoiceStateUpdate { old, new } = event {
+                            auto_join::handle_voice_state_update(&ctx, data, old.as_ref(), &new).await;
+                        }
+                    }
                     if let serenity::FullEvent::InteractionCreate { interaction: serenity::Interaction::Component(component) } = event {
                             // Help button handler — shows command lists by category
                             if let Some(category) = component.data.custom_id.strip_prefix("help:") {
@@ -2432,16 +2456,35 @@ async fn main() {
                 // Initialize error tracker and language settings
                 let lang = lang::Lang::new();
                 let error_tracker = ErrorTracker::new();
-                
+
+                let auto_join_enabled = auto_join::config_enabled();
+                let auto_join_welcome = auto_join::config_welcome();
+                let idle_disconnect_secs = auto_join::config_idle_disconnect_secs();
+
+                // If auto-join is enabled, spawn a background loop that watches
+                // each connected voice channel and disconnects the bot after it
+                // has been alone for the configured timeout.
+                if auto_join_enabled {
+                    let idle_ctx = ctx.clone();
+                    tokio::spawn(async move {
+                        auto_join::idle_disconnect_loop(idle_ctx).await;
+                    });
+                }
+
                 log::info!("Framework setup complete with enhanced error tracking");
                 Logger::info("INIT", "Error tracking system initialized successfully");
-                
-                Ok(Data { 
-                    db_pool, 
+
+                Ok(Data {
+                    db_pool,
                     lang,
                     error_tracker,
                     volume: std::sync::Arc::new(std::sync::Mutex::new(1.0)),
                     conversations: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    auto_join_enabled,
+                    auto_join_welcome,
+                    idle_disconnect_secs,
+                    last_welcome: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    alone_since: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                 })
             })
         })
