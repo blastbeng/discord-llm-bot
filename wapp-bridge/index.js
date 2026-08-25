@@ -169,17 +169,20 @@ app.post('/sendAudio', async (req, res) => {
     if (!chatId || !audioBase64) {
         return res.status(400).json({ error: 'chatId and audioBase64 are required' });
     }
+    const createdFiles = [];
     try {
         // Decode base64 audio bytes to a temp file
         const audioBuffer = Buffer.from(audioBase64, 'base64');
         const inputPath = join(tmpdir(), `wapp_in_${Date.now()}.mp3`);
         writeFileSync(inputPath, audioBuffer);
+        createdFiles.push(inputPath);
 
         // Convert to OGG Opus (WhatsApp voice message format) using ffmpeg
         const oggPath = join(tmpdir(), `wapp_${Date.now()}.ogg`);
         execSync(`ffmpeg -i "${inputPath}" -c:a libopus -b:a 64k -ac 1 -y "${oggPath}"`, {
             stdio: 'pipe',
         });
+        createdFiles.push(oggPath);
 
         const oggBuffer = readFileSync(oggPath);
 
@@ -190,14 +193,15 @@ app.post('/sendAudio', async (req, res) => {
             ptt: true,
         });
 
-        // Clean up temp files
-        try { unlinkSync(inputPath); } catch {}
-        try { unlinkSync(oggPath); } catch {}
-
         res.json({ success: true });
     } catch (e) {
         console.error('[bridge] sendAudio error:', e.message);
         res.status(500).json({ error: e.message });
+    } finally {
+        // Always clean up temp files, including on error (e.g. ffmpeg failure)
+        for (const f of createdFiles) {
+            try { unlinkSync(f); } catch {}
+        }
     }
 });
 
