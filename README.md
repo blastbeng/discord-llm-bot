@@ -116,7 +116,7 @@ The Telegram bot mirrors the WhatsApp bot's commands (long polling, no webhook n
 
 **WhatsApp (`.env.wapp`)**: `WAPP_ENABLED`, `BRIDGE_PORT`, `WAPP_WEBHOOK_URL`, `WHATSAPP_ALLOWED_GROUPS`, `WAPP_WEBHOOK_PORT`, `WAPP_BRIDGE_URL`, plus the same shared DB/TTS/LLM/FakeYou settings.
 
-**Telegram (`.env.telegram`)**: `TEL_ENABLED` (set to `true` to enable; when `false` the bot stays idle), `TELOXIDE_TOKEN` (from @BotFather), plus the same shared DB/TTS/LLM/FakeYou settings.
+**Telegram (`.env.telegram`)**: `TEL_ENABLED` (set to `true` to enable; when `false` the bot stays idle), `TELOXIDE_TOKEN` (from @BotFather), `TEL_ALLOWED_CHATS` (comma-separated chat/group IDs the bot is restricted to; empty = all chats allowed), plus the same shared DB/TTS/LLM/FakeYou settings.
 
 ## Voices & Effects
 

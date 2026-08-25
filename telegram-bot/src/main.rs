@@ -26,12 +26,33 @@ struct AppState {
     conversations: std::sync::Mutex<std::collections::HashMap<String, Vec<llm::ConversationMessage>>>,
     /// Whether Telegram processing is enabled (TEL_ENABLED=true).
     enabled: bool,
+    /// Allowlist of chat/group IDs the bot is allowed to operate in.
+    /// `None` means all chats are allowed (no restriction).
+    allowed_chats: Option<std::collections::HashSet<i64>>,
 }
 
 /// Whether the Telegram bot is enabled. When not "true", the process starts
 /// and stays idle (no polling, no processing) so the container stays healthy.
 fn config_enabled() -> bool {
     env::var("TEL_ENABLED").unwrap_or_else(|_| "false".to_string()).to_lowercase() == "true"
+}
+
+/// Parse the `TEL_ALLOWED_CHATS` allowlist (comma-separated chat/group IDs).
+/// Returns `None` when the variable is empty/unset, meaning all chats are
+/// allowed. When set, only the listed chat/group IDs are processed.
+fn config_allowed_chats() -> Option<std::collections::HashSet<i64>> {
+    let raw = env::var("TEL_ALLOWED_CHATS").unwrap_or_default();
+    let ids: std::collections::HashSet<i64> = raw
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse::<i64>().ok())
+        .collect();
+    if ids.is_empty() {
+        None
+    } else {
+        Some(ids)
+    }
 }
 
 #[tokio::main]
@@ -71,11 +92,19 @@ async fn main() {
         database::populate_db_if_empty(&db_pool).await.expect("Database population failed");
     }
 
+    let allowed_chats = config_allowed_chats();
+    if let Some(ids) = &allowed_chats {
+        log::info!("telegram-bot: restricting to allowed chats: {:?}", ids);
+    } else {
+        log::info!("telegram-bot: TEL_ALLOWED_CHATS not set — all chats allowed");
+    }
+
     let state = Arc::new(AppState {
         db_pool,
         lang: lang::Lang::new(),
         conversations: std::sync::Mutex::new(std::collections::HashMap::new()),
         enabled,
+        allowed_chats,
     });
 
     if !enabled {
@@ -110,8 +139,19 @@ async fn handle_message(bot: Bot, msg: Message, state: Arc<AppState>) -> Respons
     if !state.enabled {
         return Ok(());
     }
-    let Some(text) = msg.text() else { return Ok(()) };
     let chat_id = msg.chat.id;
+
+    // Enforce the chat/group allowlist. When TEL_ALLOWED_CHATS is set, only
+    // messages from the listed chat/group IDs are processed; everything else
+    // is ignored silently (mirrors the WhatsApp bot's allowed-groups filter).
+    if let Some(allowed) = &state.allowed_chats {
+        if !allowed.contains(&chat_id.0) {
+            log::debug!("telegram-bot: ignoring message from non-allowed chat {}", chat_id);
+            return Ok(());
+        }
+    }
+
+    let Some(text) = msg.text() else { return Ok(()) };
     let text = text.trim();
 
     // Parse "/command" or "/command@BotName args".
