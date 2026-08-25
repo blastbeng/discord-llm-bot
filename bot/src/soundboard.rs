@@ -25,7 +25,17 @@ pub struct SoundboardSession {
     pub page: usize,
     pub effect: String,
     pub guild_id: u64,
+    /// When the session was created, used to expire stale sessions so they
+    /// don't accumulate in memory if the user never interacts again.
+    pub created_at: std::time::Instant,
 }
+
+/// How long a soundboard session may live before it is considered stale and
+/// eligible for eviction (in case the user never interacts with the buttons).
+pub const SESSION_TTL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
+/// Maximum number of sessions kept in memory at once.
+pub const MAX_SESSIONS: usize = 25;
 
 /// Results shown per page in the Discord embed.
 pub const PAGE_SIZE: usize = 5;

@@ -2011,12 +2011,18 @@ async fn soundboard(
         page: 0,
         effect: actual_effect,
         guild_id,
+        created_at: std::time::Instant::now(),
     };
     {
         let mut sessions = ctx.data().soundboard_sessions.lock().unwrap();
-        // Avoid unbounded growth: cap stored sessions.
-        if sessions.len() >= 25 {
-            sessions.retain(|_, s| s.items.len() > 0);
+        let now = std::time::Instant::now();
+        // Evict stale sessions (user never interacted), then if we're still at
+        // capacity evict the oldest so memory stays bounded.
+        sessions.retain(|_, s| now.duration_since(s.created_at) < soundboard::SESSION_TTL);
+        if sessions.len() >= soundboard::MAX_SESSIONS {
+            if let Some(oldest) = sessions.iter().min_by_key(|(_, s)| s.created_at).map(|(k, _)| k.clone()) {
+                sessions.remove(&oldest);
+            }
         }
         sessions.insert(session_id.clone(), session);
     }
