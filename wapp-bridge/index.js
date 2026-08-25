@@ -145,6 +145,9 @@ app.post('/sendText', async (req, res) => {
     if (!chatId || !text) {
         return res.status(400).json({ error: 'chatId and text are required' });
     }
+    if (!sock) {
+        return res.status(503).json({ error: 'WhatsApp not connected' });
+    }
     try {
         await sock.sendMessage(chatId, { text });
         res.json({ success: true });
@@ -168,6 +171,9 @@ app.post('/sendAudio', async (req, res) => {
     const { chatId, audioBase64 } = req.body;
     if (!chatId || !audioBase64) {
         return res.status(400).json({ error: 'chatId and audioBase64 are required' });
+    }
+    if (!sock) {
+        return res.status(503).json({ error: 'WhatsApp not connected' });
     }
     const createdFiles = [];
     try {
