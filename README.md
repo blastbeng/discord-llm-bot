@@ -1,20 +1,21 @@
 # discord-llm-bot
 
-A voice TTS bot for Discord, with an optional WhatsApp bot, written in Rust (migrated from a Python implementation).
+A voice TTS bot for Discord, with optional WhatsApp and Telegram bots, written in Rust (migrated from a Python implementation).
 
-Both bots share the same SQLite sentence database and MP3 TTS cache. The Discord bot plays TTS audio in voice channels; the WhatsApp bot sends TTS audio as voice messages.
+All bots share the same SQLite sentence database and MP3 TTS cache. The Discord bot plays TTS audio in voice channels; the WhatsApp and Telegram bots send TTS audio as messages.
 
 ## Architecture
 
-The project runs as three Docker Compose services:
+The project runs as four Docker Compose services:
 
 | Service | Language | Purpose |
 |---------|----------|---------|
 | `discord-llm-bot` | Rust (Serenity/Poise/Songbird) | Discord slash-command bot with voice TTS |
 | `whatsapp-bridge` | Node.js (Baileys) | WhatsApp connection, forwards messages to the Rust bot, sends text/audio back |
 | `whatsapp-bot` | Rust (Axum) | HTTP webhook server that processes WhatsApp commands and shares the DB/TTS cache |
+| `telegram-bot` | Rust (teloxide) | Telegram bot (long polling) that processes commands and shares the DB/TTS cache |
 
-All three share the mounted `./config` (SQLite DB) and `./audios` (TTS cache) volumes.
+All services share the mounted `./config` (SQLite DB) and `./audios` (TTS cache) volumes.
 
 ## Prerequisites
 
@@ -36,14 +37,20 @@ All three share the mounted `./config` (SQLite DB) and `./audios` (TTS cache) vo
    # edit .env.wapp — set WAPP_ENABLED=true to enable
    ```
 
-3. **Start everything**
+3. **Telegram config** (optional — leave disabled to skip)
+   ```bash
+   cp .env.telegram.sample .env.telegram
+   # edit .env.telegram — set TEL_ENABLED=true and TELOXIDE_TOKEN
+   ```
+
+4. **Start everything**
    ```bash
    docker compose up -d --build
    ```
 
-4. **Enable WhatsApp**: With `WAPP_ENABLED=true`, run `docker compose logs -f whatsapp-bridge` and scan the printed QR code once with the phone. The session is persisted in `wapp-bridge/auth_state/`.
+5. **Enable WhatsApp**: With `WAPP_ENABLED=true`, run `docker compose logs -f whatsapp-bridge` and scan the printed QR code once with the phone. The session is persisted in `wapp-bridge/auth_state/`.
 
-> **Note:** With `WAPP_ENABLED=false` (default), the WhatsApp services stay running but idle — they do not affect the Discord bot.
+> **Note:** With `WAPP_ENABLED=false` (default) and `TEL_ENABLED=false` (default), the WhatsApp and Telegram services stay running but idle — they do not affect the Discord bot.
 
 ## Discord Commands
 
@@ -89,11 +96,27 @@ Set `AUTO_JOIN_VOICE=true` to enable automatic voice handling:
 /help
 ```
 
+## Telegram Commands
+
+The Telegram bot mirrors the WhatsApp bot's commands (long polling, no webhook needed):
+
+```
+/speak <text> [--voice Google] [--effect none]
+/random [search] [--voice Google] [--effect none]
+/ask <question>
+/translate <text> <lang>
+/joke
+/stats
+/help
+```
+
 ## Environment Variables
 
 **Discord (`.env`)**: `BOT_TOKEN`, `GUILD_ID`, `ADMIN_ID`, `LANG`, `LOG_LEVEL`, `TMP_DIR`, `SAVE_MP3_ON_DISK`, `MAX_AUDIO_FILE_SIZE_MB`, optional `AUTO_JOIN_VOICE`/`AUTO_JOIN_WELCOME`/`AUTO_JOIN_IDLE_DISCONNECT_SECS` (auto-voice behaviour, see above), plus optional `FAKEYOU_USERNAME`/`FAKEYOU_PASSWORD` and LLM (`LLM_ENDPOINTS`, `LLM_API_KEYS`, `LLM_MODELS`).
 
 **WhatsApp (`.env.wapp`)**: `WAPP_ENABLED`, `BRIDGE_PORT`, `WAPP_WEBHOOK_URL`, `WHATSAPP_ALLOWED_GROUPS`, `WAPP_WEBHOOK_PORT`, `WAPP_BRIDGE_URL`, plus the same shared DB/TTS/LLM/FakeYou settings.
+
+**Telegram (`.env.telegram`)**: `TEL_ENABLED` (set to `true` to enable; when `false` the bot stays idle), `TELOXIDE_TOKEN` (from @BotFather), plus the same shared DB/TTS/LLM/FakeYou settings.
 
 ## Voices & Effects
 
