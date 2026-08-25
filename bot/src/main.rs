@@ -2055,6 +2055,21 @@ async fn play_soundboard_item(
         .and_then(|g| g.voice_states.get(&user_id).and_then(|vs| vs.channel_id))
         .ok_or("Devi essere in un canale vocale".to_string())?;
 
+    // Verify the bot has connect + speak permission in the target channel so a
+    // permission failure gives a clear message instead of a silent failed join.
+    let has_perms = match channel_id.to_channel(ctx).await {
+        Ok(serenity::Channel::Guild(gc)) => {
+            #[allow(deprecated)]
+            gc.permissions_for_user(&ctx.cache, ctx.cache.current_user().id)
+                .map(|p| p.connect() && p.speak())
+                .unwrap_or(false)
+        }
+        _ => false,
+    };
+    if !has_perms {
+        return Err("Il bot non ha il permesso di connettersi/parlare in quel canale.".to_string());
+    }
+
     // Connect the bot: join if disconnected, or switch if alone (never abandon
     // other members). Mirror the smart behaviour of connect_bot_by_voice_client.
     let manager = songbird::get(ctx)
