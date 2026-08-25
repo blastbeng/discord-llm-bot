@@ -625,45 +625,67 @@ pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<TtsResult, B
     get_or_generate_tts_with_effect(text, voice, "none").await
 }
 
+/// Apply an audio effect to an existing (plain) audio file on-the-fly, writing
+/// the filtered result to a temporary file that is scheduled for cleanup.
+/// Returns the temporary file path. Effects are never persisted.
+async fn apply_effect_to_temp(
+    input_path: &str,
+    text: &str,
+    effect: &str,
+    actual_voice: &str,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let hash = format!("{:x}", md5_compute(text));
+    let voice_token = get_voice_token(actual_voice);
+    let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
+    tokio::fs::create_dir_all(&temp_dir).await?;
+    let temp_path = format!("{}/tts_{}_{}_{}.mp3", temp_dir, voice_token, effect, hash);
+    let bytes = tokio::fs::read(input_path).await?;
+    compress_and_save_mp3_with_effect(bytes, &temp_path, effect).await?;
+    let path_clone = temp_path.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+        let _ = tokio::fs::remove_file(&path_clone).await;
+    });
+    Ok(temp_path)
+}
+
 pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &str) -> Result<TtsResult, Box<dyn std::error::Error + Send + Sync>> {
     let save_mp3 = std::env::var("SAVE_MP3_ON_DISK")
         .unwrap_or_else(|_| "false".to_string())
         .to_lowercase() == "true";
+    let apply_effect = effect != "none" && effect != "random";
 
-    // Check the cache first when disk saving is enabled.
-    // The cache key now includes the effect name, so filtered audio is
-    // cached separately from unfiltered audio. When no effect is applied,
-    // the path is identical to the old format (backward compatible).
+    // 1) CACHE CHECK — the cache stores only PLAIN (no-effect) audio. When an
+    //    effect is requested we reuse the cached plain audio and apply the
+    //    effect on-the-fly; the effected audio is never cached.
     if save_mp3 {
-        let file_path = get_file_path_with_effect(voice, text, effect);
-        log::debug!("get_or_generate_tts: checking cache for {}", file_path);
-        if tokio::fs::try_exists(&file_path).await.unwrap_or(false) {
-            log::debug!("get_or_generate_tts: cache hit for {}", file_path);
-            return Ok(TtsResult { file_path, actual_voice: voice.to_string(), fallback: false });
+        // Plain audio for the requested voice.
+        let plain_path = get_file_path(voice, text);
+        log::debug!("get_or_generate_tts: checking plain cache for {}", plain_path);
+        if tokio::fs::try_exists(&plain_path).await.unwrap_or(false) {
+            log::info!("get_or_generate_tts: plain cache hit for {}", plain_path);
+            if apply_effect {
+                let temp_path = apply_effect_to_temp(&plain_path, text, effect, voice).await?;
+                return Ok(TtsResult { file_path: temp_path, actual_voice: voice.to_string(), fallback: false });
+            }
+            return Ok(TtsResult { file_path: plain_path, actual_voice: voice.to_string(), fallback: false });
         }
 
-        // If the requested voice is a FakeYou voice and its specific file doesn't
-        // exist, check whether a Google fallback was previously cached for the
-        // same text+effect. When FakeYou fails and falls back to Google, the file
-        // is saved with the Google token — so on the next request for the same
-        // FakeYou voice we should reuse that cached fallback instead of
-        // retrying FakeYou (which will likely fail again) every time.
+        // FakeYou voice: reuse a previously-cached Google fallback plain audio.
         if voice != "Google" {
-            let google_fallback_path = get_file_path_with_effect("Google", text, effect);
-            if tokio::fs::try_exists(&google_fallback_path).await.unwrap_or(false) {
-                log::info!(
-                    "get_or_generate_tts: FakeYou cache miss, but Google fallback exists — reusing {}",
-                    google_fallback_path
-                );
-                return Ok(TtsResult {
-                    file_path: google_fallback_path,
-                    actual_voice: "Google".to_string(),
-                    fallback: true,
-                });
+            let google_plain = get_file_path("Google", text);
+            if tokio::fs::try_exists(&google_plain).await.unwrap_or(false) {
+                log::info!("get_or_generate_tts: reusing cached Google fallback {}", google_plain);
+                if apply_effect {
+                    let temp_path = apply_effect_to_temp(&google_plain, text, effect, "Google").await?;
+                    return Ok(TtsResult { file_path: temp_path, actual_voice: "Google".to_string(), fallback: true });
+                }
+                return Ok(TtsResult { file_path: google_plain, actual_voice: "Google".to_string(), fallback: true });
             }
         }
     }
 
+    // 2) GENERATE the audio (with fallback to Google).
     log::info!("get_or_generate_tts: generating TTS for voice {}", voice);
     let (bytes, actual_voice, fallback) = if voice == "Google" {
         (get_tts_google(text).await?, "Google".to_string(), false)
@@ -683,54 +705,64 @@ pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &s
         }
     };
 
-    // Effects are applied on-the-fly and never persisted to the audios/ cache,
-    // which stores only plain (no-effect) audio so it stays reusable. When an
-    // effect is requested, the filtered audio is written to a temporary file
-    // for playback instead of being cached.
-    let apply_effect = effect != "none" && effect != "random";
-    let hash = format!("{:x}", md5_compute(text));
     let voice_token = get_voice_token(&actual_voice);
     let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
+    let hash = format!("{:x}", md5_compute(text));
 
-    let save_path = if apply_effect {
-        // Effect requested → play through a temp file; never persist it.
+    // 3) PERSIST the plain audio (so future effect requests reuse it) and then
+    //    apply the effect on-the-fly if requested.
+    if save_mp3 {
+        let plain_path = get_file_path(&actual_voice, text);
+        if !tokio::fs::try_exists(&plain_path).await.unwrap_or(false) {
+            if apply_effect {
+                // Write the effected audio to a temp file for playback…
+                tokio::fs::create_dir_all(&temp_dir).await?;
+                let temp_path = format!("{}/tts_{}_{}_{}.mp3", temp_dir, voice_token, effect, hash);
+                compress_and_save_mp3_with_effect(bytes.clone(), &temp_path, effect).await?;
+                // …and cache the plain audio for future reuse.
+                compress_and_save_mp3(bytes, &plain_path).await?;
+                let (artist, title) = if actual_voice == "Google" {
+                    ("Google", "Google")
+                } else {
+                    (actual_voice.as_str(), get_voice_token(&actual_voice))
+                };
+                write_id3_tags(&plain_path, artist, title, text);
+                let path_clone = temp_path.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+                    let _ = tokio::fs::remove_file(&path_clone).await;
+                });
+                return Ok(TtsResult { file_path: temp_path, actual_voice, fallback });
+            } else {
+                compress_and_save_mp3(bytes, &plain_path).await?;
+                let (artist, title) = if actual_voice == "Google" {
+                    ("Google", "Google")
+                } else {
+                    (actual_voice.as_str(), get_voice_token(&actual_voice))
+                };
+                write_id3_tags(&plain_path, artist, title, text);
+            }
+        }
+        // Plain audio now cached — return it (no effect path).
+        return Ok(TtsResult { file_path: plain_path, actual_voice, fallback });
+    }
+
+    // 4) Disk saving disabled — write plain or effected audio to a temp file.
+    tokio::fs::create_dir_all(&temp_dir).await?;
+    let temp_path = if apply_effect {
         format!("{}/tts_{}_{}_{}.mp3", temp_dir, voice_token, effect, hash)
-    } else if save_mp3 {
-        // No effect + disk saving → cache the plain audio in audios/.
-        // Use actual_voice so a fallback Google file is cached under Google.
-        get_file_path(&actual_voice, text)
     } else {
-        // No effect + no disk saving → plain temp file.
         format!("{}/tts_{}_{}.mp3", temp_dir, voice_token, hash)
     };
-
-    // Ensure the temp directory exists when writing temp files (an effect is
-    // applied, or disk saving is disabled).
-    if apply_effect || !save_mp3 {
-        tokio::fs::create_dir_all(&temp_dir).await?;
+    if apply_effect {
+        compress_and_save_mp3_with_effect(bytes, &temp_path, effect).await?;
+    } else {
+        compress_and_save_mp3(bytes, &temp_path).await?;
     }
-
-    compress_and_save_mp3_with_effect(bytes, &save_path, effect).await?;
-
-    // Only write ID3 tags to persisted plain files (not temp/effect files).
-    if save_mp3 && !apply_effect {
-        let (artist, title) = if actual_voice == "Google" {
-            ("Google", "Google")
-        } else {
-            (actual_voice.as_str(), get_voice_token(&actual_voice))
-        };
-        write_id3_tags(&save_path, artist, title, text);
-    }
-
-    // Schedule temp file cleanup for temp files (an effect is applied, or disk
-    // saving is disabled).
-    if apply_effect || !save_mp3 {
-        let path_clone = save_path.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(300)).await;
-            let _ = tokio::fs::remove_file(&path_clone).await;
-        });
-    }
-
-    Ok(TtsResult { file_path: save_path, actual_voice, fallback })
+    let path_clone = temp_path.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+        let _ = tokio::fs::remove_file(&path_clone).await;
+    });
+    Ok(TtsResult { file_path: temp_path, actual_voice, fallback })
 }
