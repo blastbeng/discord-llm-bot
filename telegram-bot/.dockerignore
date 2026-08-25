@@ -1,0 +1,6 @@
+target/
+.git/
+*.sqlite
+*.sqlite3
+Dockerfile*
+.dockerignore
