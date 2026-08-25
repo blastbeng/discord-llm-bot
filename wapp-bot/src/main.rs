@@ -185,6 +185,28 @@ async fn send_audio(state: &AppState, chat_id: &str, file_path: &str) {
 
 // ─── Helper: parse voice and effect from args ──────────────────────
 
+/// Pick a random cached MP3 file from the audios/ directory, if any exist.
+/// Returns the file path, or None if there are no cached MP3s (or the
+/// directory can't be read). Used by /random to replay an already-generated
+/// TTS file instead of calling the TTS API again.
+async fn pick_cached_mp3() -> Option<String> {
+    let mut entries = tokio::fs::read_dir("audios").await.ok()?;
+    let mut mp3_files = Vec::new();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "mp3") {
+            if let Some(s) = path.to_str() {
+                mp3_files.push(s.to_string());
+            }
+        }
+    }
+    if mp3_files.is_empty() {
+        return None;
+    }
+    let mut rng = rand::thread_rng();
+    mp3_files.choose(&mut rng).map(|s| s.clone())
+}
+
 fn parse_voice_effect(args: &str) -> (String, String, String) {
     // Format: "text" or "text --voice Google" or "text --voice Google --effect echo"
     // We parse from the end to find --voice and --effect flags
@@ -268,6 +290,22 @@ async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) {
 
 async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
     let (search_text, voice, effect) = parse_voice_effect(args);
+
+    // When no voice, no search text, and disk caching is enabled, pick a random
+    // already-cached MP3 from audios/ and send it directly — much faster and
+    // avoids unnecessary TTS API calls (mirrors the Discord bot's /random).
+    let voice_explicitly_set = args.contains("--voice");
+    let save_mp3 = std::env::var("SAVE_MP3_ON_DISK")
+        .unwrap_or_else(|_| "false".to_string())
+        .to_lowercase() == "true";
+
+    if !voice_explicitly_set && search_text.is_empty() && save_mp3 {
+        if let Some(chosen) = pick_cached_mp3().await {
+            log::info!("wapp-bot random: picked cached MP3: {}", chosen);
+            send_audio(state, &payload.from, &chosen).await;
+            return;
+        }
+    }
 
     // Fetch sentences from database
     let sentences = if !search_text.is_empty() {
