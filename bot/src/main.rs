@@ -110,16 +110,10 @@ pub struct Data {
     /// Whether to speak a (humorous) welcome phrase when auto-joining/welcoming.
     /// Config: AUTO_JOIN_WELCOME.
     pub auto_join_welcome: bool,
-    /// Seconds the bot stays in a voice channel alone before disconnecting.
-    /// Config: AUTO_JOIN_IDLE_DISCONNECT_SECS.
-    pub idle_disconnect_secs: u64,
     /// Per-channel timestamp of the last spoken welcome phrase, used to throttle
     /// so multiple rapid joins don't trigger an LLM call each time. Keyed by
     /// channel id so different channels get independent throttling.
     pub last_welcome: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, std::time::Instant>>>,
-    /// Per-guild timestamp of when the bot first became alone in a voice
-    /// channel, used by the idle-disconnect loop.
-    pub alone_since: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, std::time::Instant>>>,
     /// Active /soundboard sessions keyed by a short session id, so the
     /// pagination/play component buttons can resolve the stored search results.
     pub soundboard_sessions: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, soundboard::SoundboardSession>>>,
@@ -2943,7 +2937,6 @@ async fn main() {
 
                 let auto_join_enabled = auto_join::config_enabled();
                 let auto_join_welcome = auto_join::config_welcome();
-                let idle_disconnect_secs = auto_join::config_idle_disconnect_secs();
 
                 // If auto-join is enabled, spawn a background loop that watches
                 // each connected voice channel and disconnects the bot after it
@@ -2966,9 +2959,7 @@ async fn main() {
                     conversations: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                     auto_join_enabled,
                     auto_join_welcome,
-                    idle_disconnect_secs,
                     last_welcome: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-                    alone_since: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                     soundboard_sessions: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                 })
             })

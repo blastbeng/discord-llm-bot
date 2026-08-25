@@ -50,6 +50,7 @@ services:
     volumes:
       - "./config:/app/config"
       - "./audios:/app/audios"
+      - "/tmp/discord-llm-bot:/tmp/discord-llm-bot"
     depends_on:
       - whatsapp-bridge
     restart: unless-stopped
