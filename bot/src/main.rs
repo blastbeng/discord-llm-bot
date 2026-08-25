@@ -4,6 +4,7 @@ mod error;
 mod generator;
 mod lang;
 mod llm;
+mod soundboard;
 mod tts;
 
 use error::{ErrorTracker, Logger};
@@ -114,6 +115,9 @@ pub struct Data {
     /// Per-guild timestamp of when the bot first became alone in a voice
     /// channel, used by the idle-disconnect loop.
     pub alone_since: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, std::time::Instant>>>,
+    /// Active /soundboard sessions keyed by a short session id, so the
+    /// pagination/play component buttons can resolve the stored search results.
+    pub soundboard_sessions: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, soundboard::SoundboardSession>>>,
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -1886,6 +1890,277 @@ async fn audio(
     Ok(())
 }
 
+/// Build the embed + button row for the current page of a soundboard session.
+/// Shared by the /soundboard command and the pagination component handler.
+fn soundboard_view(
+    session: &soundboard::SoundboardSession,
+    session_id: &str,
+) -> (serenity::CreateEmbed, Vec<serenity::CreateActionRow>) {
+    let total = session.items.len();
+    let total_pages = total.div_ceil(soundboard::PAGE_SIZE).max(1);
+    let page = session.page.min(total_pages - 1);
+    let start = page * soundboard::PAGE_SIZE;
+    let end = (start + soundboard::PAGE_SIZE).min(total);
+
+    let mut desc = String::new();
+    for (i, item) in session.items[start..end].iter().enumerate() {
+        desc.push_str(&format!("**{}.** {}\n", i + 1, item.title));
+    }
+    desc.push_str(&format!(
+        "\n*Risultati {}–{} di {} — pagina {}/{}*",
+        start + 1,
+        end,
+        total,
+        page + 1,
+        total_pages
+    ));
+
+    let embed = serenity::CreateEmbed::new()
+        .title(format!("🔊 Soundboard: {}", session.query))
+        .description(desc)
+        .color(0x5865F2);
+
+    // Sound buttons (one per result on this page).
+    let mut sound_buttons = Vec::new();
+    for i in start..end {
+        let label = if session.items[i].title.chars().count() > 80 {
+            let s: String = session.items[i].title.chars().take(80).collect();
+            format!("{}…", s)
+        } else {
+            session.items[i].title.clone()
+        };
+        sound_buttons.push(
+            serenity::CreateButton::new(format!("sb:play:{}:{}", session_id, i))
+                .label(label)
+                .style(serenity::ButtonStyle::Primary),
+        );
+    }
+
+    // Navigation row (prev / page indicator / next / close).
+    let prev = serenity::CreateButton::new(format!("sb:prev:{}", session_id))
+        .label("◀ Prev")
+        .style(serenity::ButtonStyle::Secondary)
+        .disabled(page == 0);
+    let next = serenity::CreateButton::new(format!("sb:next:{}", session_id))
+        .label("Next ▶")
+        .style(serenity::ButtonStyle::Secondary)
+        .disabled(page + 1 >= total_pages);
+    let close = serenity::CreateButton::new(format!("sb:close:{}", session_id))
+        .label("✖ Chiudi")
+        .style(serenity::ButtonStyle::Danger);
+
+    let rows = vec![
+        serenity::CreateActionRow::Buttons(sound_buttons),
+        serenity::CreateActionRow::Buttons(vec![prev, next, close]),
+    ];
+
+    (embed, rows)
+}
+
+/// Soundboard: search MyInstants sounds and play one in voice.
+#[poise::command(slash_command, user_cooldown = 5)]
+async fn soundboard(
+    ctx: Context<'_>,
+    #[description = "Cosa cercare su MyInstants (obbligatorio)"] search: String,
+    #[description = "Effetto audio (opzionale, default: nessuno)"]
+    #[autocomplete = "effect_autocomplete"]
+    effect: Option<String>,
+) -> Result<(), Error> {
+    log::info!(
+        "[GUILDID : {}] soundboard command invoked by user {} with search: {:?}, effect: {:?}",
+        ctx.guild_id().unwrap(),
+        ctx.author().id,
+        search,
+        effect
+    );
+
+    if search.trim().is_empty() {
+        ctx.send(poise::CreateReply::default().content("Devi inserire una ricerca per usare la soundboard.").ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    let effect = effect.unwrap_or_else(|| "none".to_string());
+    let actual_effect = if effect == "random" {
+        let mut rng = rand::thread_rng();
+        tts::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+    } else {
+        effect
+    };
+    if !tts::is_valid_effect(&actual_effect) {
+        ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_effect).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    ctx.defer_ephemeral().await?;
+
+    let guild_id = ctx.guild_id().unwrap().get();
+
+    // Search MyInstants and build a session.
+    let items = match soundboard::search(search.trim()).await {
+        Ok(items) => items,
+        Err(e) => {
+            ctx.send(poise::CreateReply::default().content(&format!("⚠️ {}", e)).ephemeral(true)).await?;
+            return Ok(());
+        }
+    };
+
+    let session_id = format!("{}", uuid::Uuid::new_v4().simple());
+    let session = soundboard::SoundboardSession {
+        query: search.trim().to_string(),
+        items,
+        page: 0,
+        effect: actual_effect,
+        guild_id,
+    };
+    {
+        let mut sessions = ctx.data().soundboard_sessions.lock().unwrap();
+        // Avoid unbounded growth: cap stored sessions.
+        if sessions.len() >= 25 {
+            sessions.retain(|_, s| s.items.len() > 0);
+        }
+        sessions.insert(session_id.clone(), session);
+    }
+
+    let (embed, rows) = {
+        let sessions = ctx.data().soundboard_sessions.lock().unwrap();
+        let session = sessions.get(&session_id).unwrap();
+        soundboard_view(session, &session_id)
+    };
+
+    ctx.send(poise::CreateReply::default().embed(embed).components(rows).ephemeral(true)).await?;
+    Ok(())
+}
+
+/// Download a MyInstants sound and play it in the user's voice channel, with
+/// an optional ffmpeg effect applied. Returns a user-facing message on success
+/// or an error string on failure.
+async fn play_soundboard_item(
+    ctx: &serenity::Context,
+    data: &Data,
+    guild_id: serenity::GuildId,
+    user_id: serenity::UserId,
+    url: &str,
+    effect: &str,
+) -> Result<String, String> {
+    // Resolve the user's current voice channel.
+    let channel_id = ctx
+        .cache
+        .guild(guild_id)
+        .and_then(|g| g.voice_states.get(&user_id).and_then(|vs| vs.channel_id))
+        .ok_or("Devi essere in un canale vocale".to_string())?;
+
+    // Connect the bot: join if disconnected, or switch if alone (never abandon
+    // other members). Mirror the smart behaviour of connect_bot_by_voice_client.
+    let manager = songbird::get(ctx)
+        .await
+        .ok_or("Songbird not registered".to_string())?;
+    let bot_channel = {
+        let mut current = None;
+        if let Some(handler) = manager.get(guild_id) {
+            let h = handler.lock().await;
+            current = h.current_channel().map(|c| serenity::ChannelId::new(c.0.get()));
+        }
+        current
+    };
+    match bot_channel {
+        Some(c) if c == channel_id => {}
+        Some(c) => {
+            let humans = ctx
+                .cache
+                .guild(guild_id)
+                .map(|g| {
+                    g.voice_states
+                        .values()
+                        .filter(|vs| vs.channel_id == Some(c) && vs.user_id != ctx.cache.current_user().id)
+                        .count()
+                })
+                .unwrap_or(0);
+            if humans > 0 {
+                return Err("The bot is busy with other people in a voice channel. Use /join or wait.".to_string());
+            }
+            // Switch channels.
+            if let Some(handler) = manager.get(guild_id) {
+                let mut h = handler.lock().await;
+                let _ = h.leave().await;
+                drop(h);
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+            let _ = manager.join(guild_id, channel_id).await;
+        }
+        None => {
+            let _ = manager.join(guild_id, channel_id).await;
+        }
+    }
+
+    // Wait for the voice connection to establish.
+    let mut connected = false;
+    if let Some(handler) = manager.get(guild_id) {
+        for _ in 0..5 {
+            let h = handler.lock().await;
+            if h.current_channel().is_some() {
+                connected = true;
+                break;
+            }
+            drop(h);
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    }
+    if !connected {
+        return Err("Could not connect to the voice channel. Try again.".to_string());
+    }
+
+    // Download the mp3.
+    let bytes = tts::http_client()
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to download sound: {}", e))?
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read sound: {}", e))?
+        .to_vec();
+    if bytes.is_empty() {
+        return Err("The sound file was empty.".to_string());
+    }
+
+    // Save to a temp file, applying the effect if one was requested.
+    let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
+    tokio::fs::create_dir_all(&temp_dir)
+        .await
+        .map_err(|e| format!("Failed to create temp dir: {}", e))?;
+    let file_path = format!("{}/sb_{}_{}.mp3", temp_dir, uuid::Uuid::new_v4().simple(), url.rsplit('/').next().unwrap_or("sound"));
+
+    if effect == "none" {
+        tokio::fs::write(&file_path, &bytes)
+            .await
+            .map_err(|e| format!("Failed to write sound: {}", e))?;
+    } else {
+        tts::compress_and_save_mp3_with_effect(bytes, &file_path, effect)
+            .await
+            .map_err(|e| format!("Failed to apply effect: {}", e))?;
+    }
+
+    // Play with the stored volume.
+    if let Some(handler) = manager.get(guild_id) {
+        let mut h = handler.lock().await;
+        if h.current_channel().is_none() {
+            return Err("Bot disconnected while playing.".to_string());
+        }
+        let source = songbird::input::File::new(file_path.clone());
+        let track = h.play_only(source.into());
+        let vol = *data.volume.lock().unwrap();
+        let _ = track.set_volume(vol);
+    }
+
+    // Clean up the temp file after a delay.
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+        let _ = tokio::fs::remove_file(&file_path).await;
+    });
+
+    Ok("Playing soundboard sound.".to_string())
+}
+
 /// Restart bot.
 #[poise::command(slash_command, user_cooldown = 5)]
 async fn restart(ctx: Context<'_>) -> Result<(), Error> {
@@ -2134,7 +2409,7 @@ async fn main() {
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![join(), leave(), stop(), speak(), random(), ask(), translate(), volume(), audio(), restart(), rename(), avatar(), help(), stats(), joke()],
+            commands: vec![join(), leave(), stop(), speak(), random(), ask(), translate(), volume(), audio(), soundboard(), restart(), rename(), avatar(), help(), stats(), joke()],
             pre_command: |ctx| {
                 Box::pin(async move {
                     let command_name = ctx.command().name.as_str();
@@ -2440,6 +2715,82 @@ async fn main() {
                             // token may have expired if the user clicked after a long delay,
                             // and playback already succeeded at this point.
                             let _ = component.edit_response(ctx, serenity::EditInteractionResponse::new().content(&data.lang.replaying_audio)).await;
+                            } else if let Some(sb) = component.data.custom_id.strip_prefix("sb:") {
+                                // Soundboard component buttons: play a sound, or
+                                // navigate/close the paginated result list.
+                                let parts: Vec<&str> = sb.split(':').collect();
+                                if parts.is_empty() {
+                                    return Ok(());
+                                }
+                                let action = parts[0];
+                                let session_id = parts.get(1).copied().unwrap_or("").to_string();
+                                let Some(guild_id) = component.guild_id else { return Ok(()) };
+
+                                match action {
+                                    "close" => {
+                                        data.soundboard_sessions.lock().unwrap().remove(&session_id);
+                                        let _ = component
+                                            .edit_response(
+                                                ctx,
+                                                serenity::EditInteractionResponse::new().content("Soundboard chiuso.").components(Vec::new()),
+                                            )
+                                            .await;
+                                    }
+                                    "prev" | "next" => {
+                                        // Compute the new page and view while holding the lock,
+                                        // then drop it before awaiting the network call.
+                                        let view = {
+                                            let mut sessions = data.soundboard_sessions.lock().unwrap();
+                                            if let Some(session) = sessions.get_mut(&session_id) {
+                                                let total_pages = session.items.len().div_ceil(soundboard::PAGE_SIZE).max(1);
+                                                if action == "prev" && session.page > 0 {
+                                                    session.page -= 1;
+                                                } else if action == "next" && session.page + 1 < total_pages {
+                                                    session.page += 1;
+                                                }
+                                                Some(soundboard_view(session, &session_id))
+                                            } else {
+                                                None
+                                            }
+                                        };
+                                        if let Some((embed, rows)) = view {
+                                            let _ = component
+                                                .edit_response(ctx, serenity::EditInteractionResponse::new().embed(embed).components(rows))
+                                                .await;
+                                        }
+                                    }
+                                    "play" => {
+                                        let index: usize = parts.get(2).and_then(|p| p.parse().ok()).unwrap_or(0);
+                                        let session = {
+                                            let sessions = data.soundboard_sessions.lock().unwrap();
+                                            sessions.get(&session_id).cloned()
+                                        };
+                                        let Some(session) = session else { return Ok(()) };
+                                        if index >= session.items.len() {
+                                            return Ok(());
+                                        }
+                                        let item = &session.items[index];
+                                        let _ = component
+                                            .create_response(
+                                                ctx,
+                                                serenity::CreateInteractionResponse::Defer(serenity::CreateInteractionResponseMessage::new().ephemeral(true)),
+                                            )
+                                            .await;
+                                        match play_soundboard_item(&ctx, data, guild_id, component.user.id, &item.url, &session.effect).await {
+                                            Ok(msg) => {
+                                                let _ = component
+                                                    .edit_response(&ctx, serenity::EditInteractionResponse::new().content(format!("🔊 {}: {}", item.title, msg)))
+                                                    .await;
+                                            }
+                                            Err(e) => {
+                                                let _ = component
+                                                    .edit_response(&ctx, serenity::EditInteractionResponse::new().content(format!("⚠️ {}", e)))
+                                                    .await;
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
                             }
                     }
                     Ok(())
@@ -2492,6 +2843,7 @@ async fn main() {
                     idle_disconnect_secs,
                     last_welcome: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                     alone_since: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    soundboard_sessions: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                 })
             })
         })

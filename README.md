@@ -57,6 +57,7 @@ All three share the mounted `./config` (SQLite DB) and `./audios` (TTS cache) vo
 | `/ask <question> [voice] [effect]` | Ask an LLM (requires config) |
 | `/translate <text> <lang> [voice] [effect]` | Translate and speak via LLM |
 | `/joke [voice] [effect]` | Fetch and speak a random joke |
+| `/soundboard <search> [effect]` | Search MyInstants sounds, pick one from paginated results and play it |
 | `/audio <file>` | Play an uploaded audio file |
 | `/volume <0-100>` | Set playback volume |
 | `/stats` | Show bot statistics |
