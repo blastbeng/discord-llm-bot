@@ -6,7 +6,7 @@ RUN cargo install cargo-chef --locked
 WORKDIR /app
 
 FROM chef AS planner
-COPY Cargo.toml ./
+COPY Cargo.toml Cargo.lock* ./
 RUN mkdir src && echo 'fn main() {}' > src/main.rs
 RUN cargo chef prepare --recipe-path recipe.json
 
@@ -36,7 +36,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 # =============================================================================
 # Stage 3: Build — compile the actual application (only recompiles your code)
 # =============================================================================
-COPY Cargo.toml ./
+COPY Cargo.toml Cargo.lock* ./
 COPY src ./src
 
 # Build the real binary; dependencies are already compiled in the cook layer
