@@ -486,6 +486,17 @@ pub async fn get_tts_fakeyou(text: &str, voice: &str) -> Result<Vec<u8>, Box<dyn
     };
 
     let job_token = resp_json.inference_job_token.ok_or("No inference job token received")?;
+
+    // FakeYou has retired its legacy public TTS inference service. The API now
+    // returns a synthetic job token (e.g. "synthetic_too_many_requests") whose
+    // job status resolves to "dead" with title "Legacy TTS is retired". Detect
+    // this immediately instead of pointlessly polling for up to 120s.
+    if job_token.starts_with("synthetic") {
+        let msg = "FakeYou's public TTS service has been retired and is no longer available";
+        log::warn!("get_tts_fakeyou: {}", msg);
+        return Err(msg.into());
+    }
+
     log::info!("get_tts_fakeyou: inference job token {}", job_token);
 
     poll_fakeyou_job(&client, &job_token).await
@@ -595,8 +606,16 @@ async fn poll_fakeyou_job(
                         }
                     }
                     "complete_failure" | "dead" => {
-                        log::error!("poll_fakeyou_job: job failed with status: {}", status_str);
-                        return Err(format!("FakeYou job failed with status: {}", status_str).into());
+                        // Include any extra status description (e.g. FakeYou's
+                        // "Legacy TTS is retired" retirement notice) so the user
+                        // gets a meaningful reason instead of a bare status name.
+                        let detail = if extra.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" ({})", extra)
+                        };
+                        log::error!("poll_fakeyou_job: job failed with status: {}{}", status_str, detail);
+                        return Err(format!("FakeYou job failed with status: {}{}", status_str, detail).into());
                     }
                     "attempt_failed" => {
                         // The Python library raises an exception immediately on attempt_failed.
