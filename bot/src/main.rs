@@ -2557,7 +2557,8 @@ async fn main() {
                                         .field("🎲 /random", &lang.help_random_desc, false)
                                         .field("😂 /joke", &lang.help_joke_desc, false)
                                         .field("🔊 /volume", &lang.help_volume_desc, false)
-                                        .field("🎵 /audio", &lang.help_audio_desc, false),
+                                        .field("🎵 /audio", &lang.help_audio_desc, false)
+                                        .field("🎛️ /soundboard", &lang.help_soundboard_desc, false),
                                     "ai" => serenity::CreateEmbed::new()
                                         .title(&lang.help_title)
                                         .color(0x99AAB5)
@@ -2581,6 +2582,7 @@ async fn main() {
                                         .field("😂 /joke", &lang.help_joke_desc, false)
                                         .field("🔊 /volume", &lang.help_volume_desc, false)
                                         .field("🎵 /audio", &lang.help_audio_desc, false)
+                                        .field("🎛️ /soundboard", &lang.help_soundboard_desc, false)
                                         .field("🤔 /ask", &lang.help_ask_desc, false)
                                         .field("🌐 /translate", &lang.help_translate_desc, false)
                                         .field("📊 /stats", &lang.help_stats_desc, false)
