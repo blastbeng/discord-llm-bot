@@ -193,15 +193,14 @@ pub async fn insert_sentence(pool: &SqlitePool, sentence: &str) -> Result<(), sq
 pub async fn select_all_sentence(pool: &SqlitePool) -> Result<Vec<String>, sqlx::Error> {
     log::debug!("select_all_sentence: fetching all sentences");
     
-    // Weighted random selection: bias toward less-used and older sentences.
-    // RANDOM() returns a float in [0,1); multiplying by usage_count+1 gives
-    // higher values to more-used sentences, so ascending sort picks the
-    // least-used first. Adding created_at weight (older = smaller) further
-    // breaks ties toward older entries. This ensures variety instead of
-    // always repeating the same popular sentences.
+    // Return all sentences in a randomized order. Callers pick a random entry
+    // (e.g. via `slice::choose`), so the order here only needs to avoid any
+    // bias — a plain random sort is what the old comment's "weighted random"
+    // actually produced in practice. SQLite's RANDOM() returns a large signed
+    // integer, not a float in [0,1), so weighting it against usage_count was
+    // never meaningful; a uniform random order is simpler and honest.
     let rows = sqlx::query_scalar::<_, String>(
-        "SELECT sentence FROM sentences 
-         ORDER BY (RANDOM() * (usage_count + 1)) ASC, created_at ASC"
+        "SELECT sentence FROM sentences ORDER BY RANDOM()"
     )
     .fetch_all(pool)
     .await?;
@@ -211,9 +210,9 @@ pub async fn select_all_sentence(pool: &SqlitePool) -> Result<Vec<String>, sqlx:
 }
 
 /// Fetch sentences ordered by least-used first, for the background generator.
-/// Unlike select_all_sentence which uses weighted-random ordering for variety
-/// in user-facing commands, this deterministic ordering ensures the generator
-/// processes the least-cached sentences first and eventually covers all entries.
+/// Unlike select_all_sentence which randomizes the full set for user-facing
+/// commands, this deterministic ordering ensures the generator processes the
+/// least-cached sentences first and eventually covers all entries.
 pub async fn select_sentences_for_generation(pool: &SqlitePool) -> Result<Vec<String>, sqlx::Error> {
     log::debug!("select_sentences_for_generation: fetching sentences ordered by usage_count ASC");
     let rows = sqlx::query_scalar::<_, String>(
@@ -234,8 +233,9 @@ pub async fn select_like_sentence(pool: &SqlitePool, text: &str) -> Result<Vec<S
     // The CASE differentiates exact matches (rank 0) from partial matches (rank 1),
     // so sentences equal to the search text appear first, followed by those that
     // merely contain it as a substring.
-    // usage_count ASC (least-used first) is consistent with select_all_sentence's
-    // weighted-random philosophy — biasing toward less-used sentences for variety.
+    // usage_count ASC (least-used first) prefers sentences that haven't been
+    // spoken as often, improving variety. (This is a real ordering, unlike
+    // select_all_sentence which just randomizes the full set.)
     let pattern = format!("%{}%", text);
     let rows = sqlx::query_scalar::<_, String>(
         "SELECT sentence FROM sentences 
@@ -317,8 +317,8 @@ async fn update_existing_database(pool: &SqlitePool) -> Result<(), sqlx::Error> 
         return Ok(());
     }
 
-    // Get current database sentences for comparison (unsorted — no need for
-    // the weighted-random ordering that select_all_sentence applies).
+    // Get current database sentences for comparison, deterministically sorted.
+    // No randomization needed here — we just need a stable set to diff against.
     let existing_sentences: Vec<String> = sqlx::query_scalar(
         "SELECT sentence FROM sentences ORDER BY sentence"
     )
