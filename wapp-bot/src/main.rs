@@ -65,7 +65,19 @@ async fn main() {
         tokio::fs::File::create(db_path).await.expect("Failed to create database file");
     }
 
-    let db_pool = sqlx::SqlitePool::connect(&db_url).await
+    // Enable WAL mode + busy timeout so both bots can safely share this
+    // SQLite file without "database is locked" errors on concurrent writes.
+    let db_pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(
+            db_url
+                .parse::<sqlx::sqlite::SqliteConnectOptions>()
+                .expect("Invalid DATABASE_URL for SQLite")
+                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+                .busy_timeout(std::time::Duration::from_secs(5))
+                .create_if_missing(true),
+        )
+        .await
         .expect("Database connection failed");
     eprintln!("Connecting to database at: {}", db_url);
     database::init_db(&db_pool).await.expect("Database initialization failed");

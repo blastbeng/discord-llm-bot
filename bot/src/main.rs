@@ -1982,8 +1982,22 @@ async fn main() {
         tokio::fs::File::create(db_path).await.expect("Failed to create database file");
     }
 
-    // Connect to SQLite database with proper error handling
-    let db_pool = sqlx::SqlitePool::connect(&db_url).await
+    // Connect to SQLite database with proper error handling.
+    // Enable WAL mode + a busy timeout so the two bots (Discord and WhatsApp)
+    // can safely share the same SQLite file without "database is locked" errors
+    // when they write concurrently. WAL allows concurrent readers with one writer.
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+    let db_pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(
+            db_url
+                .parse::<SqliteConnectOptions>()
+                .expect("Invalid DATABASE_URL for SQLite")
+                .journal_mode(SqliteJournalMode::Wal)
+                .busy_timeout(std::time::Duration::from_secs(5))
+                .create_if_missing(true),
+        )
+        .await
         .map_err(|e| format!("Failed to connect to DB: {}", e))
         .expect("Database connection failed");
     
