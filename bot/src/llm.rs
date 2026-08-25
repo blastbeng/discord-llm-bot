@@ -147,7 +147,12 @@ pub async fn ask(
             "messages": messages,
             "stream": false,
             "temperature": 0.7,
-            "max_tokens": 150
+            // Generous token budget: reasoning models (e.g. gpt-oss:20b-cloud)
+            // spend a lot on their internal chain-of-thought before the final
+            // answer. A too-low max_tokens makes them exhaust the budget on
+            // reasoning and return an empty "content" field. The response is
+            // truncated to 200 chars for TTS afterwards anyway.
+            "max_tokens": 500
         });
 
         log::info!(
@@ -301,7 +306,8 @@ pub async fn translate(text: &str, target_lang: &str) -> Result<String, String> 
             ],
             "stream": false,
             "temperature": 0.3,
-            "max_tokens": 200
+            // Generous budget for reasoning models (see ask for details).
+            "max_tokens": 400
         });
 
         log::info!(
@@ -439,7 +445,8 @@ pub async fn welcome(user: &str, db_sentences: &[String]) -> Result<String, Stri
             ],
             "stream": false,
             "temperature": 0.9,
-            "max_tokens": 150
+            // Generous budget for reasoning models (see ask for details).
+            "max_tokens": 400
         });
 
         log::info!("llm::welcome: trying endpoint {}/{} (model: {})", i + 1, endpoints.len(), endpoint.model);
