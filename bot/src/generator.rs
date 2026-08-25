@@ -56,19 +56,14 @@ pub async fn run_background_generator(pool: SqlitePool) {
                                 voice
                             );
                             
-                            match tts::get_or_generate_tts(&sentence, voice).await {
-                                Ok(result) => {
-                                    if result.fallback {
-                                        log::info!(
-                                            "✓ Fallback to Google for '{}': {}",
-                                            truncate_string(&sentence, 30),
-                                            voice
-                                        );
-                                    } else {
-                                        generated_count += 1;
-                                    }
-
-                                    if *voice != "Google" && !result.fallback {
+                            // Use the no-fallback variant: the generator must cache
+                            // the requested voice itself. If FakeYou fails, we skip
+                            // that voice/sentence rather than silently saving a
+                            // Google audio in its place (fallback is user-command-only).
+                            match tts::get_or_generate_tts_no_fallback(&sentence, voice).await {
+                                Ok(_) => {
+                                    generated_count += 1;
+                                    if *voice != "Google" {
                                         fakeyou_count += 1;
                                     }
                                 }

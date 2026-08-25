@@ -616,10 +616,22 @@ pub struct TtsResult {
 }
 
 pub async fn get_or_generate_tts(text: &str, voice: &str) -> Result<TtsResult, Box<dyn std::error::Error + Send + Sync>> {
-    get_or_generate_tts_with_effect(text, voice, "none").await
+    get_or_generate_tts_inner(text, voice, "none", true).await
 }
 
 pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &str) -> Result<TtsResult, Box<dyn std::error::Error + Send + Sync>> {
+    get_or_generate_tts_inner(text, voice, effect, true).await
+}
+
+/// Like get_or_generate_tts, but never falls back to Google when FakeYou fails.
+/// Used by the background generator, which must pre-generate the requested voice
+/// itself — a silent Google fallback would defeat its purpose. Returns an error
+/// instead so the generator can skip that voice/sentence.
+pub async fn get_or_generate_tts_no_fallback(text: &str, voice: &str) -> Result<TtsResult, Box<dyn std::error::Error + Send + Sync>> {
+    get_or_generate_tts_inner(text, voice, "none", false).await
+}
+
+async fn get_or_generate_tts_inner(text: &str, voice: &str, effect: &str, allow_fallback: bool) -> Result<TtsResult, Box<dyn std::error::Error + Send + Sync>> {
     let save_mp3 = std::env::var("SAVE_MP3_ON_DISK")
         .unwrap_or_else(|_| "false".to_string())
         .to_lowercase() == "true";
@@ -642,7 +654,10 @@ pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &s
         // is saved with the Google token — so on the next request for the same
         // FakeYou voice we should reuse that cached fallback instead of
         // retrying FakeYou (which will likely fail again) every time.
-        if voice != "Google" {
+        // This reuse only applies when falling back is allowed (user commands);
+        // the background generator must never silently use a Google voice in
+        // place of the requested FakeYou voice.
+        if allow_fallback && voice != "Google" {
             let google_fallback_path = get_file_path_with_effect("Google", text, effect);
             if tokio::fs::try_exists(&google_fallback_path).await.unwrap_or(false) {
                 log::info!(
@@ -668,11 +683,19 @@ pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &s
                 (b, voice.to_string(), false)
             }
             Err(e) => {
-                log::warn!(
-                    "get_or_generate_tts: FakeYou failed for voice '{}', falling back to Google: {}",
-                    voice, e
-                );
-                (get_tts_google(text).await?, "Google".to_string(), true)
+                if allow_fallback {
+                    log::warn!(
+                        "get_or_generate_tts: FakeYou failed for voice '{}', falling back to Google: {}",
+                        voice, e
+                    );
+                    (get_tts_google(text).await?, "Google".to_string(), true)
+                } else {
+                    log::warn!(
+                        "get_or_generate_tts: FakeYou failed for voice '{}' (no fallback): {}",
+                        voice, e
+                    );
+                    return Err(e);
+                }
             }
         }
     };
