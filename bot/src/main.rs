@@ -1826,8 +1826,13 @@ async fn audio(
     // from overwriting each other's temp file while playback is in progress.
     let file_path = format!("{}/{}_{}", temp_dir, uuid::Uuid::new_v4(), safe_filename);
     
-    // Download the attachment with proper error handling
-    let bytes = match tts::http_client().get(&audio.url).send().await {
+    // Download the attachment with proper error handling. Use a bounded
+    // timeout so a slow Discord CDN doesn't stall the command indefinitely.
+    let download_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to build download client: {}", e))?;
+    let bytes = match download_client.get(&audio.url).send().await {
         Ok(resp) => match resp.bytes().await {
             Ok(b) => b.to_vec(),
             Err(e) => {
