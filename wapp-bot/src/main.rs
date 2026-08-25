@@ -20,6 +20,8 @@ struct AppState {
     bridge_url: String,
     /// Per-group conversation history for /ask.
     conversations: std::sync::Mutex<std::collections::HashMap<String, Vec<llm::ConversationMessage>>>,
+    /// Whether WhatsApp processing is enabled (WAPP_ENABLED=true).
+    enabled: bool,
 }
 
 #[derive(Deserialize)]
@@ -39,14 +41,13 @@ async fn main() {
     eprintln!("=== wapp-bot starting ===");
     dotenv::dotenv().ok();
 
-    // Gate: if WAPP_ENABLED is not "true", exit immediately without starting
-    // the webhook server. This allows keeping the service in docker-compose
-    // without it actually running when WhatsApp is not configured.
-    let enabled = std::env::var("WAPP_ENABLED").unwrap_or_else(|_| "false".to_string());
-    if enabled.to_lowercase() != "true" {
-        eprintln!("wapp-bot: WAPP_ENABLED is not 'true' — exiting. Set WAPP_ENABLED=true in .env.wapp to enable.");
-        return;
-    }
+    // Whether WhatsApp processing is enabled. When WAPP_ENABLED is not "true",
+    // the service still starts and keeps its webhook server up (so the container
+    // stays healthy and does NOT enter a restart loop), but all incoming messages
+    // are ignored. This keeps the service in docker-compose without it actively
+    // running WhatsApp, and without affecting the shared Discord bot.
+    let enabled = std::env::var("WAPP_ENABLED").unwrap_or_else(|_| "false".to_string()).to_lowercase() == "true";
+
     let mut builder = env_logger::Builder::from_env(env_logger::Env::default().filter_or("LOG_LEVEL", "info"));
     builder.init();
 
@@ -69,18 +70,25 @@ async fn main() {
     eprintln!("Connecting to database at: {}", db_url);
     database::init_db(&db_pool).await.expect("Database initialization failed");
     log::info!("✓ Database initialized");
-    database::populate_db_if_empty(&db_pool).await.expect("Database population failed");
-    log::info!("✓ Database population check completed");
 
-    // Initialize FakeYou TTS
-    tts::init_fakeyou().await;
+    if enabled {
+        database::populate_db_if_empty(&db_pool).await.expect("Database population failed");
+        log::info!("✓ Database population check completed");
+        // Initialize FakeYou TTS
+        tts::init_fakeyou().await;
+    }
 
     let state = Arc::new(AppState {
         db_pool,
         lang: lang::Lang::new(),
         bridge_url: bridge_url.clone(),
         conversations: std::sync::Mutex::new(std::collections::HashMap::new()),
+        enabled,
     });
+
+    if !enabled {
+        log::info!("wapp-bot: WAPP_ENABLED is not 'true' — running in disabled (idle) mode. The webhook server stays up but no messages are processed. Set WAPP_ENABLED=true in .env.wapp to enable.");
+    }
 
     let app = Router::new()
         .route("/webhook", post(handle_webhook))
@@ -96,6 +104,12 @@ async fn handle_webhook(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<WebhookPayload>,
 ) -> (StatusCode, Json<Value>) {
+    // When WhatsApp is disabled (WAPP_ENABLED != "true"), the server stays up
+    // to keep the container healthy, but incoming messages are ignored.
+    if !state.enabled {
+        return (StatusCode::OK, Json(serde_json::json!({"status": "disabled"})));
+    }
+
     log::info!("wapp-bot: received message from {} in group={}: {:?}", payload.from, payload.is_group, payload.text);
 
     // Parse the command
