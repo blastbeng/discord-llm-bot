@@ -14,6 +14,11 @@ use sysinfo::System;
 use songbird::SerenityInit;
 use image::GenericImageView;
 
+/// Records the moment the bot process started, used to report uptime in
+/// /stats. Initialized once at startup so it reflects real boot time rather
+/// than the first time /stats happens to be called.
+static BOOT_TIME: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
 /// Play an audio file through Songbird's built-in FFmpeg decoder.
 /// Returns an error string if the bot is not connected or no handler is found,
 /// so callers can inform the user instead of silently failing.
@@ -1567,9 +1572,8 @@ async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         (cpu, ram)
     };
 
-    // Uptime — use a static OnceLock to record boot time on first call
+    // Uptime — based on the module-level BOOT_TIME set once at startup.
     let uptime: String = {
-        static BOOT_TIME: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
         let boot = BOOT_TIME.get_or_init(std::time::Instant::now);
         let elapsed = boot.elapsed();
         let hours = elapsed.as_secs() / 3600;
@@ -2033,6 +2037,8 @@ async fn avatar(
 #[tokio::main]
 async fn main() {
     eprintln!("=== discord-llm-bot starting (binary loaded correctly) ===");
+    // Record boot time so /stats can report real uptime.
+    let _ = BOOT_TIME.get_or_init(std::time::Instant::now);
     dotenv::dotenv().ok();
     let mut builder = env_logger::Builder::from_env(env_logger::Env::default().filter_or("LOG_LEVEL", "info"));
     builder.filter_module("tracing", log::LevelFilter::Warn);
