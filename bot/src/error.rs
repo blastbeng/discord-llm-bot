@@ -374,6 +374,18 @@ impl ErrorTracker {
         recent_errors.push((timestamp, error.clone()));
     }
 
+    /// Record a generic incident (a framework/command error that isn't a
+    /// typed BotError). Only the running total is tracked — there is no
+    /// type breakdown or recent-error entry for these.
+    pub fn record_incident(&self) {
+        self.total_errors.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Total number of recorded errors/incidents.
+    pub fn total_count(&self) -> u64 {
+        self.total_errors.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     /// Get current error statistics
     pub fn get_statistics(&self) -> serde_json::Value {
         let total = self.total_errors.load(std::sync::atomic::Ordering::SeqCst);

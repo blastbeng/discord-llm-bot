@@ -1546,7 +1546,8 @@ async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         .field(&ctx.data().lang.stats_cpu, format!("{:.1}%", cpu_usage), true)
         .field(&ctx.data().lang.stats_ram, format!("{:.1}%", ram_usage), true)
         .field(&ctx.data().lang.stats_fakeyou, fakeyou_status, true)
-        .field(&ctx.data().lang.stats_llm, llm_status, true);
+        .field(&ctx.data().lang.stats_llm, llm_status, true)
+        .field(&ctx.data().lang.stats_errors, ctx.data().error_tracker.total_count().to_string(), true);
 
     ctx.send(poise::CreateReply::default().embed(embed).ephemeral(true)).await?;
     Ok(())
@@ -2086,6 +2087,8 @@ async fn main() {
                                 log::debug!("Command completed but interaction expired (expected for long-running commands): {}", error_str);
                             } else {
                                 log::error!("Error in command: {}", error_str);
+                                // Track real command errors so /stats can report the bot's health.
+                                ctx.data().error_tracker.record_incident();
                             }
                             let msg = if error_str.is_empty() {
                                 ctx.data().lang.discord_api_error.clone()
