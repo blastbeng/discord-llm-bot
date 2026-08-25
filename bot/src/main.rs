@@ -97,29 +97,59 @@ pub struct Data {
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Context<'a> = poise::Context<'a, Data, Error>;
 
+/// Fetch the current top Steam games and set the bot's "Playing" activity to a
+/// random one. Returns true if a presence was set successfully.
+///
+/// Uses a dedicated client with a short timeout so an unreachable SteamSpy
+/// fails fast and lets the caller fall back to a default presence, instead of
+/// hanging on the shared no-timeout TTS client.
+async fn update_presence_from_steam(ctx: &serenity::Context) -> bool {
+    let url = "https://steamspy.com/api.php?request=top100in2weeks";
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("Failed to build presence HTTP client");
+    match client.get(url).send().await {
+        Ok(resp) => {
+            match resp.json::<serde_json::Value>().await {
+                Ok(json) => {
+                    if let Some(obj) = json.as_object() {
+                        let games: Vec<String> = obj.values().filter_map(|v| v["name"].as_str().map(|s| s.to_string())).collect();
+                        if let Some(game) = games.choose(&mut rand::thread_rng()) {
+                            log::info!("change_presence_loop - setting game: {}", game);
+                            let activity = serenity::ActivityData::playing(game.clone());
+                            ctx.set_activity(Some(activity));
+                            return true;
+                        }
+                        log::warn!("change_presence_loop - SteamSpy returned no games");
+                    }
+                }
+                Err(e) => log::error!("change_presence_loop - failed to parse JSON: {}", e),
+            }
+        }
+        Err(e) => log::error!("change_presence_loop - failed to fetch from steamspy: {}", e),
+    }
+    false
+}
+
+/// Periodically update the bot's presence (a random top Steam game). Runs the
+/// first update immediately at startup so the bot never sits without a
+/// presence waiting for the first 6-hour tick. If SteamSpy is unreachable or
+/// returns nothing, fall back to a stable, meaningful default presence so the
+/// bot still shows something instead of appearing offline.
 async fn change_presence_loop(ctx: serenity::Context) {
+    // Run once immediately, then keep the same 6-hour cadence.
+    if !update_presence_from_steam(&ctx).await {
+        log::warn!("change_presence_loop - SteamSpy unavailable, using fallback presence");
+        let activity = serenity::ActivityData::playing("with /help");
+        ctx.set_activity(Some(activity));
+    }
+
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(6 * 60 * 60));
     loop {
         interval.tick().await;
-        let url = "https://steamspy.com/api.php?request=top100in2weeks";
-        let client = tts::http_client();
-        match client.get(url).send().await {
-            Ok(resp) => {
-                match resp.json::<serde_json::Value>().await {
-                    Ok(json) => {
-                        if let Some(obj) = json.as_object() {
-                            let games: Vec<String> = obj.values().filter_map(|v| v["name"].as_str().map(|s| s.to_string())).collect();
-                            if let Some(game) = games.choose(&mut rand::thread_rng()) {
-                                log::info!("change_presence_loop - setting game: {}", game);
-                                let activity = serenity::ActivityData::playing(game.clone());
-                                ctx.set_activity(Some(activity));
-                            }
-                        }
-                    }
-                    Err(e) => log::error!("change_presence_loop - failed to parse JSON: {}", e),
-                }
-            }
-            Err(e) => log::error!("change_presence_loop - failed to fetch from steamspy: {}", e),
+        if !update_presence_from_steam(&ctx).await {
+            log::warn!("change_presence_loop - SteamSpy unavailable, keeping current presence");
         }
     }
 }
