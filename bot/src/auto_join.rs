@@ -247,21 +247,25 @@ async fn speak_welcome(
 
     let phrase = if data.auto_join_welcome {
         let db_sentences = database::select_all_sentence(&data.db_pool).await.unwrap_or_default();
+
+        // Prefer the LLM-generated welcome, but fall back to a random database
+        // sentence if the LLM isn't configured or fails — the bot should still
+        // greet the user rather than staying silent.
+        let mut phrase = None;
         if llm::is_configured() {
             match llm::welcome(user_name, &db_sentences).await {
-                Ok(p) => p,
-                Err(e) => {
-                    log::warn!("auto_join: welcome LLM error: {}", e);
-                    return;
-                }
-            }
-        } else {
-            // No LLM configured: fall back to a random database sentence.
-            match db_sentences.choose(&mut rand::thread_rng()) {
-                Some(s) => s.clone(),
-                None => return,
+                Ok(p) => phrase = Some(p),
+                Err(e) => log::warn!("auto_join: welcome LLM error: {}", e),
             }
         }
+        let phrase = match phrase {
+            Some(p) => p,
+            None => match db_sentences.choose(&mut rand::thread_rng()) {
+                Some(s) => s.clone(),
+                None => return,
+            },
+        };
+        phrase
     } else {
         // Welcoming speech disabled entirely — nothing to say.
         return;
