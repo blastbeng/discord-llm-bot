@@ -2152,41 +2152,60 @@ async fn play_soundboard_item(
         return Err("Could not connect to the voice channel. Try again.".to_string());
     }
 
-    // Download the mp3 with a bounded timeout so a slow/hanging MyInstants
-    // request can't stall playback indefinitely (the shared TTS client has no
-    // timeout).
-    let bytes = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .map_err(|e| format!("Failed to build download client: {}", e))?
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| format!("Failed to download sound: {}", e))?
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read sound: {}", e))?
-        .to_vec();
-    if bytes.is_empty() {
-        return Err("The sound file was empty.".to_string());
-    }
-
-    // Save to a temp file, applying the effect if one was requested.
+    // The plain (no-effect) audio is cached in a dedicated TMP_DIR/soundboard
+    // folder so frequently-played sounds replay instantly instead of being
+    // re-downloaded from MyInstants each time. Effects are applied on-the-fly
+    // to a temp file and never cached.
     let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
-    tokio::fs::create_dir_all(&temp_dir)
+    let cache_dir = format!("{}/soundboard", temp_dir);
+    tokio::fs::create_dir_all(&cache_dir)
         .await
-        .map_err(|e| format!("Failed to create temp dir: {}", e))?;
-    let file_path = format!("{}/sb_{}_{}.mp3", temp_dir, uuid::Uuid::new_v4().simple(), url.rsplit('/').next().unwrap_or("sound"));
+        .map_err(|e| format!("Failed to create soundboard cache dir: {}", e))?;
+    let cache_path = format!("{}/{}.mp3", cache_dir, format!("{:x}", md5::compute(url.as_bytes())));
 
-    if effect == "none" {
-        tokio::fs::write(&file_path, &bytes)
+    // Ensure the plain audio is cached (download only on a cache miss).
+    if !tokio::fs::try_exists(&cache_path).await.unwrap_or(false) {
+        let bytes = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(20))
+            .build()
+            .map_err(|e| format!("Failed to build download client: {}", e))?
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| format!("Failed to download sound: {}", e))?
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to read sound: {}", e))?
+            .to_vec();
+        if bytes.is_empty() {
+            return Err("The sound file was empty.".to_string());
+        }
+        tokio::fs::write(&cache_path, &bytes)
             .await
             .map_err(|e| format!("Failed to write sound: {}", e))?;
+        // Keep the cache bounded by removing the oldest files if it grows too large.
+        cap_soundboard_cache(&cache_dir, 150).await;
+    }
+
+    // Determine the file to play: the cached plain file directly when no effect
+    // is requested, otherwise an effect-processed temp file.
+    let (play_path, is_temp) = if effect == "none" {
+        (cache_path.clone(), false)
     } else {
-        tts::compress_and_save_mp3_with_effect(bytes, &file_path, effect)
+        let temp_path = format!(
+            "{}/sb_eff_{}_{}.mp3",
+            temp_dir,
+            uuid::Uuid::new_v4().simple(),
+            format!("{:x}", md5::compute(url.as_bytes()))
+        );
+        let bytes = tokio::fs::read(&cache_path)
+            .await
+            .map_err(|e| format!("Failed to read cached sound: {}", e))?;
+        tts::compress_and_save_mp3_with_effect(bytes, &temp_path, effect)
             .await
             .map_err(|e| format!("Failed to apply effect: {}", e))?;
-    }
+        (temp_path, true)
+    };
 
     // Play with the stored volume.
     if let Some(handler) = manager.get(guild_id) {
@@ -2194,19 +2213,52 @@ async fn play_soundboard_item(
         if h.current_channel().is_none() {
             return Err("Bot disconnected while playing.".to_string());
         }
-        let source = songbird::input::File::new(file_path.clone());
+        let source = songbird::input::File::new(play_path.clone());
         let track = h.play_only(source.into());
         let vol = *data.volume.lock().unwrap();
         let _ = track.set_volume(vol);
     }
 
-    // Clean up the temp file after a delay.
-    tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(300)).await;
-        let _ = tokio::fs::remove_file(&file_path).await;
-    });
+    // Clean up effect temp files after a delay (the cached plain file is kept).
+    if is_temp {
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+            let _ = tokio::fs::remove_file(&play_path).await;
+        });
+    }
 
     Ok("Playing soundboard sound.".to_string())
+}
+
+/// Keep the soundboard download cache bounded: if it exceeds `max_files`,
+/// remove the oldest files until it's back within the cap.
+async fn cap_soundboard_cache(cache_dir: &str, max_files: usize) {
+    let mut entries = match tokio::fs::read_dir(cache_dir).await {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let mut files = Vec::new();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "mp3") {
+            let modified = entry
+                .metadata()
+                .await
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            files.push((path, modified));
+        }
+    }
+    if files.len() <= max_files {
+        return;
+    }
+    // Oldest first, then remove the excess.
+    files.sort_by_key(|(_, t)| *t);
+    let to_remove = files.len() - max_files;
+    for (path, _) in files.into_iter().take(to_remove) {
+        let _ = tokio::fs::remove_file(path).await;
+    }
 }
 
 /// Restart bot.
