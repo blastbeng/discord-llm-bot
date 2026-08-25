@@ -59,7 +59,11 @@ async fn fakeyou_login_if_configured() {
     });
 
     match client
-        .post("https://api.fakeyou.com/v1/login")
+        // The current FakeYou login endpoint is /login (not /v1/login, which
+        // returns "Content type error"). It returns a signed_session used to
+        // authenticate subsequent requests. This matches the FakeYouAPI.js /
+        // fakeyou.ts wrappers and the current website frontend.
+        .post("https://api.fakeyou.com/login")
         .header("Accept", "application/json")
         .header("Content-Type", "application/json")
         .json(&login_body)
@@ -573,9 +577,10 @@ async fn poll_fakeyou_job(
                 match status_str.as_str() {
                     "complete_success" => {
                         if let Some(wav_path) = &state.maybe_public_bucket_wav_audio_path {
-                            // The Python library (fakeyou.py v1.3.0) constructs the
-                            // download URL as: https://cdn-2.fakeyou.com + wav_path
-                            let media_url = format!("https://cdn-2.fakeyou.com{}", wav_path);
+                            // The official FakeYou docs and the current wrappers
+                            // (fakeyou.ts / FakeYouAPI.js) construct the download
+                            // URL as: https://storage.googleapis.com/vocodes-public + path
+                            let media_url = format!("https://storage.googleapis.com/vocodes-public{}", wav_path);
                             log::info!("poll_fakeyou_job: downloading from {}", media_url);
                             let media_resp = client.get(&media_url).send().await?;
                             let media_status = media_resp.status();
