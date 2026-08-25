@@ -2887,8 +2887,19 @@ async fn main() {
                                             .await;
                                         match play_soundboard_item(&ctx, data, guild_id, component.user.id, &item.url, &session.effect).await {
                                             Ok(msg) => {
+                                                // Show a Stop button (like /speak and /random) so
+                                                // playback can be stopped without typing /stop.
+                                                let stop = serenity::CreateButton::new("stop")
+                                                    .label("Stop")
+                                                    .style(serenity::ButtonStyle::Danger);
+                                                let rows = vec![serenity::CreateActionRow::Buttons(vec![stop])];
                                                 let _ = component
-                                                    .edit_response(&ctx, serenity::EditInteractionResponse::new().content(format!("🔊 {}: {}", item.title, msg)))
+                                                    .edit_response(
+                                                        &ctx,
+                                                        serenity::EditInteractionResponse::new()
+                                                            .content(format!("🔊 {}: {}", item.title, msg))
+                                                            .components(rows),
+                                                    )
                                                     .await;
                                             }
                                             Err(e) => {
