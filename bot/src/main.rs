@@ -1606,18 +1606,10 @@ async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         Err(_) => "N/A".to_string(),
     };
 
-    // System resources
-    let (cpu_usage, ram_usage) = {
-        let mut sys = System::new_all();
-        sys.refresh_cpu();
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        sys.refresh_cpu();
-        let cpu = sys.global_cpu_info().cpu_usage();
-        let total_mem = sys.total_memory();
-        let used_mem = sys.used_memory();
-        let ram = (used_mem as f64 / total_mem as f64) * 100.0;
-        (cpu, ram)
-    };
+    // System resources — read the cached values from the background sampler
+    // (sample_system_stats_loop) instead of sampling inline, so /stats doesn't
+    // block ~200ms on CPU sampling for every invocation.
+    let (cpu_usage, ram_usage) = SYSTEM_STATS.lock().unwrap().unwrap_or((0.0, 0.0));
 
     // Uptime — based on the module-level BOOT_TIME set once at startup.
     let uptime: String = {
