@@ -2130,8 +2130,13 @@ async fn play_soundboard_item(
         return Err("Could not connect to the voice channel. Try again.".to_string());
     }
 
-    // Download the mp3.
-    let bytes = tts::http_client()
+    // Download the mp3 with a bounded timeout so a slow/hanging MyInstants
+    // request can't stall playback indefinitely (the shared TTS client has no
+    // timeout).
+    let bytes = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| format!("Failed to build download client: {}", e))?
         .get(url)
         .send()
         .await
