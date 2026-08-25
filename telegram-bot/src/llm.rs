@@ -36,6 +36,10 @@ fn get_endpoint_configs() -> Vec<LlmEndpoint> {
         .unwrap_or_default()
         .split(',')
         .map(|s| s.trim().to_string())
+        // Filter empty entries so an unset LLM_API_KEYS results in an empty
+        // vec and the per-endpoint "ollama" default below is used (instead of
+        // the empty string, which would send an empty Authorization header).
+        .filter(|s| !s.is_empty())
         .collect();
 
     let models: Vec<String> = std::env::var("LLM_MODELS")
