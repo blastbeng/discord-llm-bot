@@ -156,7 +156,7 @@ async fn handle_webhook(
 
 async fn send_text(state: &AppState, chat_id: &str, text: &str) {
     let url = format!("{}/sendText", state.bridge_url);
-    let client = reqwest::Client::new();
+    let client = tts::http_client();
     match client.post(&url).json(&serde_json::json!({"chatId": chat_id, "text": text})).send().await {
         Ok(r) => {
             if !r.status().is_success() {
@@ -184,7 +184,7 @@ async fn send_audio(state: &AppState, chat_id: &str, file_path: &str) {
     let audio_base64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
 
     let url = format!("{}/sendAudio", state.bridge_url);
-    let client = reqwest::Client::new();
+    let client = tts::http_client();
     match client.post(&url).json(&serde_json::json!({"chatId": chat_id, "audioBase64": audio_base64})).send().await {
         Ok(r) => {
             if !r.status().is_success() {
