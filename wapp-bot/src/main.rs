@@ -380,6 +380,13 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
         sentences.choose(&mut rng).unwrap().to_string()
     };
 
+    // Record that this sentence was spoken (increments its usage_count). This
+    // keeps the least-used-first ordering meaningful so the background
+    // generator and /random don't keep landing on the same sentences.
+    if let Err(e) = database::insert_sentence(&state.db_pool, &random_sentence).await {
+        log::error!("wapp-bot random: failed to record sentence usage: {}", e);
+    }
+
     // Google TTS silently fails or truncates on text longer than ~200 chars.
     // Database sentences are normally bounded, but /ask and /translate
     // responses can exceed this. Truncate only the spoken text.
