@@ -3,7 +3,6 @@ import makeWASocket, {
     DisconnectReason,
     fetchLatestBaileysVersion,
 } from 'baileys';
-import { Boom } from 'baileys';
 import qrcode from 'qrcode-terminal';
 import express from 'express';
 import pino from 'pino';
@@ -53,9 +52,11 @@ async function connectToWhatsApp() {
         }
 
         if (connection === 'close') {
-            const shouldReconnect =
-                lastDisconnect?.error instanceof Boom &&
-                lastDisconnect.error.output.statusCode !== DisconnectReason.loggedOut;
+            // lastDisconnect.error already carries an HTTP-style .output.statusCode
+            // (no need for an instanceof Boom check — baileys@7 no longer exports
+            // Boom). Reconnect unless the session was explicitly logged out.
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
             if (shouldReconnect) {
                 console.log('[bridge] Connection closed, reconnecting...');
