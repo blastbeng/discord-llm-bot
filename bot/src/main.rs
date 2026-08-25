@@ -1353,6 +1353,16 @@ async fn joke(
         log::error!("Failed to insert joke into database: {}", e);
     }
 
+    // Google TTS silently fails or truncates on text longer than ~200 chars.
+    // Jokes (especially setup + delivery) can exceed this, so truncate only
+    // the spoken text to a safe length while keeping the full joke in the DB.
+    let tts_text: String = if joke_text.chars().count() > 200 {
+        let truncated: String = joke_text.chars().take(200).collect();
+        format!("{truncated}...")
+    } else {
+        joke_text.clone()
+    };
+
     // Generate TTS and play it
     let manager = match songbird::get(ctx.serenity_context()).await {
         Some(m) => m,
@@ -1385,7 +1395,7 @@ async fn joke(
         }
     }
 
-    let tts_result = match tts::get_or_generate_tts_with_effect(&joke_text, &actual_voice, &actual_effect).await {
+    let tts_result = match tts::get_or_generate_tts_with_effect(&tts_text, &actual_voice, &actual_effect).await {
         Ok(result) => result,
         Err(e) => {
             log::error!("joke: TTS generation failed: {}", e);
@@ -1432,7 +1442,7 @@ async fn joke(
     ];
 
     match reply.edit(ctx, poise::CreateReply::default()
-        .content(ctx.data().lang.playing.replacen("{}", &joke_text, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
+        .content(ctx.data().lang.playing.replacen("{}", &tts_text, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
         .components(components)
         .ephemeral(true)
     ).await {
