@@ -468,10 +468,13 @@ async fn cmd_translate(state: &AppState, _payload: &WebhookPayload, args: &str) 
     if parts.len() < 2 {
         return state.lang.translate_usage.clone();
     }
-    let target_lang = parts[0].to_string();
+    let target_lang = parts[0].trim().to_string();
     let text = parts[1].trim().to_string();
 
-    if text.is_empty() {
+    // Guard against a trailing space producing an empty language (e.g. a
+    // message like "/translate hello " with no language) so we don't pass an
+    // empty language to the LLM.
+    if text.is_empty() || target_lang.is_empty() {
         return state.lang.translate_usage.clone();
     }
 
