@@ -249,12 +249,12 @@ async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) {
     let (text, voice, effect) = parse_voice_effect(args);
 
     if text.is_empty() {
-        send_text(state, &payload.from, "Usage: /speak <text> [--voice Google] [--effect none]").await;
+        send_text(state, &payload.from, &state.lang.speak_usage).await;
         return;
     }
 
     if text.chars().count() > 200 {
-        send_text(state, &payload.from, "Text too long (max 200 characters).").await;
+        send_text(state, &payload.from, &state.lang.text_too_long).await;
         return;
     }
 
@@ -266,7 +266,7 @@ async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) {
     };
 
     if !tts::is_valid_voice(&actual_voice) {
-        send_text(state, &payload.from, "Invalid voice selected.").await;
+        send_text(state, &payload.from, &state.lang.invalid_voice).await;
         return;
     }
 
@@ -278,7 +278,7 @@ async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) {
     };
 
     if !tts::is_valid_effect(&actual_effect) {
-        send_text(state, &payload.from, "Invalid audio effect selected.").await;
+        send_text(state, &payload.from, &state.lang.invalid_effect).await;
         return;
     }
 
@@ -295,7 +295,7 @@ async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) {
         }
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
-            send_text(state, &payload.from, "Error generating audio. Please try again later.").await;
+            send_text(state, &payload.from, &state.lang.error_generating_audio).await;
         }
     }
 }
@@ -328,7 +328,7 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
             Ok(s) => s,
             Err(e) => {
                 log::error!("Database error: {}", e);
-                send_text(state, &payload.from, "Database error. Please try again later.").await;
+                send_text(state, &payload.from, &state.lang.database_error).await;
                 return;
             }
         }
@@ -337,7 +337,7 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
             Ok(s) => s,
             Err(e) => {
                 log::error!("Database error: {}", e);
-                send_text(state, &payload.from, "Database error. Please try again later.").await;
+                send_text(state, &payload.from, &state.lang.database_error).await;
                 return;
             }
         }
@@ -345,9 +345,9 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
 
     if sentences.is_empty() {
         if search_text.is_empty() {
-            send_text(state, &payload.from, "No sentences found in the database.").await;
+            send_text(state, &payload.from, &state.lang.no_sentences_found).await;
         } else {
-            send_text(state, &payload.from, &format!("No sentence found containing \"{}\"", search_text)).await;
+            send_text(state, &payload.from, &state.lang.no_sentence_with_text.replacen("{}", &search_text, 1)).await;
         }
         return;
     }
@@ -375,7 +375,7 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
     };
 
     if !tts::is_valid_voice(&actual_voice) {
-        send_text(state, &payload.from, "Invalid voice selected.").await;
+        send_text(state, &payload.from, &state.lang.invalid_voice).await;
         return;
     }
 
@@ -387,7 +387,7 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
     };
 
     if !tts::is_valid_effect(&actual_effect) {
-        send_text(state, &payload.from, "Invalid audio effect selected.").await;
+        send_text(state, &payload.from, &state.lang.invalid_effect).await;
         return;
     }
 
@@ -397,7 +397,7 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
         }
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
-            send_text(state, &payload.from, "Error generating audio. Please try again later.").await;
+            send_text(state, &payload.from, &state.lang.error_generating_audio).await;
         }
     }
 }
@@ -410,11 +410,11 @@ async fn cmd_ask(state: &AppState, payload: &WebhookPayload, args: &str) -> Stri
     let (text, _voice, _effect) = parse_voice_effect(args);
 
     if text.is_empty() {
-        return "Usage: /ask <question>".to_string();
+        return state.lang.ask_usage.clone();
     }
 
     if text.chars().count() > 500 {
-        return "Question too long (max 500 characters).".to_string();
+        return state.lang.ask_text_too_long.clone();
     }
 
     // Fetch database sentences for personality context
@@ -452,7 +452,7 @@ async fn cmd_ask(state: &AppState, payload: &WebhookPayload, args: &str) -> Stri
         }
         Err(e) => {
             log::error!("LLM failed: {}", e);
-            "The AI is currently unavailable. Please try again later.".to_string()
+            state.lang.ai_unavailable.clone()
         }
     }
 }
@@ -466,13 +466,13 @@ async fn cmd_translate(state: &AppState, _payload: &WebhookPayload, args: &str) 
     // We need to split the last word as the target language
     let parts: Vec<&str> = args.rsplitn(2, ' ').collect();
     if parts.len() < 2 {
-        return "Usage: /translate <text> <target_lang>".to_string();
+        return state.lang.translate_usage.clone();
     }
     let target_lang = parts[0].to_string();
     let text = parts[1].trim().to_string();
 
     if text.is_empty() {
-        return "Usage: /translate <text> <target_lang>".to_string();
+        return state.lang.translate_usage.clone();
     }
 
     match llm::translate(&text, &target_lang).await {
@@ -484,7 +484,7 @@ async fn cmd_translate(state: &AppState, _payload: &WebhookPayload, args: &str) 
         }
         Err(e) => {
             log::error!("Translation failed: {}", e);
-            "Translation failed. Please try again later.".to_string()
+            state.lang.translation_failed.clone()
         }
     }
 }
@@ -496,12 +496,12 @@ async fn cmd_joke(state: &AppState, _payload: &WebhookPayload) -> String {
     match client.get(joke_url).send().await {
         Ok(resp) => {
             if !resp.status().is_success() {
-                return "Failed to fetch a joke. Please try again later.".to_string();
+                return state.lang.joke_error.clone();
             }
             match resp.json::<serde_json::Value>().await {
                 Ok(json) => {
                     if json.get("error").is_some_and(|e| e.as_bool().unwrap_or(false)) {
-                        return "Failed to fetch a joke. Please try again later.".to_string();
+                        return state.lang.joke_error.clone();
                     }
                     let setup = json.get("setup").and_then(|s| s.as_str()).unwrap_or("");
                     let delivery = json.get("delivery").and_then(|d| d.as_str()).unwrap_or("");
@@ -511,7 +511,7 @@ async fn cmd_joke(state: &AppState, _payload: &WebhookPayload) -> String {
                     } else if !single.is_empty() {
                         single.to_string()
                     } else {
-                        return "Failed to fetch a joke. Please try again later.".to_string();
+                        return state.lang.joke_error.clone();
                     };
 
                     // Save joke to database
@@ -521,12 +521,12 @@ async fn cmd_joke(state: &AppState, _payload: &WebhookPayload) -> String {
 
                     joke_text
                 }
-                Err(_) => "Failed to fetch a joke. Please try again later.".to_string(),
+                Err(_) => state.lang.joke_error.clone(),
             }
         }
         Err(e) => {
             log::error!("JokeAPI request failed: {}", e);
-            "Failed to fetch a joke. Please try again later.".to_string()
+            state.lang.joke_error.clone()
         }
     }
 }
@@ -553,22 +553,26 @@ async fn cmd_stats(state: &AppState, _payload: &WebhookPayload) -> String {
     };
 
     let fakeyou_status = if env::var("FAKEYOU_USERNAME").unwrap_or_default().is_empty() {
-        "Not configured".to_string()
+        state.lang.not_configured.clone()
     } else {
-        "Authenticated".to_string()
+        state.lang.authenticated.clone()
     };
 
     let llm_status = if llm::is_configured() {
         let endpoints = env::var("LLM_ENDPOINTS").unwrap_or_default();
         let count = endpoints.split(',').filter(|s| !s.trim().is_empty()).count();
-        format!("{} endpoint(s)", count)
+        format!("{} {}", count, state.lang.endpoint_label)
     } else {
-        "Not configured".to_string()
+        state.lang.not_configured.clone()
     };
 
     format!(
-        "📊 Bot Statistics\n\n🗄️ Database: {}\n🎵 TTS Cache: {}\n🎭 FakeYou: {}\n🤖 LLM: {}",
-        db_stats, cache_info, fakeyou_status, llm_status
+        "{}\n\n🗄️ {}: {}\n🎵 {}: {}\n🎭 {}: {}\n🤖 {}: {}",
+        state.lang.stats_title,
+        state.lang.stats_database, db_stats,
+        state.lang.stats_cache, cache_info,
+        state.lang.stats_fakeyou, fakeyou_status,
+        state.lang.stats_llm, llm_status,
     )
 }
 

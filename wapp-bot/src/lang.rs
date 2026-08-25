@@ -62,6 +62,23 @@ pub struct Lang {
     /// Full localized /help message body. `{}` is replaced with the
     /// available voices list and `{}` (second) with the effects list.
     pub help_text: String,
+    pub speak_usage: String,
+    pub ask_usage: String,
+    pub ask_text_too_long: String,
+    pub translate_usage: String,
+    pub not_configured: String,
+    pub authenticated: String,
+    pub endpoint_label: String,
+    pub stats_title: String,
+    pub stats_database: String,
+    pub stats_cache: String,
+    pub stats_fakeyou: String,
+    pub stats_llm: String,
+    pub database_error: String,
+    pub no_sentences_found: String,
+    pub error_generating_audio: String,
+    pub ai_unavailable: String,
+    pub translation_failed: String,
 }
 
 impl Lang {
@@ -146,6 +163,23 @@ impl Lang {
                     /help — Show this help message\n\n\
                     *Available voices:* {}\n\
                     *Available effects:* {}".to_string(),
+                speak_usage: "Usage: /speak <text> [--voice Google] [--effect none]".to_string(),
+                ask_usage: "Usage: /ask <question>".to_string(),
+                ask_text_too_long: "Question too long (max 500 characters).".to_string(),
+                translate_usage: "Usage: /translate <text> <target_lang>".to_string(),
+                not_configured: "Not configured".to_string(),
+                authenticated: "Authenticated".to_string(),
+                endpoint_label: "endpoint(s)".to_string(),
+                stats_title: "📊 Bot Statistics".to_string(),
+                stats_database: "Database".to_string(),
+                stats_cache: "TTS Cache".to_string(),
+                stats_fakeyou: "FakeYou".to_string(),
+                stats_llm: "LLM".to_string(),
+                database_error: "Database error. Please try again later.".to_string(),
+                no_sentences_found: "No sentences found in the database.".to_string(),
+                error_generating_audio: "Error generating audio. Please try again later.".to_string(),
+                ai_unavailable: "The AI is currently unavailable. Please try again later.".to_string(),
+                translation_failed: "Translation failed. Please try again later.".to_string(),
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
@@ -225,6 +259,23 @@ impl Lang {
                     /help — Mostra questo messaggio di aiuto\n\n\
                     *Voci disponibili:* {}\n\
                     *Effetti disponibili:* {}".to_string(),
+                speak_usage: "Uso: /speak <testo> [--voice Google] [--effect none]".to_string(),
+                ask_usage: "Uso: /ask <domanda>".to_string(),
+                ask_text_too_long: "Domanda troppo lunga (massimo 500 caratteri).".to_string(),
+                translate_usage: "Uso: /translate <testo> <lingua_destinazione>".to_string(),
+                not_configured: "Non configurato".to_string(),
+                authenticated: "Autenticato".to_string(),
+                endpoint_label: "endpoint".to_string(),
+                stats_title: "📊 Statistiche del Bot".to_string(),
+                stats_database: "Database".to_string(),
+                stats_cache: "Cache TTS".to_string(),
+                stats_fakeyou: "FakeYou".to_string(),
+                stats_llm: "LLM".to_string(),
+                database_error: "Errore del database. Riprova piú tardi.".to_string(),
+                no_sentences_found: "Nessuna frase trovata nel database.".to_string(),
+                error_generating_audio: "Errore nella generazione dell'audio. Riprova piú tardi.".to_string(),
+                ai_unavailable: "L'IA non é al momento disponibile. Riprova piú tardi.".to_string(),
+                translation_failed: "Traduzione non riuscita. Riprova piú tardi.".to_string(),
             }
         }
     }

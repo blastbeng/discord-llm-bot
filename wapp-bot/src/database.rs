@@ -52,6 +52,32 @@ pub async fn init_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     }
 
     // The legacy Python DB has an index on sentence but no UNIQUE constraint.
+    // If a previous run of this migration was interrupted (e.g. the process
+    // was killed between "RENAME TO sentences_old" and "DROP TABLE
+    // sentences_old"), a leftover sentences_old table can remain with rows
+    // stranded in it. Recover by merging any such rows back into sentences
+    // (INSERT OR IGNORE dedupes against rows already present) and dropping
+    // the leftover table. This also makes the migration below safe to run
+    // again without tripping "table sentences_old already exists".
+    let old_exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sentences_old'"
+    )
+    .fetch_one(pool)
+    .await?;
+    if old_exists > 0 {
+        log::info!("init_db: found leftover sentences_old from an interrupted migration — recovering");
+        sqlx::query(
+            "INSERT OR IGNORE INTO sentences (id, sentence, created_at, usage_count, last_used_at)
+             SELECT id, sentence, created_at, usage_count, last_used_at FROM sentences_old"
+        )
+        .execute(pool)
+        .await?;
+        sqlx::query("DROP TABLE sentences_old")
+            .execute(pool)
+            .await?;
+        log::info!("init_db: recovered leftover sentences_old and dropped it");
+    }
+
     // Our insert_sentence uses ON CONFLICT(sentence), which requires a UNIQUE
     // constraint or PRIMARY KEY on that column. SQLite doesn't support
     // ALTER TABLE ADD CONSTRAINT, so we must recreate the table.
@@ -62,27 +88,21 @@ pub async fn init_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     //   3. Rename the old table, create a new one with the UNIQUE constraint,
     //      copy data over, and drop the old table.
     let has_unique_on_sentence: bool = {
-        // sqlite_master's sql field contains the full CREATE TABLE statement.
-        // If the original schema had UNIQUE(sentence), it would appear in the
-        // CREATE TABLE sql. The legacy Python bot's schema only has PRIMARY KEY(id)
-        // and a plain INDEX on sentence — no UNIQUE constraint.
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT sql FROM sqlite_master WHERE type='table' AND name='sentences'"
+        // Detect a UNIQUE constraint on the table via PRAGMA index_list.
+        // A UNIQUE column/table constraint produces an auto-index with
+        // origin='u' and "unique"=1 (e.g. sqlite_autoindex_sentences_1).
+        // Parsing the CREATE TABLE sql text is fragile (e.g. the modern
+        // schema "sentence TEXT NOT NULL UNIQUE" does not contain the exact
+        // substring "sentence unique"), so we rely on the index metadata
+        // instead. The legacy Python bot's schema has no such auto-index
+        // (only a plain, non-unique index on sentence).
+        let unique_auto_index: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_index_list('sentences')
+             WHERE \"unique\" = 1 AND origin = 'u'"
         )
-        .fetch_optional(pool)
+        .fetch_one(pool)
         .await?;
-        match row {
-            Some((sql,)) => {
-                let lower = sql.to_lowercase();
-                // Check for "unique" keyword applied to the sentence column.
-                // Matches both "sentence TEXT UNIQUE" and "UNIQUE(sentence)".
-                lower.contains("unique")
-                    && (lower.contains("sentence unique")
-                        || lower.contains("unique(sentence)")
-                        || lower.contains("unique (sentence)"))
-            }
-            None => false,
-        }
+        unique_auto_index > 0
     };
 
     if !has_unique_on_sentence {
