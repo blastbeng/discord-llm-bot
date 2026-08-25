@@ -220,27 +220,43 @@ async fn pick_cached_mp3() -> Option<String> {
 }
 
 fn parse_voice_effect(args: &str) -> (String, String, String) {
-    // Format: "text" or "text --voice Google" or "text --voice Google --effect echo"
-    // We parse from the end to find --voice and --effect flags
+    // Format: "text" or "text --voice Google" or "text --voice Google --effect echo".
+    // Flags may appear anywhere; each flag consumes its following token as its
+    // value. A flag with no value (e.g. "hello --voice") is simply dropped so
+    // the flag token is never spoken as part of the text, and the default
+    // voice/effect is kept.
     let mut voice = "Google".to_string();
     let mut effect = "none".to_string();
-    let mut text = args.to_string();
+    let parts: Vec<&str> = args.split_whitespace().collect();
+    let mut text_parts: Vec<String> = Vec::new();
 
-    // Extract --effect
-    if let Some(pos) = text.rfind("--effect ") {
-        let effect_str = &text[pos + 9..];
-        effect = effect_str.trim().to_string();
-        text = text[..pos].trim().to_string();
+    let mut i = 0;
+    while i < parts.len() {
+        match parts[i] {
+            "--voice" => {
+                if i + 1 < parts.len() && !parts[i + 1].starts_with("--") {
+                    voice = parts[i + 1].to_string();
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            "--effect" => {
+                if i + 1 < parts.len() && !parts[i + 1].starts_with("--") {
+                    effect = parts[i + 1].to_string();
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            token => {
+                text_parts.push(token.to_string());
+                i += 1;
+            }
+        }
     }
 
-    // Extract --voice
-    if let Some(pos) = text.rfind("--voice ") {
-        let voice_str = &text[pos + 8..];
-        voice = voice_str.trim().to_string();
-        text = text[..pos].trim().to_string();
-    }
-
-    (text, voice, effect)
+    (text_parts.join(" "), voice, effect)
 }
 
 // ─── Commands ──────────────────────────────────────────────────────
