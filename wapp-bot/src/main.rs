@@ -524,7 +524,17 @@ async fn cmd_translate(state: &AppState, _payload: &WebhookPayload, args: &str) 
 
 async fn cmd_joke(state: &AppState, _payload: &WebhookPayload) -> String {
     let joke_url = "https://v2.jokeapi.dev/joke/Any?safe-mode&type=twopart&format=json";
-    let client = tts::http_client();
+    // Bounded timeout so a slow JokeAPI doesn't stall the response indefinitely.
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("wapp-bot joke: failed to build client: {}", e);
+            return state.lang.joke_error.clone();
+        }
+    };
 
     match client.get(joke_url).send().await {
         Ok(resp) => {

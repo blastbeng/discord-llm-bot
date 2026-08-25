@@ -1416,7 +1416,11 @@ async fn joke(
     // Fetch a joke from JokeAPI (free, no API key needed)
     // Filter out nsfw, religious, political, racist, sexist, explicit categories
     let joke_url = "https://v2.jokeapi.dev/joke/Any?safe-mode&type=twopart&format=json";
-    let joke_text = match tts::http_client().get(joke_url).send().await {
+    let joke_client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("Failed to build JokeAPI client: {}", e))?;
+    let joke_text = match joke_client.get(joke_url).send().await {
         Ok(resp) => {
             if !resp.status().is_success() {
                 log::error!("joke: JokeAPI returned status {}", resp.status());
