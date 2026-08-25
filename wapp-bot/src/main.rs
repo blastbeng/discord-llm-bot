@@ -357,6 +357,16 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
         sentences.choose(&mut rng).unwrap().to_string()
     };
 
+    // Google TTS silently fails or truncates on text longer than ~200 chars.
+    // Database sentences are normally bounded, but /ask and /translate
+    // responses can exceed this. Truncate only the spoken text.
+    let tts_text: String = if random_sentence.chars().count() > 200 {
+        let truncated: String = random_sentence.chars().take(200).collect();
+        format!("{truncated}...")
+    } else {
+        random_sentence.clone()
+    };
+
     let actual_voice = if voice == "random" {
         let mut rng = rand::thread_rng();
         tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
@@ -381,7 +391,7 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
         return;
     }
 
-    match tts::get_or_generate_tts_with_effect(&random_sentence, &actual_voice, &actual_effect).await {
+    match tts::get_or_generate_tts_with_effect(&tts_text, &actual_voice, &actual_effect).await {
         Ok(tts_result) => {
             send_audio(state, &payload.from, &tts_result.file_path).await;
         }

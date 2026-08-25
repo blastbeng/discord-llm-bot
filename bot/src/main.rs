@@ -774,7 +774,17 @@ async fn random(
         sentences.choose(&mut rng).unwrap().to_string()
     };
 
-    let tts_result = match tts::get_or_generate_tts_with_effect(&random_sentence, &actual_voice, &actual_effect).await {
+    // Google TTS silently fails or truncates on text longer than ~200 chars.
+    // Database sentences are normally bounded, but /ask and /translate
+    // responses can exceed this. Truncate only the spoken text.
+    let tts_text: String = if random_sentence.chars().count() > 200 {
+        let truncated: String = random_sentence.chars().take(200).collect();
+        format!("{truncated}...")
+    } else {
+        random_sentence.clone()
+    };
+
+    let tts_result = match tts::get_or_generate_tts_with_effect(&tts_text, &actual_voice, &actual_effect).await {
         Ok(result) => result,
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
@@ -825,7 +835,7 @@ async fn random(
     // Same pattern as speak: don't propagate reply.edit errors to on_error
     // since the audio already played successfully.
     match reply.edit(ctx, poise::CreateReply::default()
-        .content(ctx.data().lang.playing.replacen("{}", &random_sentence, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
+        .content(ctx.data().lang.playing.replacen("{}", &tts_text, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
         .components(components)
         .ephemeral(true)
     ).await {
