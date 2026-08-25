@@ -19,7 +19,12 @@ static FAKEYOU_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 static FAKEYOU_SESSION_COOKIE: OnceLock<String> = OnceLock::new();
 
 pub fn http_client() -> &'static reqwest::Client {
-    HTTP_CLIENT.get_or_init(|| reqwest::Client::new())
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .expect("Failed to build HTTP client")
+    })
 }
 
 fn fakeyou_client() -> &'static reqwest::Client {
