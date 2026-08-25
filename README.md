@@ -110,6 +110,10 @@ The Telegram bot mirrors the WhatsApp bot's commands (long polling, no webhook n
 /help
 ```
 
+> **Note:** In a private (direct) chat, sending a plain message without a command is
+> treated as an `/ask` query — the bot replies with an LLM answer. This only applies
+> to 1:1 chats; in groups, non-command messages are ignored to avoid noise.
+
 ## Environment Variables
 
 **Discord (`.env`)**: `BOT_TOKEN`, `GUILD_ID`, `ADMIN_ID`, `LANG`, `LOG_LEVEL`, `TMP_DIR`, `SAVE_MP3_ON_DISK`, `MAX_AUDIO_FILE_SIZE_MB`, optional `AUTO_JOIN_VOICE`/`AUTO_JOIN_WELCOME`/`AUTO_JOIN_IDLE_DISCONNECT_SECS` (auto-voice behaviour, see above), plus optional `FAKEYOU_USERNAME`/`FAKEYOU_PASSWORD` and LLM (`LLM_ENDPOINTS`, `LLM_API_KEYS`, `LLM_MODELS`).
