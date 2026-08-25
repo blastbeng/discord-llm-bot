@@ -59,6 +59,9 @@ pub struct Lang {
     pub help_button_admin: String,
     pub help_button_all: String,
     pub joke_error: String,
+    /// Full localized /help message body. `{}` is replaced with the
+    /// available voices list and `{}` (second) with the effects list.
+    pub help_text: String,
 }
 
 impl Lang {
@@ -131,6 +134,18 @@ impl Lang {
                 help_button_admin: "🔧 Admin".to_string(),
                 help_button_all: "📋 All Commands".to_string(),
                 joke_error: "Failed to fetch a joke. Please try again later.".to_string(),
+                help_text: "\n\n*Voice & Audio:*\n\
+                    /speak <text> [--voice Google] [--effect none] — Speak text via TTS (sends audio)\n\
+                    /random [search] [--voice Google] [--effect none] — Random sentence from database (sends audio)\n\
+                    /joke — Fetch a random joke (text response)\n\n\
+                    *AI & LLM:*\n\
+                    /ask <question> — Ask the AI a question (text response)\n\
+                    /translate <text> <lang> — Translate text via LLM (text response)\n\n\
+                    *Utility:*\n\
+                    /stats — Show bot statistics\n\
+                    /help — Show this help message\n\n\
+                    *Available voices:* {}\n\
+                    *Available effects:* {}".to_string(),
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
@@ -198,6 +213,18 @@ impl Lang {
                 help_button_admin: "🔧 Admin".to_string(),
                 help_button_all: "📋 Tutti i Comandi".to_string(),
                 joke_error: "Impossibile recuperare una battuta. Riprova piú tardi.".to_string(),
+                help_text: "\n\n*Voce & Audio:*\n\
+                    /speak <testo> [--voice Google] [--effect none] — Ripete un testo via TTS (invia audio)\n\
+                    /random [ricerca] [--voice Google] [--effect none] — Frase casuale dal database (invia audio)\n\
+                    /joke — Recupera una battuta casuale (risposta di testo)\n\n\
+                    *IA & LLM:*\n\
+                    /ask <domanda> — Fai una domanda all'IA (risposta di testo)\n\
+                    /translate <testo> <lingua> — Traduce testo via LLM (risposta di testo)\n\n\
+                    *Utilità:*\n\
+                    /stats — Mostra le statistiche del bot\n\
+                    /help — Mostra questo messaggio di aiuto\n\n\
+                    *Voci disponibili:* {}\n\
+                    *Effetti disponibili:* {}".to_string(),
             }
         }
     }

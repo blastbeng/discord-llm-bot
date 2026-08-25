@@ -573,22 +573,11 @@ async fn cmd_stats(state: &AppState, _payload: &WebhookPayload) -> String {
 }
 
 async fn cmd_help(state: &AppState, _payload: &WebhookPayload) -> String {
+    let voices = tts::AVAILABLE_VOICES.iter().map(|v| format!("`{}`", v)).collect::<Vec<_>>().join(", ");
+    let effects = tts::AVAILABLE_EFFECTS.iter().map(|e| format!("`{}`", e)).collect::<Vec<_>>().join(", ");
     format!(
-        "{}\n\n\
-        *Voice & Audio:*\n\
-        /speak <text> [--voice Google] [--effect none] — Speak text via TTS (sends audio)\n\
-        /random [search] [--voice Google] [--effect none] — Random sentence from database (sends audio)\n\
-        /joke — Fetch a random joke (text response)\n\n\
-        *AI & LLM:*\n\
-        /ask <question> — Ask the AI a question (text response)\n\
-        /translate <text> <lang> — Translate text via LLM (text response)\n\n\
-        *Utility:*\n\
-        /stats — Show bot statistics\n\
-        /help — Show this help message\n\n\
-        *Available voices:* {}\n\
-        *Available effects:* {}",
+        "{}{}",
         state.lang.help_title,
-        tts::AVAILABLE_VOICES.iter().map(|v| format!("`{}`", v)).collect::<Vec<_>>().join(", "),
-        tts::AVAILABLE_EFFECTS.iter().map(|e| format!("`{}`", e)).collect::<Vec<_>>().join(", "),
+        state.lang.help_text.replacen("{}", &voices, 1).replacen("{}", &effects, 1),
     )
 }
