@@ -1407,14 +1407,16 @@ async fn joke(
 
     let reply = ctx.send(poise::CreateReply::default().content(&ctx.data().lang.processing).ephemeral(true)).await?;
 
-    // Fetch a joke from JokeAPI (free, no API key needed)
+    // Fetch a joke from JokeAPI (free, no API key needed). JokeAPI has no
+    // Italian jokes, so fetch English ones and translate to the configured
+    // language via the LLM when needed (see below).
     // Filter out nsfw, religious, political, racist, sexist, explicit categories
-    let joke_url = "https://v2.jokeapi.dev/joke/Any?safe-mode&type=twopart&format=json";
+    let joke_url = "https://v2.jokeapi.dev/joke/Any?lang=en&safe-mode&type=twopart&format=json";
     let joke_client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
         .map_err(|e| format!("Failed to build JokeAPI client: {}", e))?;
-    let joke_text = match joke_client.get(joke_url).send().await {
+    let mut joke_text = match joke_client.get(joke_url).send().await {
         Ok(resp) => {
             if !resp.status().is_success() {
                 log::error!("joke: JokeAPI returned status {}", resp.status());
@@ -1459,6 +1461,20 @@ async fn joke(
     };
 
     log::info!("[GUILDID : {}] joke: fetched joke ({} chars)", guild_id, joke_text.len());
+
+    // JokeAPI only serves English + a few non-Italian languages. When the
+    // configured language isn't English, translate the joke via the LLM so it
+    // matches LANG (falls back to the English joke if no LLM is configured).
+    let lang_code = std::env::var("LANG").unwrap_or_else(|_| "ita".to_string());
+    if lang_code != "eng" && llm::is_configured() {
+        match llm::translate(&joke_text, "it").await {
+            Ok(translated) => {
+                log::info!("[GUILDID : {}] joke: translated to {} ({} chars)", guild_id, lang_code, translated.len());
+                joke_text = translated;
+            }
+            Err(e) => log::warn!("[GUILDID : {}] joke: failed to translate joke: {}", guild_id, e),
+        }
+    }
 
     // Save the joke as a sentence in the database
     if let Err(e) = database::insert_sentence(&ctx.data().db_pool, &joke_text).await {

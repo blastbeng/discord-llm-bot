@@ -499,7 +499,10 @@ async fn cmd_translate(state: &AppState, args: &str) -> String {
 }
 
 async fn cmd_joke(state: &AppState) -> String {
-    let joke_url = "https://v2.jokeapi.dev/joke/Any?safe-mode&type=twopart&format=json";
+    // JokeAPI has no Italian jokes, so fetch English ones and translate to the
+    // configured language via the LLM when needed. This keeps the joke in the
+    // language defined by LANG (see also the Discord/WhatsApp bots).
+    let joke_url = "https://v2.jokeapi.dev/joke/Any?lang=en&safe-mode&type=twopart&format=json";
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
@@ -511,7 +514,7 @@ async fn cmd_joke(state: &AppState) -> String {
         }
     };
 
-    match client.get(joke_url).send().await {
+    let joke_text = match client.get(joke_url).send().await {
         Ok(resp) => {
             if !resp.status().is_success() {
                 return state.lang.joke_error.clone();
@@ -524,25 +527,52 @@ async fn cmd_joke(state: &AppState) -> String {
                     let setup = json.get("setup").and_then(|s| s.as_str()).unwrap_or("");
                     let delivery = json.get("delivery").and_then(|d| d.as_str()).unwrap_or("");
                     let single = json.get("joke").and_then(|j| j.as_str()).unwrap_or("");
-                    let joke_text = if !setup.is_empty() && !delivery.is_empty() {
+                    if !setup.is_empty() && !delivery.is_empty() {
                         format!("{}. {}", setup, delivery)
                     } else if !single.is_empty() {
                         single.to_string()
                     } else {
                         return state.lang.joke_error.clone();
-                    };
-
-                    if let Err(e) = database::insert_sentence(&state.db_pool, &joke_text).await {
-                        log::error!("Failed to insert joke: {}", e);
                     }
-                    joke_text
                 }
-                Err(_) => state.lang.joke_error.clone(),
+                Err(_) => return state.lang.joke_error.clone(),
             }
         }
         Err(e) => {
             log::error!("JokeAPI request failed: {}", e);
-            state.lang.joke_error.clone()
+            return state.lang.joke_error.clone();
+        }
+    };
+
+    // Translate the joke to the configured language when it isn't English and
+    // an LLM is available (JokeAPI only serves English + a few non-Italian
+    // languages). Without an LLM we fall back to the English joke as-is.
+    let joke_text = translate_joke_to_lang(&joke_text).await;
+
+    if let Err(e) = database::insert_sentence(&state.db_pool, &joke_text).await {
+        log::error!("Failed to insert joke: {}", e);
+    }
+    joke_text
+}
+
+/// Translate a joke to the bot's configured language via the LLM, if needed.
+/// JokeAPI only serves a fixed set of languages (no Italian), so for any
+/// configured language other than English we ask the LLM to translate. When no
+/// LLM is configured, the original (English) joke is returned unchanged.
+async fn translate_joke_to_lang(joke: &str) -> String {
+    let lang = std::env::var("LANG").unwrap_or_else(|_| "ita".to_string());
+    let target = match lang.as_str() {
+        "eng" => return joke.to_string(), // English — JokeAPI already returned it
+        _ => "it",                        // e.g. ita → translate to Italian
+    };
+    if !llm::is_configured() {
+        return joke.to_string();
+    }
+    match llm::translate(joke, target).await {
+        Ok(translated) => translated,
+        Err(e) => {
+            log::error!("telegram-bot joke: failed to translate joke: {}", e);
+            joke.to_string()
         }
     }
 }
