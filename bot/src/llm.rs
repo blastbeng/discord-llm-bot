@@ -155,113 +155,131 @@ pub async fn ask(
             "max_tokens": 500
         });
 
-        log::info!(
-            "llm::ask: trying endpoint {}/{} (model: {})",
-            i + 1,
-            endpoints.len(),
-            endpoint.model
-        );
+        // Reasoning models (e.g. gpt-oss:20b-cloud) intermittently return an HTTP
+        // 200 with empty content because their chain-of-thought exhausts the token
+        // budget. Retry the same endpoint a couple of times before moving on.
+        let mut empty_retries: u32 = 0;
+        const MAX_EMPTY_RETRIES: u32 = 2;
 
-        let resp = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .header("Authorization", format!("Bearer {}", endpoint.api_key))
-            .json(&body)
-            .send()
-            .await;
+        let attempt = loop {
+            log::info!(
+                "llm::ask: trying endpoint {}/{} (model: {})",
+                i + 1,
+                endpoints.len(),
+                endpoint.model
+            );
 
-        match resp {
-            Ok(r) => {
-                let status = r.status();
+            let resp = client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {}", endpoint.api_key))
+                .json(&body)
+                .send()
+                .await;
 
-                if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                    log::warn!(
-                        "llm::ask: endpoint {} returned 429 (rate limited), trying next",
-                        endpoint.base_url
-                    );
-                    last_error = format!("Rate limited at {}", endpoint.base_url);
-                    continue;
-                }
+            match resp {
+                Ok(r) => {
+                    let status = r.status();
 
-                if !status.is_success() {
-                    let body_text = r.text().await.unwrap_or_default();
-                    log::warn!(
-                        "llm::ask: endpoint {} returned status {}: {}",
-                        endpoint.base_url, status, body_text
-                    );
-                    last_error = format!("HTTP {} at {}: {}", status, endpoint.base_url, body_text);
-                    continue;
-                }
-
-                let json: serde_json::Value = match r.json().await {
-                    Ok(j) => j,
-                    Err(e) => {
+                    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                         log::warn!(
-                            "llm::ask: failed to parse JSON from {}: {}",
-                            endpoint.base_url, e
+                            "llm::ask: endpoint {} returned 429 (rate limited), trying next",
+                            endpoint.base_url
                         );
-                        last_error = format!("JSON parse error at {}: {}", endpoint.base_url, e);
-                        continue;
+                        break Err(format!("Rate limited at {}", endpoint.base_url));
                     }
-                };
 
-                // Extract the response text from OpenAI-compatible format:
-                // choices[0].message.content
-                let content = json
-                    .get("choices")
-                    .and_then(|c| c.get(0))
-                    .and_then(|c| c.get("message"))
-                    .and_then(|m| m.get("content"))
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("");
+                    if !status.is_success() {
+                        let body_text = r.text().await.unwrap_or_default();
+                        log::warn!(
+                            "llm::ask: endpoint {} returned status {}: {}",
+                            endpoint.base_url, status, body_text
+                        );
+                        break Err(format!("HTTP {} at {}: {}", status, endpoint.base_url, body_text));
+                    }
 
-                if content.is_empty() {
-                    log::warn!(
-                        "llm::ask: endpoint {} returned empty content",
-                        endpoint.base_url
+                    let json: serde_json::Value = match r.json().await {
+                        Ok(j) => j,
+                        Err(e) => {
+                            log::warn!(
+                                "llm::ask: failed to parse JSON from {}: {}",
+                                endpoint.base_url, e
+                            );
+                            break Err(format!("JSON parse error at {}: {}", endpoint.base_url, e));
+                        }
+                    };
+
+                    // Extract the response text from OpenAI-compatible format:
+                    // choices[0].message.content
+                    let content = json
+                        .get("choices")
+                        .and_then(|c| c.get(0))
+                        .and_then(|c| c.get("message"))
+                        .and_then(|m| m.get("content"))
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("");
+
+                    if content.is_empty() {
+                        empty_retries += 1;
+                        if empty_retries <= MAX_EMPTY_RETRIES {
+                            log::warn!(
+                                "llm::ask: endpoint {} returned empty content, retrying (attempt {}/{})",
+                                endpoint.base_url, empty_retries, MAX_EMPTY_RETRIES
+                            );
+                            continue;
+                        }
+                        log::warn!(
+                            "llm::ask: endpoint {} returned empty content after {} retries, trying next",
+                            endpoint.base_url, MAX_EMPTY_RETRIES
+                        );
+                        break Err(format!("Empty response at {}", endpoint.base_url));
+                    }
+
+                    // Like the old Python bot, take only the first line and
+                    // strip surrounding quotes. This keeps TTS short and clean.
+                    let first_line = content.lines().next().unwrap_or(content);
+                    let cleaned = first_line
+                        .trim()
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .to_string();
+
+                    if cleaned.is_empty() {
+                        break Err(format!("Empty response after cleanup at {}", endpoint.base_url));
+                    }
+
+                    log::info!(
+                        "llm::ask: success from endpoint {} (model: {}, response length: {})",
+                        endpoint.base_url,
+                        endpoint.model,
+                        cleaned.len()
                     );
-                    last_error = format!("Empty response at {}", endpoint.base_url);
-                    continue;
+
+                    // Truncate to 200 characters at a UTF-8 char boundary
+                    // (Google TTS limit). This matches the /speak command limit.
+                    let truncated = if cleaned.chars().count() > 200 {
+                        let s: String = cleaned.chars().take(200).collect();
+                        format!("{}...", s)
+                    } else {
+                        cleaned
+                    };
+
+                    break Ok(truncated);
                 }
-
-                // Like the old Python bot, take only the first line and
-                // strip surrounding quotes. This keeps TTS short and clean.
-                let first_line = content.lines().next().unwrap_or(content);
-                let cleaned = first_line
-                    .trim()
-                    .trim_matches('"')
-                    .trim_matches('\'')
-                    .to_string();
-
-                if cleaned.is_empty() {
-                    last_error = format!("Empty response after cleanup at {}", endpoint.base_url);
-                    continue;
+                Err(e) => {
+                    log::warn!(
+                        "llm::ask: endpoint {} connection failed: {}, trying next",
+                        endpoint.base_url, e
+                    );
+                    break Err(format!("Connection error at {}: {}", endpoint.base_url, e));
                 }
-
-                log::info!(
-                    "llm::ask: success from endpoint {} (model: {}, response length: {})",
-                    endpoint.base_url,
-                    endpoint.model,
-                    cleaned.len()
-                );
-
-                // Truncate to 200 characters at a UTF-8 char boundary
-                // (Google TTS limit). This matches the /speak command limit.
-                let truncated = if cleaned.chars().count() > 200 {
-                    let s: String = cleaned.chars().take(200).collect();
-                    format!("{}...", s)
-                } else {
-                    cleaned
-                };
-
-                return Ok(truncated);
             }
+        };
+
+        match attempt {
+            Ok(response) => return Ok(response),
             Err(e) => {
-                log::warn!(
-                    "llm::ask: endpoint {} connection failed: {}, trying next",
-                    endpoint.base_url, e
-                );
-                last_error = format!("Connection error at {}: {}", endpoint.base_url, e);
+                last_error = e;
                 continue;
             }
         }
@@ -310,80 +328,97 @@ pub async fn translate(text: &str, target_lang: &str) -> Result<String, String> 
             "max_tokens": 400
         });
 
-        log::info!(
-            "llm::translate: trying endpoint {}/{} (model: {})",
-            i + 1,
-            endpoints.len(),
-            endpoint.model
-        );
+        // Reasoning models intermittently return empty content — retry the same
+        // endpoint a couple of times before moving on (see ask for details).
+        let mut empty_retries: u32 = 0;
+        const MAX_EMPTY_RETRIES: u32 = 2;
 
-        let resp = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .header("Authorization", format!("Bearer {}", endpoint.api_key))
-            .json(&body)
-            .send()
-            .await;
+        let attempt = loop {
+            log::info!(
+                "llm::translate: trying endpoint {}/{} (model: {})",
+                i + 1,
+                endpoints.len(),
+                endpoint.model
+            );
 
-        match resp {
-            Ok(r) => {
-                let status = r.status();
+            let resp = client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {}", endpoint.api_key))
+                .json(&body)
+                .send()
+                .await;
 
-                if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                    log::warn!("llm::translate: endpoint {} returned 429, trying next", endpoint.base_url);
-                    last_error = format!("Rate limited at {}", endpoint.base_url);
-                    continue;
-                }
+            match resp {
+                Ok(r) => {
+                    let status = r.status();
 
-                if !status.is_success() {
-                    let body_text = r.text().await.unwrap_or_default();
-                    log::warn!("llm::translate: endpoint {} returned {}: {}", endpoint.base_url, status, body_text);
-                    last_error = format!("HTTP {} at {}", status, endpoint.base_url);
-                    continue;
-                }
-
-                let json: serde_json::Value = match r.json().await {
-                    Ok(j) => j,
-                    Err(e) => {
-                        last_error = format!("JSON parse error at {}: {}", endpoint.base_url, e);
-                        continue;
+                    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                        log::warn!("llm::translate: endpoint {} returned 429, trying next", endpoint.base_url);
+                        break Err(format!("Rate limited at {}", endpoint.base_url));
                     }
-                };
 
-                let content = json
-                    .get("choices")
-                    .and_then(|c| c.get(0))
-                    .and_then(|c| c.get("message"))
-                    .and_then(|m| m.get("content"))
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("");
+                    if !status.is_success() {
+                        let body_text = r.text().await.unwrap_or_default();
+                        log::warn!("llm::translate: endpoint {} returned {}: {}", endpoint.base_url, status, body_text);
+                        break Err(format!("HTTP {} at {}", status, endpoint.base_url));
+                    }
 
-                if content.is_empty() {
-                    last_error = format!("Empty response at {}", endpoint.base_url);
-                    continue;
+                    let json: serde_json::Value = match r.json().await {
+                        Ok(j) => j,
+                        Err(e) => {
+                            break Err(format!("JSON parse error at {}: {}", endpoint.base_url, e));
+                        }
+                    };
+
+                    let content = json
+                        .get("choices")
+                        .and_then(|c| c.get(0))
+                        .and_then(|c| c.get("message"))
+                        .and_then(|m| m.get("content"))
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("");
+
+                    if content.is_empty() {
+                        empty_retries += 1;
+                        if empty_retries <= MAX_EMPTY_RETRIES {
+                            log::warn!(
+                                "llm::translate: endpoint {} returned empty content, retrying (attempt {}/{})",
+                                endpoint.base_url, empty_retries, MAX_EMPTY_RETRIES
+                            );
+                            continue;
+                        }
+                        break Err(format!("Empty response at {}", endpoint.base_url));
+                    }
+
+                    let cleaned = content.trim().trim_matches('"').trim_matches('\'').trim().to_string();
+
+                    if cleaned.is_empty() {
+                        break Err(format!("Empty response after cleanup at {}", endpoint.base_url));
+                    }
+
+                    log::info!("llm::translate: success from {} (length: {})", endpoint.base_url, cleaned.len());
+
+                    let truncated = if cleaned.chars().count() > 200 {
+                        let s: String = cleaned.chars().take(200).collect();
+                        format!("{}...", s)
+                    } else {
+                        cleaned
+                    };
+
+                    break Ok(truncated);
                 }
-
-                let cleaned = content.trim().trim_matches('"').trim_matches('\'').trim().to_string();
-
-                if cleaned.is_empty() {
-                    last_error = format!("Empty response after cleanup at {}", endpoint.base_url);
-                    continue;
+                Err(e) => {
+                    log::warn!("llm::translate: endpoint {} failed: {}, trying next", endpoint.base_url, e);
+                    break Err(format!("Connection error at {}: {}", endpoint.base_url, e));
                 }
-
-                log::info!("llm::translate: success from {} (length: {})", endpoint.base_url, cleaned.len());
-
-                let truncated = if cleaned.chars().count() > 200 {
-                    let s: String = cleaned.chars().take(200).collect();
-                    format!("{}...", s)
-                } else {
-                    cleaned
-                };
-
-                return Ok(truncated);
             }
+        };
+
+        match attempt {
+            Ok(response) => return Ok(response),
             Err(e) => {
-                log::warn!("llm::translate: endpoint {} failed: {}, trying next", endpoint.base_url, e);
-                last_error = format!("Connection error at {}: {}", endpoint.base_url, e);
+                last_error = e;
                 continue;
             }
         }
@@ -449,65 +484,82 @@ pub async fn welcome(user: &str, db_sentences: &[String]) -> Result<String, Stri
             "max_tokens": 400
         });
 
-        log::info!("llm::welcome: trying endpoint {}/{} (model: {})", i + 1, endpoints.len(), endpoint.model);
+        // Reasoning models intermittently return empty content — retry the same
+        // endpoint a couple of times before moving on (see ask for details).
+        let mut empty_retries: u32 = 0;
+        const MAX_EMPTY_RETRIES: u32 = 2;
 
-        let resp = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .header("Authorization", format!("Bearer {}", endpoint.api_key))
-            .json(&body)
-            .send()
-            .await;
+        let attempt = loop {
+            log::info!("llm::welcome: trying endpoint {}/{} (model: {})", i + 1, endpoints.len(), endpoint.model);
 
-        match resp {
-            Ok(r) => {
-                let status = r.status();
-                if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                    last_error = format!("Rate limited at {}", endpoint.base_url);
-                    continue;
-                }
-                if !status.is_success() {
-                    let body_text = r.text().await.unwrap_or_default();
-                    log::warn!("llm::welcome: endpoint {} returned {}: {}", endpoint.base_url, status, body_text);
-                    last_error = format!("HTTP {} at {}", status, endpoint.base_url);
-                    continue;
-                }
-                let json: serde_json::Value = match r.json().await {
-                    Ok(j) => j,
-                    Err(e) => {
-                        last_error = format!("JSON parse error at {}: {}", endpoint.base_url, e);
-                        continue;
+            let resp = client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {}", endpoint.api_key))
+                .json(&body)
+                .send()
+                .await;
+
+            match resp {
+                Ok(r) => {
+                    let status = r.status();
+                    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                        break Err(format!("Rate limited at {}", endpoint.base_url));
                     }
-                };
-                let content = json
-                    .get("choices")
-                    .and_then(|c| c.get(0))
-                    .and_then(|c| c.get("message"))
-                    .and_then(|m| m.get("content"))
-                    .and_then(|c| c.as_str())
-                    .unwrap_or("");
-                if content.is_empty() {
-                    last_error = format!("Empty response at {}", endpoint.base_url);
-                    continue;
+                    if !status.is_success() {
+                        let body_text = r.text().await.unwrap_or_default();
+                        log::warn!("llm::welcome: endpoint {} returned {}: {}", endpoint.base_url, status, body_text);
+                        break Err(format!("HTTP {} at {}", status, endpoint.base_url));
+                    }
+                    let json: serde_json::Value = match r.json().await {
+                        Ok(j) => j,
+                        Err(e) => {
+                            break Err(format!("JSON parse error at {}: {}", endpoint.base_url, e));
+                        }
+                    };
+                    let content = json
+                        .get("choices")
+                        .and_then(|c| c.get(0))
+                        .and_then(|c| c.get("message"))
+                        .and_then(|m| m.get("content"))
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("");
+                    if content.is_empty() {
+                        empty_retries += 1;
+                        if empty_retries <= MAX_EMPTY_RETRIES {
+                            log::warn!(
+                                "llm::welcome: endpoint {} returned empty content, retrying (attempt {}/{})",
+                                endpoint.base_url, empty_retries, MAX_EMPTY_RETRIES
+                            );
+                            continue;
+                        }
+                        break Err(format!("Empty response at {}", endpoint.base_url));
+                    }
+                    let first_line = content.lines().next().unwrap_or(content);
+                    let cleaned = first_line.trim().trim_matches('"').trim_matches('\'').to_string();
+                    if cleaned.is_empty() {
+                        break Err(format!("Empty response after cleanup at {}", endpoint.base_url));
+                    }
+                    log::info!("llm::welcome: success from {} (length: {})", endpoint.base_url, cleaned.len());
+                    let truncated = if cleaned.chars().count() > 200 {
+                        let s: String = cleaned.chars().take(200).collect();
+                        format!("{}...", s)
+                    } else {
+                        cleaned
+                    };
+                    break Ok(truncated);
                 }
-                let first_line = content.lines().next().unwrap_or(content);
-                let cleaned = first_line.trim().trim_matches('"').trim_matches('\'').to_string();
-                if cleaned.is_empty() {
-                    last_error = format!("Empty response after cleanup at {}", endpoint.base_url);
-                    continue;
+                Err(e) => {
+                    log::warn!("llm::welcome: endpoint {} failed: {}, trying next", endpoint.base_url, e);
+                    break Err(format!("Connection error at {}: {}", endpoint.base_url, e));
                 }
-                log::info!("llm::welcome: success from {} (length: {})", endpoint.base_url, cleaned.len());
-                let truncated = if cleaned.chars().count() > 200 {
-                    let s: String = cleaned.chars().take(200).collect();
-                    format!("{}...", s)
-                } else {
-                    cleaned
-                };
-                return Ok(truncated);
             }
+        };
+
+        match attempt {
+            Ok(response) => return Ok(response),
             Err(e) => {
-                log::warn!("llm::welcome: endpoint {} failed: {}, trying next", endpoint.base_url, e);
-                last_error = format!("Connection error at {}: {}", endpoint.base_url, e);
+                last_error = e;
                 continue;
             }
         }
