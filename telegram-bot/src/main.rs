@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use rand::seq::SliceRandom;
 use teloxide::prelude::*;
-use teloxide::types::{ChatId, InputFile, Message};
+use teloxide::types::{ChatId, ChatKind, InputFile, Message};
 
 /// Shared application state, mirroring the WhatsApp bot's `AppState`.
 struct AppState {
@@ -186,7 +186,15 @@ async fn handle_message(bot: Bot, msg: Message, state: Arc<AppState>) -> Respons
             let _ = bot.send_message(chat_id, r).await;
         }
         _ => {
-            // Unknown command — ignore silently.
+            // In a private (direct) chat, treat any non-command message as an
+            // /ask query — the user is chatting with the bot directly, so a
+            // plain message should get an LLM answer. Messages that start with
+            // '/' (unrecognized slash commands) are still ignored, and unknown
+            // messages in groups/other chats are ignored silently to avoid noise.
+            if !text.starts_with('/') && matches!(msg.chat.kind, ChatKind::Private(_)) {
+                let r = cmd_ask(&state, &chat_id.to_string(), text).await;
+                let _ = bot.send_message(chat_id, r).await;
+            }
         }
     }
     Ok(())
