@@ -306,8 +306,14 @@ async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) {
                 log::error!("Failed to insert sentence: {}", e);
             }
 
+            let fallback = tts_result.fallback;
             // Send audio via bridge
             send_audio(state, &payload.from, &tts_result.file_path).await;
+            // If the requested FakeYou voice failed and we fell back to Google,
+            // tell the user so the audio doesn't sound unexpectedly different.
+            if fallback {
+                send_text(state, &payload.from, &state.lang.fakeyou_warning).await;
+            }
         }
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
@@ -423,7 +429,13 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
 
     match tts::get_or_generate_tts_with_effect(&tts_text, &actual_voice, &actual_effect).await {
         Ok(tts_result) => {
+            let fallback = tts_result.fallback;
             send_audio(state, &payload.from, &tts_result.file_path).await;
+            // If the requested FakeYou voice failed and we fell back to Google,
+            // tell the user so the audio doesn't sound unexpectedly different.
+            if fallback {
+                send_text(state, &payload.from, &state.lang.fakeyou_warning).await;
+            }
         }
         Err(e) => {
             log::error!("TTS generation failed: {}", e);

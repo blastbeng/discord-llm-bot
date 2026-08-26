@@ -305,7 +305,13 @@ async fn cmd_speak(bot: &Bot, chat_id: ChatId, state: &AppState, args: &str) {
             if let Err(e) = database::insert_sentence(&state.db_pool, &text).await {
                 log::error!("Failed to insert sentence: {}", e);
             }
+            let fallback = tts_result.fallback;
             send_audio(bot, chat_id, &tts_result.file_path).await;
+            // If the requested FakeYou voice failed and we fell back to Google,
+            // tell the user so the audio doesn't sound unexpectedly different.
+            if fallback {
+                let _ = bot.send_message(chat_id, &state.lang.fakeyou_warning).await;
+            }
         }
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
@@ -410,7 +416,13 @@ async fn cmd_random(bot: &Bot, chat_id: ChatId, state: &AppState, args: &str) {
 
     match tts::get_or_generate_tts_with_effect(&tts_text, &actual_voice, &actual_effect).await {
         Ok(tts_result) => {
+            let fallback = tts_result.fallback;
             send_audio(bot, chat_id, &tts_result.file_path).await;
+            // If the requested FakeYou voice failed and we fell back to Google,
+            // tell the user so the audio doesn't sound unexpectedly different.
+            if fallback {
+                let _ = bot.send_message(chat_id, &state.lang.fakeyou_warning).await;
+            }
         }
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
