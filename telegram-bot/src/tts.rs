@@ -96,47 +96,90 @@ async fn fakeyou_login_if_configured() {
         "password": password,
     });
 
-    match client
+    // FakeYou login can intermittently fail with transient errors (e.g. an
+    // "ERR64: database error" 401, a Cloudflare block, or a dropped connection
+    // caused by the Docker bridge's missing IPv6 path). Retry a few times with
+    // backoff so a single flaky attempt doesn't leave the bot unauthenticated.
+    const MAX_ATTEMPTS: u32 = 3;
+    let mut attempt = 1;
+
+    loop {
         // The current FakeYou login endpoint is /login (not /v1/login, which
         // returns "Content type error"). It returns a signed_session used to
         // authenticate subsequent requests. This matches the FakeYouAPI.js /
         // fakeyou.ts wrappers and the current website frontend.
-        .post("https://api.fakeyou.com/login")
-        .header("Accept", "application/json")
-        .header("Content-Type", "application/json")
-        .json(&login_body)
-        .send()
-        .await
-    {
-        Ok(resp) => {
-            let status = resp.status();
-            // Extract session cookie from Set-Cookie header
-            if let Some(set_cookie) = resp.headers().get("set-cookie") {
-                if let Ok(cookie_str) = set_cookie.to_str() {
-                    // Parse "session=VALUE; ..." to extract the session token
-                    if let Some(token) = cookie_str
-                        .split(';')
-                        .next()
-                        .and_then(|s| s.split('=').nth(1))
-                    {
-                        let _ = FAKEYOU_SESSION_COOKIE.set(token.to_string());
-                        log::info!("FakeYou: login successful (status {}), session cookie stored", status);
-                        return;
+        let result = client
+            .post("https://api.fakeyou.com/login")
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .json(&login_body)
+            .send()
+            .await;
+
+        match result {
+            Ok(resp) => {
+                let status = resp.status();
+                // Extract session cookie from Set-Cookie header
+                let mut stored = false;
+                if let Some(set_cookie) = resp.headers().get("set-cookie") {
+                    if let Ok(cookie_str) = set_cookie.to_str() {
+                        // Parse "session=VALUE; ..." to extract the session token
+                        if let Some(token) = cookie_str
+                            .split(';')
+                            .next()
+                            .and_then(|s| s.split('=').nth(1))
+                        {
+                            let _ = FAKEYOU_SESSION_COOKIE.set(token.to_string());
+                            stored = true;
+                        }
                     }
                 }
-            }
-            // If we couldn't extract a cookie but login returned 200, the
-            // cookie jar in the reqwest client should still have it.
-            if status.is_success() {
-                log::info!("FakeYou: login returned success ({}), cookie jar updated", status);
-            } else {
+
+                if stored {
+                    log::info!(
+                        "FakeYou: login successful (attempt {}, status {}), session cookie stored",
+                        attempt, status
+                    );
+                    return;
+                }
+
+                if status.is_success() {
+                    log::info!("FakeYou: login returned success ({}), cookie jar updated", status);
+                    return;
+                }
+
+                // Non-success status — could be transient. Capture the body for
+                // the log, and retry unless this is the last attempt.
                 let body = resp.text().await.unwrap_or_default();
-                log::error!("FakeYou: login failed with status {}: {}", status, body);
+                if attempt >= MAX_ATTEMPTS {
+                    log::error!(
+                        "FakeYou: login failed after {} attempts (status {}): {}",
+                        attempt, status, body
+                    );
+                    return;
+                }
+                log::warn!(
+                    "FakeYou: login failed (status {}: {}), retrying ({}/{})",
+                    status, body, attempt, MAX_ATTEMPTS
+                );
+            }
+            Err(e) => {
+                if attempt >= MAX_ATTEMPTS {
+                    log::error!(
+                        "FakeYou: login request failed after {} attempts: {}",
+                        attempt, e
+                    );
+                    return;
+                }
+                log::warn!(
+                    "FakeYou: login request failed ({}) , retrying ({}/{})",
+                    e, attempt, MAX_ATTEMPTS
+                );
             }
         }
-        Err(e) => {
-            log::error!("FakeYou: login request failed: {}", e);
-        }
+
+        attempt += 1;
+        tokio::time::sleep(std::time::Duration::from_secs(2 * attempt as u64)).await;
     }
 }
 
