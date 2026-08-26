@@ -1,0 +1,28 @@
+# Override file to build the services locally from source (instead of pulling
+# from Docker Hub). Use with:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml build <service>
+# or via the provided ./docker-build.sh --force-local
+#
+# The `image:` names must match docker-compose.yml so the locally-built images
+# replace (tag) the same names that would otherwise be pulled from the registry.
+services:
+  discord-llm-bot:
+    build:
+      context: ./bot
+      dockerfile: Dockerfile
+      network: host
+
+  whatsapp-bridge:
+    build:
+      context: ./wapp-bridge
+      dockerfile: Dockerfile
+
+  whatsapp-bot:
+    build:
+      context: ./wapp-bot
+      dockerfile: Dockerfile
+
+  telegram-bot:
+    build:
+      context: ./telegram-bot
+      dockerfile: Dockerfile

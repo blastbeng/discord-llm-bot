@@ -1,10 +1,11 @@
+# Main compose file: services pull their images from Docker Hub.
+# To build locally from source instead, use:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml build <service>
+# or the provided ./docker-build.sh --force-local
 services:
   discord-llm-bot:
-    pull_policy: build
-    build:
-      context: ./bot
-      dockerfile: Dockerfile
-      network: host
+    pull_policy: always
+    image: "blastbeng/discord-llm-bot:1.0.0"
     container_name: discord-bot
     network_mode: host
     environment:
@@ -16,7 +17,6 @@ services:
       - "./config:/app/config"
       - "/tmp/discord-llm-bot:/tmp/discord-llm-bot"
       - "./audios:/app/audios"
-    image: "blastbeng/discord-llm-bot:1.0.0"
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f discord-llm-bot || exit 1"]
@@ -26,9 +26,8 @@ services:
       start_period: 20s
 
   whatsapp-bridge:
-    build:
-      context: ./wapp-bridge
-      dockerfile: Dockerfile
+    pull_policy: always
+    image: "blastbeng/whatsapp-bridge:1.0.0"
     container_name: whatsapp-bridge
     env_file: .env.wapp
     volumes:
@@ -42,9 +41,8 @@ services:
       start_period: 30s
 
   whatsapp-bot:
-    build:
-      context: ./wapp-bot
-      dockerfile: Dockerfile
+    pull_policy: always
+    image: "blastbeng/whatsapp-llm-bot:1.0.0"
     container_name: whatsapp-bot
     env_file: .env.wapp
     volumes:
@@ -62,9 +60,8 @@ services:
       start_period: 20s
 
   telegram-bot:
-    build:
-      context: ./telegram-bot
-      dockerfile: Dockerfile
+    pull_policy: always
+    image: "blastbeng/telegram-llm-bot:1.0.0"
     container_name: telegram-bot
     env_file: .env.telegram
     volumes:

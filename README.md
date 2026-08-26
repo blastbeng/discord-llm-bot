@@ -54,27 +54,52 @@ All services share the mounted `./config` (SQLite DB) and `./audios` (TTS cache)
 
 ## Building
 
-> **Slow hardware (e.g. Raspberry Pi 5):** `docker compose build` builds all four
-> services **in parallel**, which thrashes CPU/memory and makes rebuilds very
-> slow. Use the provided script to build the containers **one at a time** in a
-> fixed order, with BuildKit caching enabled:
+The services pull their images from Docker Hub (`docker-compose.yml` uses
+`pull_policy: always` and has **no** build sections), so a normal
+`docker compose build`/`up` fetches the latest published images instead of
+rebuilding locally.
+
+> **Slow hardware (e.g. Raspberry Pi 5):** do **not** run `docker compose build`
+> to build all four services at once — it builds them **in parallel**, which
+> thrashes CPU/memory. Use the provided script, which handles everything **one
+> container at a time** and with BuildKit caching enabled.
 
 ```bash
-./docker-build.sh                 # build all: discord-bot → telegram-bot → whatsapp-bridge → whatsapp-bot
-./docker-build.sh telegram-bot    # build only one service
-./docker-build.sh --no-cache      # force a full rebuild (ignore cache)
-./docker-build.sh --push          # also push built images
+# Pull the latest published images from Docker Hub (one at a time):
+./docker-build.sh
+
+# Build locally from source, then push to Docker Hub (updates local + remote):
+# Requires: docker login first (non-interactive)
+./docker-build.sh --force-local
+./docker-build.sh --force-local --no-cache   # force a full local rebuild
+
+# Handle only one service (pull, or build it with --force-local):
+./docker-build.sh telegram-bot
+./docker-build.sh --force-local telegram-bot
 ```
 
 If `docker-build.sh` is not executable, run it with `bash docker-build.sh` (or
 `chmod +x docker-build.sh` once). The script forces sequential builds via
 `COMPOSE_PARALLEL_LIMIT=1` and enables BuildKit (`DOCKER_BUILDKIT=1`).
 
-To make even plain `docker compose build` sequential, set
-`COMPOSE_PARALLEL_LIMIT=1` in your environment or in the project `.env` file.
+**To force a local build with plain `docker compose`** (e.g. to update only the
+local images without pushing), add the build override file:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml build <service>
+```
 
 The Rust Dockerfiles use `cargo-chef`, so the (large) dependency compilation is
 cached and only your source changes are recompiled on subsequent builds.
+
+### Image names
+
+| Service          | Docker Hub image                         |
+|------------------|------------------------------------------|
+| Discord bot      | `blastbeng/discord-llm-bot:1.0.0`        |
+| Telegram bot     | `blastbeng/telegram-llm-bot:1.0.0`       |
+| WhatsApp bot     | `blastbeng/whatsapp-llm-bot:1.0.0`       |
+| WhatsApp bridge  | `blastbeng/whatsapp-bridge:1.0.0`        |
 
 ## Discord Commands
 

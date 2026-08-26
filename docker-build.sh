@@ -1,28 +1,27 @@
 #!/usr/bin/env bash
-# Sequential Docker build script for the discord-llm-bot stack.
+# Docker image management script for the discord-llm-bot stack.
 #
-# We host on a slow Raspberry Pi 5, so `docker compose build` (which builds all
-# services in parallel) thrashes CPU/memory and makes every rebuild painfully
-# slow. This script builds each service ONE AT A TIME in a fixed order:
+# The services pull their images from Docker Hub (docker-compose.yml uses
+# pull_policy: pull and has no build sections). This script gives you control
+# over that workflow, and does everything ONE container at a time because we
+# host on a slow Raspberry Pi 5 (parallel builds thrash CPU/memory).
 #
-#   discord-llm-bot -> telegram-bot -> whatsapp-bridge -> whatsapp-bot
-#
-# Each service is built individually (which is inherently sequential: one
-# command blocks until the previous finishes), and BuildKit caching is enabled
-# so the cargo-chef dependency layers are reused between rebuilds.
+# Build order: discord-llm-bot -> telegram-bot -> whatsapp-bridge -> whatsapp-bot
 #
 # Usage:
-#   ./docker-build.sh                 Build all services (with cache)
-#   ./docker-build.sh <service>       Build only the given service
-#   ./docker-build.sh --no-cache      Force a full rebuild (ignore cache)
-#   ./docker-build.sh --push          Also push built images to the registry
+#   ./docker-build.sh                 Pull the latest images from Docker Hub
+#   ./docker-build.sh --force-local   Build images locally from source, then push to Docker Hub
+#   ./docker-build.sh --force-local --no-cache   Force a full local rebuild (ignore cache)
+#   ./docker-build.sh <service>       Pull only the given service (or build it with --force-local)
 #
-# The order of the SERVICES array is the build order when building everything.
+# NOTE: pushing to Docker Hub requires `docker login` first (non-interactive).
+#
+# The order of the SERVICES array is the processing order when handling all services.
 
 set -euo pipefail
 
 # Force sequential (non-parallel) behaviour for compose operations too, which
-# further reduces load on the RPi5 during build/up/down.
+# reduces load on the RPi5 during build/up/down.
 export COMPOSE_PARALLEL_LIMIT=1
 # Use BuildKit for caching and faster incremental builds.
 export DOCKER_BUILDKIT=1
@@ -31,24 +30,29 @@ export COMPOSE_DOCKER_CLI_BUILD=1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Build order: discord -> telegram -> whatsapp-bridge -> whatsapp-bot
+# Processing order: discord -> telegram -> whatsapp-bridge -> whatsapp-bot
 SERVICES=(discord-llm-bot telegram-bot whatsapp-bridge whatsapp-bot)
 
-EXTRA_ARGS=()
-PUSH=0
+BUILD_ARGS=()
+FORCE_LOCAL=0
 NO_CACHE=0
 SELECTED=""
 
 for arg in "$@"; do
     case "$arg" in
-        --push)
-            PUSH=1
+        --force-local)
+            FORCE_LOCAL=1
             ;;
         --no-cache)
             NO_CACHE=1
             ;;
         --help|-h)
-            echo "Usage: $0 [--no-cache] [--push] [<service>]"
+            echo "Usage: $0 [--force-local] [--no-cache] [<service>]"
+            echo ""
+            echo "  (no flags)     Pull the latest images from Docker Hub"
+            echo "  --force-local  Build images locally from source, then push to Docker Hub"
+            echo "  --no-cache     Force a full rebuild ignoring the build cache"
+            echo ""
             echo "Services: ${SERVICES[*]}"
             exit 0
             ;;
@@ -58,11 +62,7 @@ for arg in "$@"; do
     esac
 done
 
-[ "$NO_CACHE" = "1" ] && EXTRA_ARGS+=(--no-cache)
-[ "$PUSH" = "1" ] && EXTRA_ARGS+=(--push)
-
 if [ -n "$SELECTED" ]; then
-    # Validate the requested service name.
     if ! printf '%s\n' "${SERVICES[@]}" | grep -qx "$SELECTED"; then
         echo "ERROR: unknown service '$SELECTED'."
         echo "Valid services: ${SERVICES[*]}"
@@ -71,19 +71,39 @@ if [ -n "$SELECTED" ]; then
     SERVICES=("$SELECTED")
 fi
 
-echo "=== Sequential docker build ==="
-echo "Services to build: ${SERVICES[*]}"
-echo "Extra args: ${EXTRA_ARGS[*]:-none}"
+[ "$NO_CACHE" = "1" ] && BUILD_ARGS+=(--no-cache)
+
+echo "=== docker-build.sh ==="
+echo "Services: ${SERVICES[*]}"
+echo "Mode: $([ "$FORCE_LOCAL" = "1" ] && echo 'LOCAL BUILD + PUSH' || echo 'PULL FROM DOCKER HUB')"
 echo "Parallel limit: $COMPOSE_PARALLEL_LIMIT (sequential)"
 echo ""
 
-for svc in "${SERVICES[@]}"; do
-    echo "----------------------------------------------------------------"
-    echo ">>> Building $svc ..."
-    echo "----------------------------------------------------------------"
-    # shellcheck disable=SC2068
-    docker compose -f docker-compose.yml build "$svc" ${EXTRA_ARGS[@]}
-    echo ""
-done
+if [ "$FORCE_LOCAL" = "1" ]; then
+    # ---- Local build + push (one service at a time) ----
+    COMPOSE_FILES="-f docker-compose.yml -f docker-compose.build.yml"
+    for svc in "${SERVICES[@]}"; do
+        echo "----------------------------------------------------------------"
+        echo ">>> Building $svc locally ..."
+        echo "----------------------------------------------------------------"
+        # shellcheck disable=SC2086
+        docker compose $COMPOSE_FILES build "$svc" ${BUILD_ARGS[@]}
+        echo ""
+    done
 
-echo "=== All requested builds completed successfully ==="
+    echo "=== Pushing images to Docker Hub ==="
+    # shellcheck disable=SC2086
+    docker compose $COMPOSE_FILES push ${SERVICES[@]}
+    echo "=== Push completed ==="
+    echo "=== All local builds and pushes completed successfully ==="
+else
+    # ---- Pull latest from Docker Hub (one service at a time) ----
+    for svc in "${SERVICES[@]}"; do
+        echo "----------------------------------------------------------------"
+        echo ">>> Pulling latest $svc from Docker Hub ..."
+        echo "----------------------------------------------------------------"
+        docker compose -f docker-compose.yml pull "$svc"
+        echo ""
+    done
+    echo "=== All pulls completed successfully ==="
+fi
