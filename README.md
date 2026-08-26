@@ -52,6 +52,30 @@ All services share the mounted `./config` (SQLite DB) and `./audios` (TTS cache)
 
 > **Note:** With `WAPP_ENABLED=false` (default) and `TEL_ENABLED=false` (default), the WhatsApp and Telegram services stay running but idle — they do not affect the Discord bot.
 
+## Building
+
+> **Slow hardware (e.g. Raspberry Pi 5):** `docker compose build` builds all four
+> services **in parallel**, which thrashes CPU/memory and makes rebuilds very
+> slow. Use the provided script to build the containers **one at a time** in a
+> fixed order, with BuildKit caching enabled:
+
+```bash
+./docker-build.sh                 # build all: discord-bot → telegram-bot → whatsapp-bridge → whatsapp-bot
+./docker-build.sh telegram-bot    # build only one service
+./docker-build.sh --no-cache      # force a full rebuild (ignore cache)
+./docker-build.sh --push          # also push built images
+```
+
+If `docker-build.sh` is not executable, run it with `bash docker-build.sh` (or
+`chmod +x docker-build.sh` once). The script forces sequential builds via
+`COMPOSE_PARALLEL_LIMIT=1` and enables BuildKit (`DOCKER_BUILDKIT=1`).
+
+To make even plain `docker compose build` sequential, set
+`COMPOSE_PARALLEL_LIMIT=1` in your environment or in the project `.env` file.
+
+The Rust Dockerfiles use `cargo-chef`, so the (large) dependency compilation is
+cached and only your source changes are recompiled on subsequent builds.
+
 ## Discord Commands
 
 | Command | Description |

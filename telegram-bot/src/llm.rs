@@ -1,11 +1,38 @@
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 static LLM_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+/// A reqwest DNS resolver that resolves hostnames to IPv4 addresses only.
+/// See src/tts.rs `Ipv4OnlyResolver` for the rationale: Docker bridge
+/// containers have no IPv6 connectivity, but DNS still returns IPv6 addresses
+/// (e.g. for Cloudflare-fronted hosts), causing unreliable connections.
+#[derive(Clone)]
+struct Ipv4OnlyResolver;
+
+impl reqwest::dns::Resolve for Ipv4OnlyResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        Box::pin(async move {
+            let host = name.as_str().to_string();
+            let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
+                .await?
+                .collect();
+            let ipv4: Vec<std::net::SocketAddr> =
+                addrs.iter().filter(|a| a.is_ipv4()).copied().collect();
+            let chosen: Vec<std::net::SocketAddr> = if ipv4.is_empty() { addrs } else { ipv4 };
+            // Coerce into the `Box<dyn Iterator<Item = SocketAddr> + Send>`
+            // trait object reqwest expects (a concrete Box<IntoIter> won't
+            // unify with it).
+            let iter: Box<dyn Iterator<Item = std::net::SocketAddr> + Send> = Box::new(chosen.into_iter());
+            Ok(iter)
+        })
+    }
+}
 
 fn llm_client() -> &'static reqwest::Client {
     LLM_CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
+            .dns_resolver(Arc::new(Ipv4OnlyResolver))
             .build()
             .expect("Failed to build LLM HTTP client")
     })

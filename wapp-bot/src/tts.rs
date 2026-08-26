@@ -1,8 +1,50 @@
 use id3::{Tag, TagLike, Version};
 use md5::compute as md5_compute;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+
+/// A reqwest DNS resolver that resolves hostnames to IPv4 addresses only.
+///
+/// Docker's default bridge network has no IPv6 connectivity, but the system
+/// DNS inside the container can still return IPv6 addresses for hosts (e.g.
+/// api.fakeyou.com is fronted by Cloudflare and resolves to IPv6 first). When
+/// a container tries to connect over IPv6 on an IPv6-less bridge, the request
+/// fails or behaves unreliably (FakeYou intermittently returned "ERR64:
+/// database error" for a valid login). Forcing IPv4 sidesteps this entirely.
+#[derive(Clone)]
+struct Ipv4OnlyResolver;
+
+impl reqwest::dns::Resolve for Ipv4OnlyResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        Box::pin(async move {
+            let host = name.as_str().to_string();
+            let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host((host.as_str(), 0))
+                .await?
+                .collect();
+            // Prefer IPv4 addresses; fall back to everything if no IPv4 is
+            // found (so e.g. local IPv6-only services still resolve).
+            let ipv4: Vec<std::net::SocketAddr> =
+                addrs.iter().filter(|a| a.is_ipv4()).copied().collect();
+            let chosen: Vec<std::net::SocketAddr> = if ipv4.is_empty() { addrs } else { ipv4 };
+            // Coerce into the `Box<dyn Iterator<Item = SocketAddr> + Send>`
+            // trait object reqwest expects (a concrete Box<IntoIter> won't
+            // unify with it).
+            let iter: Box<dyn Iterator<Item = std::net::SocketAddr> + Send> = Box::new(chosen.into_iter());
+            Ok(iter)
+        })
+    }
+}
+
+/// Build a reqwest client that forces IPv4-only DNS resolution (see
+/// `Ipv4OnlyResolver`) to avoid broken IPv6 attempts on the Docker bridge.
+fn build_client(timeout_secs: u64) -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .dns_resolver(Arc::new(Ipv4OnlyResolver))
+        .build()
+        .expect("Failed to build HTTP client")
+}
 
 /// Shared reqwest client for standard HTTP requests (Google TTS, downloads).
 /// Reusing a single client avoids creating a new TLS context and connection
@@ -10,7 +52,7 @@ use tokio::process::Command;
 static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 /// Shared reqwest client with a generous timeout for FakeYou jobs, which
-/// can take a while to complete. Uses a cookie store so that if we login
+/// can take a while to complete. Uses a session cookie so that if we login
 /// with FakeYou credentials, the session cookie persists across requests.
 static FAKEYOU_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
@@ -19,12 +61,7 @@ static FAKEYOU_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 static FAKEYOU_SESSION_COOKIE: OnceLock<String> = OnceLock::new();
 
 pub fn http_client() -> &'static reqwest::Client {
-    HTTP_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .expect("Failed to build HTTP client")
-    })
+    HTTP_CLIENT.get_or_init(|| build_client(30))
 }
 
 fn fakeyou_client() -> &'static reqwest::Client {
@@ -32,6 +69,7 @@ fn fakeyou_client() -> &'static reqwest::Client {
         reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(120))
             .cookie_store(true)
+            .dns_resolver(Arc::new(Ipv4OnlyResolver))
             .build()
             .expect("Failed to build FakeYou HTTP client")
     })
