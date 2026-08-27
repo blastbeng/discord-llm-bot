@@ -6,6 +6,7 @@
 //! stays alive but idle (no polling, no processing) so the container stays
 //! healthy without actually running.
 
+mod audio_effects;
 mod database;
 mod lang;
 mod llm;

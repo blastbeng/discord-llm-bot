@@ -1,5 +1,6 @@
 mod database;
 mod auto_join;
+mod audio_effects;
 mod error;
 mod generator;
 mod lang;

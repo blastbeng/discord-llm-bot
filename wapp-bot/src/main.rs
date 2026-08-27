@@ -2,6 +2,7 @@
 // processes commands, and sends responses back via the bridge HTTP API.
 // Shares the same SQLite database and TTS cache with the Discord bot.
 
+mod audio_effects;
 mod database;
 mod llm;
 mod tts;

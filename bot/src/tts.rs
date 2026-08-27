@@ -2,7 +2,7 @@ use id3::{Tag, TagLike, Version};
 use md5::compute as md5_compute;
 use std::sync::{Arc, OnceLock};
 use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
+use crate::audio_effects::{compress_and_save_mp3_with_effect, AVAILABLE_EFFECTS, is_valid_effect};
 
 /// A reqwest DNS resolver that resolves hostnames to IPv4 addresses only.
 ///
@@ -174,69 +174,12 @@ pub async fn compress_and_save_mp3(input_bytes: Vec<u8>, file_path: &str) -> std
     compress_and_save_mp3_with_effect(input_bytes, file_path, "none").await
 }
 
-/// Compress and save MP3 with an optional audio effect applied via ffmpeg.
+/// Compress and save MP3 with an optional audio effect applied via pure Rust DSP.
 /// When effect is "none", the behavior is identical to compress_and_save_mp3.
 pub async fn compress_and_save_mp3_with_effect(input_bytes: Vec<u8>, file_path: &str, effect: &str) -> std::io::Result<()> {
-    // Compress to 64k bitrate, mono channel to save disk space
-    tokio::fs::create_dir_all("audios").await?;
-    log::debug!("compress_and_save_mp3: saving to {} with effect: {}", file_path, effect);
-    let mut cmd = Command::new("ffmpeg");
-    cmd.args(["-i", "pipe:0", "-b:a", "64k", "-ac", "1", "-y"]);
-
-    // Apply audio effect if one is specified (and not "none")
-    if let Some(filter) = get_effect_filter(effect) {
-        log::info!("compress_and_save_mp3: applying ffmpeg filter: {}", filter);
-        cmd.args(["-af", &filter]);
-    }
-
-    cmd.arg(file_path)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped());
-
-    let mut child = cmd.spawn()?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(&input_bytes).await?;
-    }
-    // Capture stderr so we can log it if ffmpeg fails — previously it was
-    // discarded, making it impossible to diagnose compression failures.
-    let stderr = child.stderr.take();
-    let output = child.wait().await?;
-    let exit_code = output.code();
-
-    if let Some(mut stderr) = stderr {
-        use tokio::io::AsyncReadExt;
-        let mut buf = String::new();
-        let _ = stderr.read_to_string(&mut buf).await;
-        if !output.success() {
-            log::error!(
-                "compress_and_save_mp3: ffmpeg exited with code {:?} for {}: {}",
-                exit_code,
-                file_path,
-                buf.trim()
-            );
-            return Err(std::io::Error::other(format!(
-                "ffmpeg exited with code {:?}: {}",
-                exit_code,
-                buf.trim()
-            )));
-        } else {
-            log::debug!("compress_and_save_mp3: completed for {}", file_path);
-        }
-    } else if !output.success() {
-        log::error!(
-            "compress_and_save_mp3: ffmpeg exited with code {:?} for {} (no stderr captured)",
-            exit_code,
-            file_path
-        );
-        return Err(std::io::Error::other(format!(
-            "ffmpeg exited with code {:?} (no stderr captured)",
-            exit_code
-        )));
-    } else {
-        log::debug!("compress_and_save_mp3: completed for {}", file_path);
-    }
-    Ok(())
+    compress_and_save_mp3_with_effect(input_bytes.to_vec(), file_path, effect)
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))
 }
 
 pub async fn get_tts_google(text: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
