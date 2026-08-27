@@ -160,7 +160,7 @@ pub fn get_effect_filter(effect: &str) -> Option<String> {
         // normal, so the net result was a bass-boosted speed-up rather than
         // a demonic voice. We omit the atempo stage here, add light reverb
         // for a cavernous feel, and boost the low end to thicken the tone.
-        "demon" => Some("asetrate=44100*0.5,bass=g=18,aecho=0.8:0.7:1000:0.3".to_string()),
+        "demon" => Some("asetrate=44100*0.5,aresample=44100,bass=g=18,aecho=0.8:0.7:1000:0.3".to_string()),
         "telephone" => Some("highpass=f=300,lowpass=f=3400".to_string()),
         "underwater" => Some("lowpass=f=400,bass=g=15,atempo=0.8".to_string()),
         _ => None,
