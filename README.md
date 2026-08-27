@@ -165,15 +165,15 @@ The Telegram bot mirrors the WhatsApp bot's commands (long polling, no webhook n
 
 ## Environment Variables
 
-**Discord (`.env`)**: `BOT_TOKEN`, `GUILD_ID`, `ADMIN_ID`, `LANG`, `LOG_LEVEL`, `TMP_DIR`, `SAVE_MP3_ON_DISK`, `MAX_AUDIO_FILE_SIZE_MB`, optional `AUTO_JOIN_VOICE`/`AUTO_JOIN_WELCOME`/`AUTO_JOIN_IDLE_DISCONNECT_SECS` (auto-voice behaviour, see above), plus optional `FAKEYOU_USERNAME`/`FAKEYOU_PASSWORD` and LLM (`LLM_ENDPOINTS`, `LLM_API_KEYS`, `LLM_MODELS`).
+**Discord (`.env`)**: `BOT_TOKEN`, `GUILD_ID`, `ADMIN_ID`, `LANG`, `LOG_LEVEL`, `TMP_DIR`, `SAVE_MP3_ON_DISK`, `MAX_AUDIO_FILE_SIZE_MB`, optional `AUTO_JOIN_VOICE`/`AUTO_JOIN_WELCOME`/`AUTO_JOIN_IDLE_DISCONNECT_SECS` (auto-voice behaviour, see above), plus LLM (`LLM_ENDPOINTS`, `LLM_API_KEYS`, `LLM_MODELS`).
 
-**WhatsApp (`.env.wapp`)**: `WAPP_ENABLED`, `BRIDGE_PORT`, `WAPP_WEBHOOK_URL`, `WHATSAPP_ALLOWED_GROUPS`, `WAPP_WEBHOOK_PORT`, `WAPP_BRIDGE_URL`, plus the same shared DB/TTS/LLM/FakeYou settings.
+**WhatsApp (`.env.wapp`)**: `WAPP_ENABLED`, `BRIDGE_PORT`, `WAPP_WEBHOOK_URL`, `WHATSAPP_ALLOWED_GROUPS`, `WAPP_WEBHOOK_PORT`, `WAPP_BRIDGE_URL`, plus the same shared DB/TTS/LLM settings.
 
-**Telegram (`.env.telegram`)**: `TEL_ENABLED` (set to `true` to enable; when `false` the bot stays idle), `TELOXIDE_TOKEN` (from @BotFather), `TEL_ALLOWED_CHATS` (comma-separated chat/group IDs the bot is restricted to; empty = all chats allowed), plus the same shared DB/TTS/LLM/FakeYou settings.
+**Telegram (`.env.telegram`)**: `TEL_ENABLED` (set to `true` to enable; when `false` the bot stays idle), `TELOXIDE_TOKEN` (from @BotFather), `TEL_ALLOWED_CHATS` (comma-separated chat/group IDs the bot is restricted to; empty = all chats allowed), plus the same shared DB/TTS/LLM settings.
 
 ## Voices & Effects
 
-- **Voices**: Google, plus FakeYou voices (Goku, Gerry Scotti, Homer Simpson, Peter Griffin, Papa Francesco, Silvio Berlusconi). Use `--voice random`.
+- **Voices**: Google. Use `--voice random`.
 - **Effects**: `none`, `echo`, `reverb`, `bass`, `chipmunk`, `demon`, `telephone`, `underwater`. Use `--effect random`.
 
 ## Running without Docker (Discord only)
