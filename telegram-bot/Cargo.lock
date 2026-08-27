@@ -2853,7 +2853,6 @@ dependencies = [
  "teloxide",
  "tokio",
  "urlencoding",
- "uuid",
 ]
 
 [[package]]

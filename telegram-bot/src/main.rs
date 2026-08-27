@@ -115,9 +115,6 @@ async fn main() {
         }
     }
 
-    // Initialise FakeYou login (best-effort) before polling.
-    tts::init_fakeyou().await;
-
     let token = env::var("TELOXIDE_TOKEN").expect("TELOXIDE_TOKEN must be set");
     let bot = Bot::new(token);
 
@@ -305,13 +302,7 @@ async fn cmd_speak(bot: &Bot, chat_id: ChatId, state: &AppState, args: &str) {
             if let Err(e) = database::insert_sentence(&state.db_pool, &text).await {
                 log::error!("Failed to insert sentence: {}", e);
             }
-            let fallback = tts_result.fallback;
             send_audio(bot, chat_id, &tts_result.file_path).await;
-            // If the requested FakeYou voice failed and we fell back to Google,
-            // tell the user so the audio doesn't sound unexpectedly different.
-            if fallback {
-                let _ = bot.send_message(chat_id, &state.lang.fakeyou_warning).await;
-            }
         }
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
@@ -416,13 +407,7 @@ async fn cmd_random(bot: &Bot, chat_id: ChatId, state: &AppState, args: &str) {
 
     match tts::get_or_generate_tts_with_effect(&tts_text, &actual_voice, &actual_effect).await {
         Ok(tts_result) => {
-            let fallback = tts_result.fallback;
             send_audio(bot, chat_id, &tts_result.file_path).await;
-            // If the requested FakeYou voice failed and we fell back to Google,
-            // tell the user so the audio doesn't sound unexpectedly different.
-            if fallback {
-                let _ = bot.send_message(chat_id, &state.lang.fakeyou_warning).await;
-            }
         }
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
@@ -610,12 +595,6 @@ async fn cmd_stats(state: &AppState) -> String {
         Err(_) => "N/A".to_string(),
     };
 
-    let fakeyou_status = if env::var("FAKEYOU_USERNAME").unwrap_or_default().is_empty() {
-        state.lang.not_configured.clone()
-    } else {
-        state.lang.authenticated.clone()
-    };
-
     let llm_status = if llm::is_configured() {
         let endpoints = env::var("LLM_ENDPOINTS").unwrap_or_default();
         let count = endpoints.split(',').filter(|s| !s.trim().is_empty()).count();
@@ -625,11 +604,10 @@ async fn cmd_stats(state: &AppState) -> String {
     };
 
     format!(
-        "{}\n\n🗄️ {}: {}\n🎵 {}: {}\n🎭 {}: {}\n🤖 {}: {}",
+        "{}\n\n🗄️ {}: {}\n🎵 {}: {}\n🤖 {}: {}",
         state.lang.stats_title,
         state.lang.stats_database, db_stats,
         state.lang.stats_cache, cache_info,
-        state.lang.stats_fakeyou, fakeyou_status,
         state.lang.stats_llm, llm_status,
     )
 }

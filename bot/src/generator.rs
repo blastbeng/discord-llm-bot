@@ -29,8 +29,6 @@ pub async fn run_background_generator(pool: SqlitePool) {
         log::info!("Background generator: starting new cycle");
         let mut generated_count = 0;
         let mut failed_count = 0;
-        let mut fakeyou_count = 0;
-        let max_fakeyou_per_cycle = 3; // Increased limit for better coverage
         
         match database::select_sentences_for_generation(&pool).await {
             Ok(sentences) => {
@@ -42,12 +40,6 @@ pub async fn run_background_generator(pool: SqlitePool) {
                             break 'outer;
                         }
                         
-                        // Skip FakeYou if we've hit the limit for this cycle
-                        if *voice != "Google" && fakeyou_count >= max_fakeyou_per_cycle {
-                            log::debug!("Background generator: skipping FakeYou voice {} due to rate limit", voice);
-                            continue;
-                        }
-                        
                         let file_path = tts::get_file_path(voice, &sentence);
                         if !tokio::fs::try_exists(&file_path).await.unwrap_or(false) {
                             log::info!(
@@ -56,16 +48,9 @@ pub async fn run_background_generator(pool: SqlitePool) {
                                 voice
                             );
                             
-                            // Use the no-fallback variant: the generator must cache
-                            // the requested voice itself. If FakeYou fails, we skip
-                            // that voice/sentence rather than silently saving a
-                            // Google audio in its place (fallback is user-command-only).
-                            match tts::get_or_generate_tts_no_fallback(&sentence, voice).await {
+                            match tts::get_or_generate_tts_with_effect(&sentence, voice, "none").await {
                                 Ok(_) => {
                                     generated_count += 1;
-                                    if *voice != "Google" {
-                                        fakeyou_count += 1;
-                                    }
                                 }
                                 Err(e) => {
                                     log::warn!(
@@ -94,13 +79,13 @@ pub async fn run_background_generator(pool: SqlitePool) {
         // Log cycle statistics
         let status = if failed_count > 0 {
             format!(
-                "Generated {} files ({} FakeYou), {} failures",
-                generated_count, fakeyou_count, failed_count
+                "Generated {} files, {} failures",
+                generated_count, failed_count
             )
         } else {
             format!(
-                "Generated {} files successfully ({} FakeYou)",
-                generated_count, fakeyou_count
+                "Generated {} files successfully",
+                generated_count
             )
         };
         

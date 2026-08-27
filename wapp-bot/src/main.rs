@@ -86,8 +86,6 @@ async fn main() {
     if enabled {
         database::populate_db_if_empty(&db_pool).await.expect("Database population failed");
         log::info!("✓ Database population check completed");
-        // Initialize FakeYou TTS
-        tts::init_fakeyou().await;
     }
 
     let state = Arc::new(AppState {
@@ -306,14 +304,8 @@ async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) {
                 log::error!("Failed to insert sentence: {}", e);
             }
 
-            let fallback = tts_result.fallback;
             // Send audio via bridge
             send_audio(state, &payload.from, &tts_result.file_path).await;
-            // If the requested FakeYou voice failed and we fell back to Google,
-            // tell the user so the audio doesn't sound unexpectedly different.
-            if fallback {
-                send_text(state, &payload.from, &state.lang.fakeyou_warning).await;
-            }
         }
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
@@ -429,13 +421,7 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
 
     match tts::get_or_generate_tts_with_effect(&tts_text, &actual_voice, &actual_effect).await {
         Ok(tts_result) => {
-            let fallback = tts_result.fallback;
             send_audio(state, &payload.from, &tts_result.file_path).await;
-            // If the requested FakeYou voice failed and we fell back to Google,
-            // tell the user so the audio doesn't sound unexpectedly different.
-            if fallback {
-                send_text(state, &payload.from, &state.lang.fakeyou_warning).await;
-            }
         }
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
@@ -637,12 +623,6 @@ async fn cmd_stats(state: &AppState, _payload: &WebhookPayload) -> String {
         Err(_) => "N/A".to_string(),
     };
 
-    let fakeyou_status = if env::var("FAKEYOU_USERNAME").unwrap_or_default().is_empty() {
-        state.lang.not_configured.clone()
-    } else {
-        state.lang.authenticated.clone()
-    };
-
     let llm_status = if llm::is_configured() {
         let endpoints = env::var("LLM_ENDPOINTS").unwrap_or_default();
         let count = endpoints.split(',').filter(|s| !s.trim().is_empty()).count();
@@ -652,11 +632,10 @@ async fn cmd_stats(state: &AppState, _payload: &WebhookPayload) -> String {
     };
 
     format!(
-        "{}\n\n🗄️ {}: {}\n🎵 {}: {}\n🎭 {}: {}\n🤖 {}: {}",
+        "{}\n\n🗄️ {}: {}\n🎵 {}: {}\n🤖 {}: {}",
         state.lang.stats_title,
         state.lang.stats_database, db_stats,
         state.lang.stats_cache, cache_info,
-        state.lang.stats_fakeyou, fakeyou_status,
         state.lang.stats_llm, llm_status,
     )
 }

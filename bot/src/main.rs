@@ -545,11 +545,7 @@ async fn speak(
         Ok(result) => result,
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
-            let error_msg = if actual_voice == "Google" {
-                &ctx.data().lang.tts_error_google
-            } else {
-                &ctx.data().lang.tts_error_fakeyou
-            };
+            let error_msg = &ctx.data().lang.tts_error_google;
             reply.edit(ctx, poise::CreateReply::default().content(error_msg).ephemeral(true)).await?;
             return Ok(());
         }
@@ -576,12 +572,6 @@ async fn speak(
     play_with_volume(&mut handler, source.into(), ctx.data());
     log::info!("Audio playback started in guild {}", guild_id);
 
-    let warning = if tts_result.fallback {
-        &ctx.data().lang.fakeyou_warning
-    } else {
-        ""
-    };
-
     let components = vec![
         serenity::CreateActionRow::Buttons(vec![
             serenity::CreateButton::new(format!("play:{}", tts_result.file_path))
@@ -598,7 +588,7 @@ async fn speak(
     // as "Unknown interaction" — the audio already played successfully, so
     // a failed message update is cosmetic, not a real failure.
     match reply.edit(ctx, poise::CreateReply::default()
-        .content(ctx.data().lang.playing.replacen("{}", &text, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
+        .content(ctx.data().lang.playing.replacen("{}", &text, 1).replacen("{}", &tts_result.actual_voice, 1))
         .components(components)
         .ephemeral(true)
     ).await {
@@ -866,11 +856,7 @@ async fn random(
         Ok(result) => result,
         Err(e) => {
             log::error!("TTS generation failed: {}", e);
-            let error_msg = if actual_voice == "Google" {
-                &ctx.data().lang.tts_error_google
-            } else {
-                &ctx.data().lang.tts_error_fakeyou
-            };
+            let error_msg = &ctx.data().lang.tts_error_google;
             reply.edit(ctx, poise::CreateReply::default().content(error_msg).ephemeral(true)).await?;
             return Ok(());
         }
@@ -893,12 +879,6 @@ async fn random(
     play_with_volume(&mut handler, source.into(), ctx.data());
     log::info!("Audio playback started in guild {}", guild_id);
 
-    let warning = if tts_result.fallback {
-        &ctx.data().lang.fakeyou_warning
-    } else {
-        ""
-    };
-
     let components = vec![
         serenity::CreateActionRow::Buttons(vec![
             serenity::CreateButton::new(format!("play:{}", tts_result.file_path))
@@ -913,7 +893,7 @@ async fn random(
     // Same pattern as speak: don't propagate reply.edit errors to on_error
     // since the audio already played successfully.
     match reply.edit(ctx, poise::CreateReply::default()
-        .content(ctx.data().lang.playing.replacen("{}", &tts_text, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
+        .content(ctx.data().lang.playing.replacen("{}", &tts_text, 1).replacen("{}", &tts_result.actual_voice, 1))
         .components(components)
         .ephemeral(true)
     ).await {
@@ -1098,11 +1078,7 @@ async fn ask(
         Ok(result) => result,
         Err(e) => {
             log::error!("ask: TTS generation failed: {}", e);
-            let error_msg = if actual_voice == "Google" {
-                &ctx.data().lang.tts_error_google
-            } else {
-                &ctx.data().lang.tts_error_fakeyou
-            };
+            let error_msg = &ctx.data().lang.tts_error_google;
             reply.edit(ctx, poise::CreateReply::default().content(error_msg).ephemeral(true)).await?;
             return Ok(());
         }
@@ -1125,12 +1101,6 @@ async fn ask(
     play_with_volume(&mut handler, source.into(), ctx.data());
     log::info!("ask: Audio playback started in guild {}", guild_id);
 
-    let warning = if tts_result.fallback {
-        &ctx.data().lang.fakeyou_warning
-    } else {
-        ""
-    };
-
     let components = vec![
         serenity::CreateActionRow::Buttons(vec![
             serenity::CreateButton::new(format!("play:{}", tts_result.file_path))
@@ -1145,7 +1115,7 @@ async fn ask(
     // Use match instead of ? so expired interaction tokens don't propagate
     // to on_error — the audio already played successfully.
     match reply.edit(ctx, poise::CreateReply::default()
-        .content(ctx.data().lang.playing.replacen("{}", &llm_response, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
+        .content(ctx.data().lang.playing.replacen("{}", &llm_response, 1).replacen("{}", &tts_result.actual_voice, 1))
         .components(components)
         .ephemeral(true)
     ).await {
@@ -1295,11 +1265,7 @@ async fn translate(
         Ok(result) => result,
         Err(e) => {
             log::error!("translate: TTS generation failed: {}", e);
-            let error_msg = if actual_voice == "Google" {
-                &ctx.data().lang.tts_error_google
-            } else {
-                &ctx.data().lang.tts_error_fakeyou
-            };
+            let error_msg = &ctx.data().lang.tts_error_google;
             reply.edit(ctx, poise::CreateReply::default().content(error_msg).ephemeral(true)).await?;
             return Ok(());
         }
@@ -1320,12 +1286,6 @@ async fn translate(
     let source = songbird::input::File::new(tts_result.file_path.clone());
     play_with_volume(&mut handler, source.into(), ctx.data());
 
-    let warning = if tts_result.fallback {
-        &ctx.data().lang.fakeyou_warning
-    } else {
-        ""
-    };
-
     let components = vec![
         serenity::CreateActionRow::Buttons(vec![
             serenity::CreateButton::new(format!("play:{}", tts_result.file_path))
@@ -1338,7 +1298,7 @@ async fn translate(
     ];
 
     match reply.edit(ctx, poise::CreateReply::default()
-        .content(ctx.data().lang.playing.replacen("{}", &translated, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
+        .content(ctx.data().lang.playing.replacen("{}", &translated, 1).replacen("{}", &tts_result.actual_voice, 1))
         .components(components)
         .ephemeral(true)
     ).await {
@@ -1527,11 +1487,7 @@ async fn joke(
         Ok(result) => result,
         Err(e) => {
             log::error!("joke: TTS generation failed: {}", e);
-            let error_msg = if actual_voice == "Google" {
-                &ctx.data().lang.tts_error_google
-            } else {
-                &ctx.data().lang.tts_error_fakeyou
-            };
+            let error_msg = &ctx.data().lang.tts_error_google;
             reply.edit(ctx, poise::CreateReply::default().content(error_msg).ephemeral(true)).await?;
             return Ok(());
         }
@@ -1552,12 +1508,6 @@ async fn joke(
     let source = songbird::input::File::new(tts_result.file_path.clone());
     play_with_volume(&mut handler, source.into(), ctx.data());
 
-    let warning = if tts_result.fallback {
-        &ctx.data().lang.fakeyou_warning
-    } else {
-        ""
-    };
-
     let components = vec![
         serenity::CreateActionRow::Buttons(vec![
             serenity::CreateButton::new(format!("play:{}", tts_result.file_path))
@@ -1570,7 +1520,7 @@ async fn joke(
     ];
 
     match reply.edit(ctx, poise::CreateReply::default()
-        .content(ctx.data().lang.playing.replacen("{}", &tts_text, 1).replacen("{}", &tts_result.actual_voice, 1) + warning)
+        .content(ctx.data().lang.playing.replacen("{}", &tts_text, 1).replacen("{}", &tts_result.actual_voice, 1))
         .components(components)
         .ephemeral(true)
     ).await {
@@ -1630,13 +1580,6 @@ async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         format!("{}h {}m", hours, mins)
     };
 
-    // FakeYou session status
-    let fakeyou_status = if std::env::var("FAKEYOU_USERNAME").unwrap_or_default().is_empty() {
-        ctx.data().lang.not_configured.clone()
-    } else {
-        ctx.data().lang.authenticated.clone()
-    };
-
     // LLM status
     let llm_status = if llm::is_configured() {
         let endpoints = std::env::var("LLM_ENDPOINTS").unwrap_or_default();
@@ -1654,7 +1597,6 @@ async fn stats(ctx: Context<'_>) -> Result<(), Error> {
         .field(&ctx.data().lang.stats_uptime, uptime, true)
         .field(&ctx.data().lang.stats_cpu, format!("{:.1}%", cpu_usage), true)
         .field(&ctx.data().lang.stats_ram, format!("{:.1}%", ram_usage), true)
-        .field(&ctx.data().lang.stats_fakeyou, fakeyou_status, true)
         .field(&ctx.data().lang.stats_llm, llm_status, true)
         .field(&ctx.data().lang.stats_errors, ctx.data().error_tracker.total_count().to_string(), true);
 
@@ -2515,10 +2457,6 @@ async fn main() {
         .expect("Database population check completed");
     
     log::info!("✓ Database population check completed - ready for operations");
-
-    // Initialize FakeYou — login if credentials are configured so the
-    // shared client's cookie jar has a session cookie for TTS requests.
-    tts::init_fakeyou().await;
 
     let pool_clone = db_pool.clone();
     tokio::spawn(async move {
