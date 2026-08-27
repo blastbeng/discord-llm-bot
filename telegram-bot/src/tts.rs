@@ -153,10 +153,14 @@ pub fn get_effect_filter(effect: &str) -> Option<String> {
         "reverb" => Some("aecho=0.7:0.5:1800:0.3,aecho=0.7:0.5:600:0.2".to_string()),
         "bass" => Some("bass=g=10,equalizer=f=80:t=q:w=1:g=5".to_string()),
         "chipmunk" => Some("asetrate=44100*1.5,aresample=44100,atempo=0.6667".to_string()),
-        // Demon lowers pitch to ~60% (deep, rumbling) and boosts the low end,
-        // which reads clearly as "demonic" rather than just a slightly-thinner
-        // normal voice (an *0.7 drop sounded too much like chipmunk).
-        "demon" => Some("asetrate=44100*0.6,aresample=44100,atempo=1.6667,bass=g=12".to_string()),
+        // Demon voice: drops pitch to ~50% and keeps the audio slow so the
+        // speech actually sounds deep and rumbling instead of just sped-up.
+        // The previous filter did `asetrate=44100*0.6` (pitch down) then
+        // `aresample=44100,atempo=1.6667` which raised the tempo back to
+        // normal, so the net result was a bass-boosted speed-up rather than
+        // a demonic voice. We omit the atempo stage here, add light reverb
+        // for a cavernous feel, and boost the low end to thicken the tone.
+        "demon" => Some("asetrate=44100*0.5,bass=g=18,aecho=0.8:0.7:1000:0.3".to_string()),
         "telephone" => Some("highpass=f=300,lowpass=f=3400".to_string()),
         "underwater" => Some("lowpass=f=400,bass=g=15,atempo=0.8".to_string()),
         _ => None,
