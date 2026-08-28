@@ -46,10 +46,29 @@ pub async fn apply_effect_to_mp3(
     // 2. Apply the requested effect
     let processed_samples = apply_effect(samples, effect, sample_rate, channels)?;
 
+    // 2b. Clamp/normalize samples to prevent clipping distortion.
+    // Some effects (especially reverb) can produce samples with amplitude > 1.0,
+    // which causes severe clipping during MP3 encoding and results in distorted
+    // or silent audio. We normalize to 0.9 max to leave headroom.
+    let processed_samples = normalize_if_needed(processed_samples);
+
     // 3. Encode back to MP3
     let output_bytes = encode_mp3(processed_samples, sample_rate, channels)?;
 
     Ok(output_bytes)
+}
+
+/// If any sample exceeds 0.9 amplitude, normalize the entire buffer so the
+/// peak is exactly 0.9. This prevents clipping without changing quiet audio.
+fn normalize_if_needed(samples: Vec<f32>) -> Vec<f32> {
+    let peak = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+    if peak > 0.9 {
+        let scale = 0.9 / peak;
+        log::debug!("apply_effect_to_mp3: normalizing, peak={:.4} -> scale={:.4}", peak, scale);
+        samples.iter().map(|s| s * scale).collect()
+    } else {
+        samples
+    }
 }
 
 /// Decode MP3 bytes to interleaved f32 samples (-1.0 to 1.0)
