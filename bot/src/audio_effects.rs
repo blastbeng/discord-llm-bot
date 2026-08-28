@@ -104,10 +104,15 @@ fn encode_mp3(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Result<Vec<
             .map_err(|e| AudioEffectError::Mp3Encode(format!("{:?}", e)))?;
         unsafe { output.set_len(output.len().wrapping_add(encoded)); }
     } else {
-        let stereo_pcm = mp3lame_encoder::DualPcm {
-            left: &pcm_samples,
-            right: &pcm_samples,
-        };
+        // The samples are interleaved stereo (L R L R ...). Split into separate
+        // left and right buffers for the encoder.
+        let mut left = Vec::with_capacity(pcm_samples.len() / 2);
+        let mut right = Vec::with_capacity(pcm_samples.len() / 2);
+        for chunk in pcm_samples.chunks_exact(2) {
+            left.push(chunk[0]);
+            right.push(chunk[1]);
+        }
+        let stereo_pcm = mp3lame_encoder::DualPcm { left: &left, right: &right };
         let encoded = encoder.encode(stereo_pcm, output.spare_capacity_mut())
             .map_err(|e| AudioEffectError::Mp3Encode(format!("{:?}", e)))?;
         unsafe { output.set_len(output.len().wrapping_add(encoded)); }
