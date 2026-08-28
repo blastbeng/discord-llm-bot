@@ -2908,6 +2908,10 @@ async fn main() {
                     tokio::spawn(async move {
                         auto_join::idle_disconnect_loop(idle_ctx).await;
                     });
+                    let scanner_ctx = ctx.clone();
+                    tokio::spawn(async move {
+                        auto_join::channel_scanner_loop(scanner_ctx).await;
+                    });
                 }
 
                 log::info!("Framework setup complete with enhanced error tracking");

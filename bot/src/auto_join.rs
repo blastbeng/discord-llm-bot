@@ -179,6 +179,88 @@ pub async fn idle_disconnect_loop(ctx: serenity::Context) {
     }
 }
 
+/// Periodic scanner that finds the most-populated voice channel in each guild
+/// and joins it if the bot is disconnected and there are people talking.
+/// This catches the case where the bot was offline or restarted while
+/// people were already in a voice channel.
+pub async fn channel_scanner_loop(ctx: serenity::Context) {
+    let http = ctx.http.clone();
+    let cache = ctx.clone();
+    let mut ticker = tokio::time::interval(Duration::from_secs(30));
+    log::info!("auto_join: channel scanner loop started");
+
+    loop {
+        ticker.tick().await;
+
+        // Get the bot's user ID once per tick (needed for filtering)
+        let bot_user_id = cache.cache.current_user().id;
+
+        // Iterate over all cached guilds
+        for guild_id in cache.cache.guilds() {
+            // Step 1: collect channel/human info synchronously and drop the cache lock.
+            let voice_channel_counts: Vec<_> = {
+                let Some(guild_data) = cache.cache.guild(guild_id) else { continue };
+                guild_data
+                    .channels
+                    .values()
+                    .filter(|ch| matches!(ch.kind, serenity::ChannelType::Voice))
+                    .filter_map(|ch| {
+                        let human_count = guild_data
+                            .voice_states
+                            .values()
+                            .filter(|vs| {
+                                vs.channel_id == Some(ch.id) && vs.user_id != bot_user_id
+                            })
+                            .count();
+                        if human_count > 0 {
+                            Some((ch.id, human_count))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            };
+
+            // Step 2: now safe to await — no cache lock held.
+            let Some(manager) = songbird::get(&cache).await else { continue };
+            if manager.get(guild_id).is_some() {
+                continue;
+            }
+
+            // Find the most-populated channel
+            let best = voice_channel_counts
+                .into_iter()
+                .max_by_key(|(_, count)| *count);
+
+            if let Some((channel_id, human_count)) = best {
+                // Check permissions before joining
+                match channel_id.to_channel(&http).await {
+                    Ok(serenity::Channel::Guild(gc)) => {
+                        #[allow(deprecated)]
+                        match gc.permissions_for_user(&cache.cache, bot_user_id) {
+                            Ok(p) if p.connect() && p.speak() => {
+                                log::info!("auto_join: scanner found {} humans in channel {}, joining...", human_count, channel_id);
+                                let _ = manager.join(guild_id, channel_id).await;
+                                log::info!("auto_join: scanner joined channel {}", channel_id);
+                            }
+                            Ok(_) => {
+                                log::debug!("auto_join: scanner skipped channel {} (no permission)", channel_id);
+                            }
+                            Err(e) => {
+                                log::warn!("auto_join: scanner permissions_for_user failed for {}: {}", channel_id, e);
+                            }
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        log::warn!("auto_join: scanner failed to fetch channel {}: {}", channel_id, e);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The channel the bot is currently connected to in a guild, if any.
 async fn current_bot_channel(
     ctx: &serenity::Context,
@@ -207,14 +289,23 @@ fn count_humans(ctx: &serenity::Context, guild_id: serenity::GuildId, channel_id
 /// Whether the bot has connect + speak permission in the given channel.
 async fn has_permission(
     ctx: &serenity::Context,
-    _guild_id: serenity::GuildId,
+    guild_id: serenity::GuildId,
     channel_id: serenity::ChannelId,
 ) -> bool {
-    let Ok(channel) = channel_id.to_channel(ctx).await else { return false };
+    let Ok(channel) = channel_id.to_channel(ctx).await else {
+        log::warn!("auto_join: has_permission: failed to fetch channel {} (not found or no access)", channel_id);
+        return false;
+    };
     if let serenity::Channel::Guild(gc) = channel {
         #[allow(deprecated)]
         if let Ok(p) = gc.permissions_for_user(&ctx.cache, ctx.cache.current_user().id) {
-            return p.connect() && p.speak();
+            let can_connect = p.connect();
+            let can_speak = p.speak();
+            let can_view = p.view_channel();
+            log::debug!("auto_join: has_permission channel {} bot perms: view={} connect={} speak={}", channel_id, can_view, can_connect, can_speak);
+            return can_connect && can_speak;
+        } else {
+            log::warn!("auto_join: has_permission: permissions_for_user failed for channel {}", channel_id);
         }
     }
     false
@@ -274,24 +365,25 @@ async fn speak_welcome(
     let phrase = if data.auto_join_welcome {
         let db_sentences = database::select_all_sentence(&data.db_pool).await.unwrap_or_default();
 
-        // Prefer the LLM-generated welcome, but fall back to a random database
-        // sentence if the LLM isn't configured or fails — the bot should still
-        // greet the user rather than staying silent.
-        let mut phrase = None;
+        // Prefer the LLM-generated welcome. If the LLM is configured but
+        // returns an error (including garbage/invalid responses), do NOT fall
+        // back to a random DB sentence — silence is better than a wrong
+        // message. Only fall back if the LLM is not configured at all.
         if llm::is_configured() {
             match llm::welcome(user_name, &db_sentences).await {
-                Ok(p) => phrase = Some(p),
-                Err(e) => log::warn!("auto_join: welcome LLM error: {}", e),
+                Ok(p) => p,
+                Err(e) => {
+                    log::warn!("auto_join: welcome LLM error, skipping welcome: {}", e);
+                    return;
+                }
             }
-        }
-        let phrase = match phrase {
-            Some(p) => p,
-            None => match db_sentences.choose(&mut rand::thread_rng()) {
+        } else {
+            // LLM not configured — fall back to a random database sentence.
+            match db_sentences.choose(&mut rand::thread_rng()) {
                 Some(s) => s.clone(),
                 None => return,
-            },
-        };
-        phrase
+            }
+        }
     } else {
         // Welcoming speech disabled entirely — nothing to say.
         return;
@@ -351,21 +443,23 @@ async fn speak_goodbye(
 
     let db_sentences = database::select_all_sentence(&data.db_pool).await.unwrap_or_default();
 
-    // Prefer LLM insult, fall back to a random DB sentence (often already
-    // insulting in tone, given the bot's database content).
-    let mut phrase = None;
-    if llm::is_configured() {
+    // Prefer LLM insult. If the LLM is configured but returns an error
+    // (including garbage/invalid responses), do NOT fall back to a random
+    // DB sentence — silence is better than a wrong message. Only fall back
+    // if the LLM is not configured at all.
+    let phrase = if llm::is_configured() {
         match llm::goodbye(user_name, &db_sentences).await {
-            Ok(p) => phrase = Some(p),
-            Err(e) => log::warn!("auto_join: goodbye LLM error: {}", e),
+            Ok(p) => p,
+            Err(e) => {
+                log::warn!("auto_join: goodbye LLM error, skipping goodbye: {}", e);
+                return;
+            }
         }
-    }
-    let phrase = match phrase {
-        Some(p) => p,
-        None => match db_sentences.choose(&mut rand::thread_rng()) {
+    } else {
+        match db_sentences.choose(&mut rand::thread_rng()) {
             Some(s) => s.clone(),
             None => return,
-        },
+        }
     };
 
     // Goodbye is always played without effects for clarity and reliability.

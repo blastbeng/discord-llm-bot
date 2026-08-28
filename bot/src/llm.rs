@@ -438,19 +438,30 @@ pub async fn goodbye(user: &str, db_sentences: &[String]) -> Result<String, Stri
                         break Err(format!("Empty response at {}", endpoint.base_url));
                     }
 
-                    let cleaned = content.trim().trim_matches('"').trim_matches('\'').trim().to_string();
-                    if cleaned.is_empty() {
-                        break Err(format!("Empty response after cleanup at {}", endpoint.base_url));
+                    let validated = validate_phrase(content);
+                    match validated {
+                        Some(cleaned) => {
+                            log::info!("llm::goodbye: success from {} (length: {})", endpoint.base_url, cleaned.len());
+                            let truncated = if cleaned.chars().count() > 200 {
+                                let s: String = cleaned.chars().take(200).collect();
+                                format!("{}...", s)
+                            } else {
+                                cleaned
+                            };
+                            break Ok(truncated);
+                        }
+                        None => {
+                            empty_retries += 1;
+                            if empty_retries <= MAX_EMPTY_RETRIES {
+                                log::warn!(
+                                    "llm::goodbye: endpoint {} returned garbage/invalid response, retrying (attempt {}/{})",
+                                    endpoint.base_url, empty_retries, MAX_EMPTY_RETRIES
+                                );
+                                continue;
+                            }
+                            break Err(format!("Invalid/garbage response at {}", endpoint.base_url));
+                        }
                     }
-
-                    log::info!("llm::goodbye: success from {} (length: {})", endpoint.base_url, cleaned.len());
-                    let truncated = if cleaned.chars().count() > 200 {
-                        let s: String = cleaned.chars().take(200).collect();
-                        format!("{}...", s)
-                    } else {
-                        cleaned
-                    };
-                    break Ok(truncated);
                 }
                 Err(e) => {
                     log::warn!(
@@ -624,6 +635,91 @@ pub async fn translate(text: &str, target_lang: &str) -> Result<String, String> 
     Err(format!("All LLM endpoints failed. Last error: {}", last_error))
 }
 
+/// Validate that an LLM-generated welcome/goodbye phrase is actually a spoken
+/// sentence and not a system artifact (e.g. "user safety: safe", metadata,
+/// classification labels, or empty content after stripping reasoning markers).
+///
+/// Returns the cleaned phrase if it passes validation, or `None` if the
+/// response looks like a system/garbage output.
+fn validate_phrase(raw: &str) -> Option<String> {
+    let trimmed = raw.trim().trim_matches('"').trim_matches('\'').trim();
+
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Take only the first line — reasoning models sometimes prepend
+    // multi-line reasoning before the actual answer.
+    let first_line = trimmed.lines().next().unwrap_or(trimmed);
+    let cleaned = first_line.trim().trim_matches('"').trim_matches('\'').trim().to_string();
+
+    if cleaned.is_empty() {
+        return None;
+    }
+
+    let lower = cleaned.to_lowercase();
+
+    // Reject system/metadata patterns that reasoning models leak.
+    // These are common artifacts from models that output safety labels,
+    // classifications, or internal metadata instead of the actual phrase.
+    const GARBAGE_PATTERNS: &[&str] = &[
+        "user safety",
+        "safe",
+        "unsafe",
+        "safety:",
+        "content policy",
+        "policy:",
+        "flag:",
+        "category:",
+        "rating:",
+        "sentiment:",
+        "label:",
+        "classification:",
+        "moderation:",
+        "toxicity:",
+        "output:",
+        "response:",
+        "result:",
+        "answer:",
+        "greeting:",
+        "welcome:",
+        "goodbye:",
+    ];
+
+    // If the cleaned phrase is EXACTLY one of the garbage patterns (e.g.
+    // the model returned just "safe" or "user safety: safe"), reject it.
+    for pattern in GARBAGE_PATTERNS {
+        if lower == *pattern {
+            log::warn!("llm::validate_phrase: rejected garbage response '{}'", cleaned);
+            return None;
+        }
+        // Also reject "pattern: value" style responses (e.g. "user safety: safe")
+        if lower.starts_with(&format!("{}:", pattern)) || lower.starts_with(&format!("{} :", pattern)) {
+            // But allow if the rest after the colon looks like a real sentence
+            // (longer than 15 chars and doesn't look like a label)
+            let after_colon = lower.split(':').nth(1).unwrap_or("").trim();
+            if after_colon.len() < 15 || GARBAGE_PATTERNS.contains(&after_colon) {
+                log::warn!("llm::validate_phrase: rejected garbage response '{}'", cleaned);
+                return None;
+            }
+        }
+    }
+
+    // Reject responses that are too short (likely just a label)
+    if cleaned.chars().count() < 5 {
+        log::warn!("llm::validate_phrase: rejected too-short response '{}'", cleaned);
+        return None;
+    }
+
+    // Reject responses that look like JSON or key-value pairs
+    if cleaned.starts_with('{') || cleaned.starts_with('[') || cleaned.contains(":\")") {
+        log::warn!("llm::validate_phrase: rejected JSON-like response '{}'", cleaned);
+        return None;
+    }
+
+    Some(cleaned)
+}
+
 /// Generate a short, humorous welcome phrase for a user who just joined a voice
 /// channel. The phrase is tailored to the user's name and to the bot's
 /// personality (as reflected by the database sentences).
@@ -745,19 +841,30 @@ pub async fn welcome(user: &str, db_sentences: &[String]) -> Result<String, Stri
                         }
                         break Err(format!("Empty response at {}", endpoint.base_url));
                     }
-                    let first_line = content.lines().next().unwrap_or(content);
-                    let cleaned = first_line.trim().trim_matches('"').trim_matches('\'').to_string();
-                    if cleaned.is_empty() {
-                        break Err(format!("Empty response after cleanup at {}", endpoint.base_url));
+                    let validated = validate_phrase(content);
+                    match validated {
+                        Some(cleaned) => {
+                            log::info!("llm::welcome: success from {} (length: {})", endpoint.base_url, cleaned.len());
+                            let truncated = if cleaned.chars().count() > 200 {
+                                let s: String = cleaned.chars().take(200).collect();
+                                format!("{}...", s)
+                            } else {
+                                cleaned
+                            };
+                            break Ok(truncated);
+                        }
+                        None => {
+                            empty_retries += 1;
+                            if empty_retries <= MAX_EMPTY_RETRIES {
+                                log::warn!(
+                                    "llm::welcome: endpoint {} returned garbage/invalid response, retrying (attempt {}/{})",
+                                    endpoint.base_url, empty_retries, MAX_EMPTY_RETRIES
+                                );
+                                continue;
+                            }
+                            break Err(format!("Invalid/garbage response at {}", endpoint.base_url));
+                        }
                     }
-                    log::info!("llm::welcome: success from {} (length: {})", endpoint.base_url, cleaned.len());
-                    let truncated = if cleaned.chars().count() > 200 {
-                        let s: String = cleaned.chars().take(200).collect();
-                        format!("{}...", s)
-                    } else {
-                        cleaned
-                    };
-                    break Ok(truncated);
                 }
                 Err(e) => {
                     log::warn!(
