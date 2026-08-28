@@ -357,7 +357,7 @@ async fn effect_autocomplete(
     _ctx: Context<'_>,
     current: &str,
 ) -> Vec<serenity::AutocompleteChoice> {
-    tts::AVAILABLE_EFFECTS
+crate::audio_effects::AVAILABLE_EFFECTS
         .iter()
         .chain(std::iter::once(&"random"))
         .filter(|e| e.to_lowercase().contains(&current.to_lowercase()))
@@ -479,12 +479,12 @@ async fn speak(
     // Resolve "random" effect to a random choice
     let actual_effect = if effect == "random" {
         let mut rng = rand::thread_rng();
-        tts::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
     } else {
         effect
     };
 
-    if !tts::is_valid_effect(&actual_effect) {
+    if !crate::audio_effects::is_valid_effect(&actual_effect) {
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_effect).ephemeral(true)).await?;
         return Ok(());
     }
@@ -644,12 +644,12 @@ async fn random(
     // Resolve "random" effect to a random choice
     let actual_effect = if effect == "random" {
         let mut rng = rand::thread_rng();
-        tts::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
     } else {
         effect
     };
 
-    if !tts::is_valid_effect(&actual_effect) {
+    if !crate::audio_effects::is_valid_effect(&actual_effect) {
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_effect).ephemeral(true)).await?;
         return Ok(());
     }
@@ -949,12 +949,12 @@ async fn ask(
     // Resolve "random" effect to a random choice
     let actual_effect = if effect == "random" {
         let mut rng = rand::thread_rng();
-        tts::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
     } else {
         effect
     };
 
-    if !tts::is_valid_effect(&actual_effect) {
+    if !crate::audio_effects::is_valid_effect(&actual_effect) {
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_effect).ephemeral(true)).await?;
         return Ok(());
     }
@@ -1171,12 +1171,12 @@ async fn translate(
 
     let actual_effect = if effect == "random" {
         let mut rng = rand::thread_rng();
-        tts::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
     } else {
         effect
     };
 
-    if !tts::is_valid_effect(&actual_effect) {
+    if !crate::audio_effects::is_valid_effect(&actual_effect) {
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_effect).ephemeral(true)).await?;
         return Ok(());
     }
@@ -1346,12 +1346,12 @@ async fn joke(
 
     let actual_effect = if effect == "random" {
         let mut rng = rand::thread_rng();
-        tts::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
     } else {
         effect
     };
 
-    if !tts::is_valid_effect(&actual_effect) {
+    if !crate::audio_effects::is_valid_effect(&actual_effect) {
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_effect).ephemeral(true)).await?;
         return Ok(());
     }
@@ -1958,11 +1958,11 @@ async fn soundboard(
     let effect = effect.unwrap_or_else(|| "none".to_string());
     let actual_effect = if effect == "random" {
         let mut rng = rand::thread_rng();
-        tts::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
     } else {
         effect
     };
-    if !tts::is_valid_effect(&actual_effect) {
+    if !crate::audio_effects::is_valid_effect(&actual_effect) {
         ctx.send(poise::CreateReply::default().content(&ctx.data().lang.invalid_effect).ephemeral(true)).await?;
         return Ok(());
     }
@@ -2155,7 +2155,7 @@ async fn play_soundboard_item(
         let bytes = tokio::fs::read(&cache_path)
             .await
             .map_err(|e| format!("Failed to read cached sound: {}", e))?;
-        tts::compress_and_save_mp3_with_effect(bytes, &temp_path, effect)
+        crate::audio_effects::compress_and_save_mp3_with_effect(bytes, &temp_path, effect)
             .await
             .map_err(|e| format!("Failed to apply effect: {}", e))?;
         (temp_path, true)

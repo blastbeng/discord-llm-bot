@@ -287,12 +287,12 @@ async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) {
 
     let actual_effect = if effect == "random" {
         let mut rng = rand::thread_rng();
-        tts::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
     } else {
         effect
     };
 
-    if !tts::is_valid_effect(&actual_effect) {
+    if !crate::audio_effects::is_valid_effect(&actual_effect) {
         send_text(state, &payload.from, &state.lang.invalid_effect).await;
         return;
     }
@@ -410,12 +410,12 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
 
     let actual_effect = if effect == "random" {
         let mut rng = rand::thread_rng();
-        tts::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
     } else {
         effect
     };
 
-    if !tts::is_valid_effect(&actual_effect) {
+    if !crate::audio_effects::is_valid_effect(&actual_effect) {
         send_text(state, &payload.from, &state.lang.invalid_effect).await;
         return;
     }
@@ -643,7 +643,7 @@ async fn cmd_stats(state: &AppState, _payload: &WebhookPayload) -> String {
 
 async fn cmd_help(state: &AppState, _payload: &WebhookPayload) -> String {
     let voices = tts::AVAILABLE_VOICES.iter().map(|v| format!("`{}`", v)).collect::<Vec<_>>().join(", ");
-    let effects = tts::AVAILABLE_EFFECTS.iter().map(|e| format!("`{}`", e)).collect::<Vec<_>>().join(", ");
+    let effects = crate::audio_effects::AVAILABLE_EFFECTS.iter().map(|e| format!("`{}`", e)).collect::<Vec<_>>().join(", ");
     format!(
         "{}{}",
         state.lang.help_title,

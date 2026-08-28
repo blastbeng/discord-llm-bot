@@ -1,8 +1,7 @@
 use id3::{Tag, TagLike, Version};
 use md5::compute as md5_compute;
 use std::sync::{Arc, OnceLock};
-use tokio::io::AsyncWriteExt;
-use crate::audio_effects::{compress_and_save_mp3_with_effect, AVAILABLE_EFFECTS, is_valid_effect};
+use crate::audio_effects::compress_and_save_mp3_with_effect;
 
 /// A reqwest DNS resolver that resolves hostnames to IPv4 addresses only.
 ///
@@ -129,21 +128,15 @@ pub fn get_file_path_with_effect(voice: &str, text: &str, effect: &str) -> Strin
     file_path
 }
 
-/// Available voice effects that can be applied to TTS audio.
-/// Each maps to an ffmpeg audio filter chain.
-pub const AVAILABLE_EFFECTS: &[&str] = &[
-    "none",
-    "echo",
-    "reverb",
-    "bass",
-    "chipmunk",
-    "demon",
-    "telephone",
-    "underwater",
-];
+// Effect-related constants and helpers (AVAILABLE_EFFECTS, is_valid_effect,
+// compress_and_save_mp3_with_effect) are re-exported from `crate::audio_effects`.
+// The ffmpeg-based `get_effect_filter` is kept here because it remains useful as
+// a reference and for callers that still need the filter string (none in the
+// production code paths use it directly anymore — see audio_effects.rs).
 
 /// Get the ffmpeg filter string for a given effect name.
 /// Returns None for "none" (no filtering applied).
+#[allow(dead_code)]
 pub fn get_effect_filter(effect: &str) -> Option<String> {
     match effect {
         "echo" => Some("aecho=0.8:0.9:1000:0.3".to_string()),
@@ -164,20 +157,9 @@ pub fn get_effect_filter(effect: &str) -> Option<String> {
     }
 }
 
-/// Check if an effect name is valid.
-pub fn is_valid_effect(effect: &str) -> bool {
-    AVAILABLE_EFFECTS.contains(&effect) || effect == "random"
-}
-
 #[allow(dead_code)]
 pub async fn compress_and_save_mp3(input_bytes: Vec<u8>, file_path: &str) -> std::io::Result<()> {
-    compress_and_save_mp3_with_effect(input_bytes, file_path, "none").await
-}
-
-/// Compress and save MP3 with an optional audio effect applied via pure Rust DSP.
-/// When effect is "none", the behavior is identical to compress_and_save_mp3.
-pub async fn compress_and_save_mp3_with_effect(input_bytes: Vec<u8>, file_path: &str, effect: &str) -> std::io::Result<()> {
-    compress_and_save_mp3_with_effect(input_bytes.to_vec(), file_path, effect)
+    compress_and_save_mp3_with_effect(input_bytes, file_path, "none")
         .await
         .map_err(|e| std::io::Error::other(e.to_string()))
 }

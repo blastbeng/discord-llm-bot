@@ -274,7 +274,7 @@ async fn speak_welcome(
     // Pick a random effect (or none) for the welcome audio — makes the bot
     // feel more alive and playful. AVAILABLE_EFFECTS includes "none", so both
     // an effect and "no effect" can be chosen at random.
-    let effect = tts::AVAILABLE_EFFECTS
+    let effect = crate::audio_effects::AVAILABLE_EFFECTS
         .choose(&mut rand::thread_rng())
         .copied()
         .unwrap_or("none");

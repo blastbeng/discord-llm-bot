@@ -1,8 +1,7 @@
 use id3::{Tag, TagLike, Version};
 use md5::compute as md5_compute;
 use std::sync::{Arc, OnceLock};
-use tokio::io::AsyncWriteExt;
-use crate::audio_effects::{compress_and_save_mp3_with_effect, AVAILABLE_EFFECTS, is_valid_effect};
+use crate::audio_effects::compress_and_save_mp3_with_effect;
 
 /// A reqwest DNS resolver that resolves hostnames to IPv4 addresses only.
 ///
@@ -132,55 +131,10 @@ pub fn get_file_path_with_effect(voice: &str, text: &str, effect: &str) -> Strin
     file_path
 }
 
-/// Available voice effects that can be applied to TTS audio.
-/// Each maps to an ffmpeg audio filter chain.
-pub const AVAILABLE_EFFECTS: &[&str] = &[
-    "none",
-    "echo",
-    "reverb",
-    "bass",
-    "chipmunk",
-    "demon",
-    "telephone",
-    "underwater",
-];
 
-/// Get the ffmpeg filter string for a given effect name.
-/// Returns None for "none" (no filtering applied).
-pub fn get_effect_filter(effect: &str) -> Option<String> {
-    match effect {
-        "echo" => Some("aecho=0.8:0.9:1000:0.3".to_string()),
-        "reverb" => Some("aecho=0.7:0.5:1800:0.3,aecho=0.7:0.5:600:0.2".to_string()),
-        "bass" => Some("bass=g=10,equalizer=f=80:t=q:w=1:g=5".to_string()),
-        "chipmunk" => Some("asetrate=44100*1.5,aresample=44100,atempo=0.6667".to_string()),
-        // Demon voice: drops pitch to ~50% and keeps the audio slow so the
-        // speech actually sounds deep and rumbling instead of just sped-up.
-        // The previous filter did `asetrate=44100*0.6` (pitch down) then
-        // `aresample=44100,atempo=1.6667` which raised the tempo back to
-        // normal, so the net result was a bass-boosted speed-up rather than
-        // a demonic voice. We omit the atempo stage here, add light reverb
-        // for a cavernous feel, and boost the low end to thicken the tone.
-        "demon" => Some("asetrate=44100*0.5,aresample=44100,bass=g=18,aecho=0.8:0.7:1000:0.3".to_string()),
-        "telephone" => Some("highpass=f=300,lowpass=f=3400".to_string()),
-        "underwater" => Some("lowpass=f=400,bass=g=15,atempo=0.8".to_string()),
-        _ => None,
-    }
-}
 
-/// Check if an effect name is valid.
-pub fn is_valid_effect(effect: &str) -> bool {
-    AVAILABLE_EFFECTS.contains(&effect) || effect == "random"
-}
-
-#[allow(dead_code)]
 pub async fn compress_and_save_mp3(input_bytes: Vec<u8>, file_path: &str) -> std::io::Result<()> {
-    compress_and_save_mp3_with_effect(input_bytes, file_path, "none").await
-}
-
-/// Compress and save MP3 with an optional audio effect applied via pure Rust DSP.
-/// When effect is "none", the behavior is identical to compress_and_save_mp3.
-pub async fn compress_and_save_mp3_with_effect(input_bytes: Vec<u8>, file_path: &str, effect: &str) -> std::io::Result<()> {
-    compress_and_save_mp3_with_effect(input_bytes.to_vec(), file_path, effect)
+    crate::audio_effects::compress_and_save_mp3_with_effect(input_bytes, file_path, "none")
         .await
         .map_err(|e| std::io::Error::other(e.to_string()))
 }
