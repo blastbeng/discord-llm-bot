@@ -114,6 +114,10 @@ pub struct Data {
     /// Whether to speak an insulting goodbye phrase when a user leaves the
     /// bot's voice channel. Config: AUTO_JOIN_GOODBYE.
     pub auto_join_goodbye: bool,
+    /// Shared auto-join state for the "here I am" announcement (enable flag +
+    /// per-channel throttle), shared with the background scanner loop so both
+    /// owners stay in sync. Config: AUTO_JOIN_HERE_I_AM.
+    pub auto_join_shared: std::sync::Arc<auto_join::AutoJoinShared>,
     /// Per-channel timestamp of the last spoken welcome phrase, used to throttle
     /// so multiple rapid joins don't trigger an LLM call each time. Keyed by
     /// channel id so different channels get independent throttling.
@@ -409,6 +413,14 @@ async fn join(ctx: Context<'_>) -> Result<(), Error> {
                 ctx.data().lang.join_success.clone()
             };
             ctx.send(poise::CreateReply::default().content(&message).ephemeral(true)).await?;
+
+            // The bot just entered the channel — announce its arrival with an
+            // arrogant/insulting phrase (skipped when disabled, throttled, or
+            // when the LLM misbehaves; and never announced twice when the bot
+            // was already in the user's channel).
+            if bot_in_user_channel {
+                auto_join::speak_here_i_am(ctx.serenity_context(), ctx.data(), ctx.guild_id().unwrap(), channel_id).await;
+            }
         }
         Err(e) => {
             log::error!("Failed to join voice channel: {:?}", e);
@@ -2899,6 +2911,17 @@ async fn main() {
                 let auto_join_enabled = auto_join::config_enabled();
                 let auto_join_welcome = auto_join::config_welcome();
                 let auto_join_goodbye = auto_join::config_goodbye();
+                let auto_join_here_i_am = auto_join::config_here_i_am();
+
+                // Shared playback volume: one Arc shared by poise's Data
+                // (/volume command) and the background scanner loop, so the
+                // scanner's "here I am" announcements honor /volume too.
+                let volume_arc = std::sync::Arc::new(std::sync::Mutex::new(1.0));
+
+                // Shared auto-join state: cloned into both poise's Data
+                // (commands) and the background scanner loop, so throttling
+                // stays in sync across owners.
+                let auto_join_shared = std::sync::Arc::new(auto_join::AutoJoinShared::new(auto_join_here_i_am));
 
                 // If auto-join is enabled, spawn a background loop that watches
                 // each connected voice channel and disconnects the bot after it
@@ -2909,8 +2932,17 @@ async fn main() {
                         auto_join::idle_disconnect_loop(idle_ctx).await;
                     });
                     let scanner_ctx = ctx.clone();
+                    let scanner_shared = (*auto_join_shared).clone();
+                    let scanner_pool = db_pool.clone();
+                    let scanner_volume = volume_arc.clone();
                     tokio::spawn(async move {
-                        auto_join::channel_scanner_loop(scanner_ctx).await;
+                        auto_join::channel_scanner_loop(
+                            scanner_ctx,
+                            scanner_shared,
+                            scanner_pool,
+                            scanner_volume,
+                        )
+                        .await;
                     });
                 }
 
@@ -2921,11 +2953,12 @@ async fn main() {
                     db_pool,
                     lang,
                     error_tracker,
-                    volume: std::sync::Arc::new(std::sync::Mutex::new(1.0)),
+                    volume: volume_arc,
                     conversations: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                     auto_join_enabled,
                     auto_join_welcome,
                     auto_join_goodbye,
+                    auto_join_shared,
                     last_welcome: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                     last_goodbye: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                     soundboard_sessions: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),

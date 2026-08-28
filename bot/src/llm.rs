@@ -637,6 +637,185 @@ pub async fn translate(text: &str, target_lang: &str) -> Result<String, String> 
     Err(format!("All LLM endpoints failed. Last error: {}", last_error))
 }
 
+/// Generate a short, idiotic "here I am" announcement for when the bot itself
+/// joins a voice channel (via the auto-join scanner or the /join command).
+///
+/// The phrase reflects the bot's chaotic personality (as reflected by the
+/// database sentences) and may include an insult towards everyone in the
+/// channel. The response language follows the LANG env var ("eng"/"ita").
+///
+/// Uses the same endpoint-rotation and validation logic as `welcome`, but the
+/// username check is skipped (empty expected user) since the phrase is about
+/// the bot itself.
+pub async fn here_i_am(db_sentences: &[String]) -> Result<String, String> {
+    let endpoints = get_endpoint_configs();
+    if endpoints.is_empty() {
+        return Err("No LLM endpoints configured".to_string());
+    }
+
+    // Sample up to 30 sentences for style context.
+    let sentences_sample: Vec<&str> = db_sentences.iter().take(30).map(|s| s.as_str()).collect();
+    let sentences_text = sentences_sample
+        .iter()
+        .map(|s| format!("- {}", s))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let lang = std::env::var("LANG").unwrap_or_else(|_| "ita".to_string());
+    let system_prompt = match lang.as_str() {
+        "eng" => format!(
+            "You are a Discord voice bot with a chaotic, insulting, and idiotic sense of humor.\n\
+             You have just entered a voice channel where real people are already talking.\n\
+             Announce your arrival with a SINGLE short sentence (max 200 characters) that is \
+             funny, idiotic, arrogant, and a bit insulting towards the people present.\n\
+             You may mock or insult the people already in the channel for existing.\n\
+             Speak in first person as the bot (e.g. \"I\", \"Your lord has arrived\").\n\
+             Do NOT invent or mention any specific username.\n\
+             Respond in English. No markdown, no emojis, no multi-line. Just the spoken text.\n\
+             Here are example phrases that reflect your personality and style:\n{sentences_text}"
+        ),
+        _ => format!(
+            "Sei un bot vocale Discord con un senso dell'umorismo caotico, offensivo, idiota e un po' stronzo.\n\
+             Sei appena entrato in un canale vocale dove ci sono persone vere.\n\
+             Annuncia il tuo arrivo con UNA singola frase breve (massimo 200 caratteri) che sia divertente, \
+             idiota, arrogante e un po' offensiva verso chi c'è già nel canale.\n\
+             Puoi prendere in giro o insultare le persone già presenti nel canale.\n\
+             Parla in prima persona come bot (es. \"io\", \"il vostro signore è arrivato\").\n\
+             NON inventare né menzionare nomi utente specifici.\n\
+             Rispondi in italiano. Niente markdown, niente emoji, niente testo extra. Solo il testo da dire.\n\
+             Ecco alcune frasi di esempio che riflettono la tua personalità e il tuo stile:\n{sentences_text}"
+        ),
+    };
+
+    let client = llm_client();
+    let mut last_error = String::new();
+
+    for (i, endpoint) in endpoints.iter().enumerate() {
+        let url = format!("{}/chat/completions", endpoint.base_url.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "model": endpoint.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "Announce your arrival in the voice channel with an arrogant idiotic insult"}
+            ],
+            "stream": false,
+            "temperature": 1.0,
+            // Generous budget for reasoning models (see ask for details).
+            "max_tokens": 400
+        });
+
+        // Reasoning models intermittently return empty content — retry the same
+        // endpoint a couple of times before moving on (see ask for details).
+        let mut empty_retries: u32 = 0;
+        const MAX_EMPTY_RETRIES: u32 = 2;
+
+        let attempt = loop {
+            log::info!(
+                "llm::here_i_am: trying endpoint {}/{} (model: {}, url: {})",
+                i + 1,
+                endpoints.len(),
+                endpoint.model,
+                url
+            );
+
+            let resp = client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {}", endpoint.api_key))
+                .json(&body)
+                .send()
+                .await;
+
+            match resp {
+                Ok(r) => {
+                    let status = r.status();
+                    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                        break Err(format!("Rate limited at {}", endpoint.base_url));
+                    }
+                    if !status.is_success() {
+                        let body_text = r.text().await.unwrap_or_default();
+                        log::warn!("llm::here_i_am: endpoint {} returned {}: {}", endpoint.base_url, status, body_text);
+                        break Err(format!("HTTP {} at {}", status, endpoint.base_url));
+                    }
+                    let json: serde_json::Value = match r.json().await {
+                        Ok(j) => j,
+                        Err(e) => {
+                            break Err(format!("JSON parse error at {}: {}", endpoint.base_url, e));
+                        }
+                    };
+                    let content = json
+                        .get("choices")
+                        .and_then(|c| c.get(0))
+                        .and_then(|c| c.get("message"))
+                        .and_then(|m| m.get("content"))
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("");
+                    if content.is_empty() {
+                        // Reasoning models intermittently return empty content —
+                        // log the raw body and retry the same endpoint a couple
+                        // of times before moving on (see welcome for details).
+                        log::warn!(
+                            "llm::here_i_am: endpoint {} returned empty content, raw body: {}",
+                            endpoint.base_url,
+                            json
+                        );
+                        empty_retries += 1;
+                        if empty_retries <= MAX_EMPTY_RETRIES {
+                            log::warn!(
+                                "llm::here_i_am: endpoint {} returned empty content, retrying (attempt {}/{})",
+                                endpoint.base_url, empty_retries, MAX_EMPTY_RETRIES
+                            );
+                            continue;
+                        }
+                        break Err(format!("Empty response at {}", endpoint.base_url));
+                    }
+                    let validated = validate_phrase(content, "");
+                    match validated {
+                        Some(cleaned) => {
+                            log::info!("llm::here_i_am: success from {} (length: {})", endpoint.base_url, cleaned.len());
+                            let truncated = if cleaned.chars().count() > 200 {
+                                let s: String = cleaned.chars().take(200).collect();
+                                format!("{}...", s)
+                            } else {
+                                cleaned
+                            };
+                            break Ok(truncated);
+                        }
+                        None => {
+                            empty_retries += 1;
+                            if empty_retries <= MAX_EMPTY_RETRIES {
+                                log::warn!(
+                                    "llm::here_i_am: endpoint {} returned garbage/invalid response, retrying (attempt {}/{})",
+                                    endpoint.base_url, empty_retries, MAX_EMPTY_RETRIES
+                                );
+                                continue;
+                            }
+                            break Err(format!("Invalid/garbage response at {}", endpoint.base_url));
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "llm::here_i_am: endpoint {} connection failed (URL: {}), error: {}, trying next",
+                        endpoint.base_url, url, e
+                    );
+                    break Err(format!("Connection error at {}: {}", endpoint.base_url, e));
+                }
+            }
+        };
+
+        match attempt {
+            Ok(response) => return Ok(response),
+            Err(e) => {
+                last_error = e;
+                continue;
+            }
+        }
+    }
+
+    Err(format!("All LLM endpoints failed. Last error: {}", last_error))
+}
+
 /// Validate that an LLM-generated welcome/goodbye phrase is actually a spoken
 /// sentence and not a system artifact (e.g. "user safety: safe", metadata,
 /// classification labels, or empty content after stripping reasoning markers).
