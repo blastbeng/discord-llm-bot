@@ -271,13 +271,10 @@ async fn speak_welcome(
         return;
     };
 
-    // Pick a random effect (or none) for the welcome audio — makes the bot
-    // feel more alive and playful. AVAILABLE_EFFECTS includes "none", so both
-    // an effect and "no effect" can be chosen at random.
-    let effect = crate::audio_effects::AVAILABLE_EFFECTS
-        .choose(&mut rand::thread_rng())
-        .copied()
-        .unwrap_or("none");
+    // Welcome audio is always played without effects. The raw Google TTS bytes
+    // are written directly to disk (no MP3 round-trip) so playback is reliable
+    // and the welcome is always clear/intelligible.
+    let effect = "none";
 
     let tts_result = match tts::get_or_generate_tts_with_effect(&phrase, "Google", effect).await {
         Ok(r) => r,
