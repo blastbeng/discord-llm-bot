@@ -34,6 +34,14 @@ pub fn config_welcome() -> bool {
         .unwrap_or(true)
 }
 
+/// Whether to speak a goodbye/insult phrase when a user leaves the bot's
+/// voice channel. Defaults to true.
+pub fn config_goodbye() -> bool {
+    std::env::var("AUTO_JOIN_GOODBYE")
+        .map(|v| v.to_lowercase() == "true")
+        .unwrap_or(true)
+}
+
 /// How many seconds the bot may remain alone in a voice channel before
 /// disconnecting. Defaults to 120 (2 minutes).
 pub fn config_idle_disconnect_secs() -> u64 {
@@ -57,49 +65,67 @@ pub async fn handle_voice_state_update(
     }
 
     let Some(guild_id) = new.guild_id else { return };
-    // The user must have (just) entered a channel. If `channel_id` is None the
-    // user left voice entirely — nothing to act on.
-    let Some(new_channel) = new.channel_id else { return };
 
-    // Ignore non-moves (mute/deafen toggles, or any update where the channel
-    // didn't actually change).
-    if old.and_then(|o| o.channel_id) == Some(new_channel) {
-        return;
+    let old_channel = old.and_then(|o| o.channel_id);
+    let new_channel = new.channel_id;
+
+    // Determine what happened: join, leave, or move (leave+join in same event)
+    let left_channel = old_channel.filter(|c| new_channel != Some(*c));
+    let joined_channel = new_channel.filter(|c| old_channel != Some(*c));
+
+    // ── USER JOINED A CHANNEL ──────────────────────────────────────────────
+    if let Some(channel_id) = joined_channel {
+        // Best-effort display name for the welcome phrase.
+        let user_name = new
+            .user_id
+            .to_user(ctx.http.clone())
+            .await
+            .map(|u| u.name)
+            .unwrap_or_else(|_| "qualcuno".to_string());
+
+        let bot_channel = current_bot_channel(ctx, guild_id).await;
+
+        match bot_channel {
+            Some(c) if c == channel_id => {
+                // User joined the channel the bot is already in — welcome them.
+                log::info!("auto_join: user {} joined bot's channel {}, welcoming", user_name, channel_id);
+                speak_welcome(ctx, data, guild_id, channel_id, &user_name).await;
+            }
+            Some(c) => {
+                // Bot is in a different channel. Only follow the user if the bot is
+                // otherwise alone — never abandon people currently in the channel.
+                if count_humans(ctx, guild_id, c) == 0 && has_permission(ctx, guild_id, channel_id).await {
+                    log::info!("auto_join: bot alone, switching from {} to {}", c, channel_id);
+                    switch_to(ctx, guild_id, c, channel_id).await;
+                    speak_welcome(ctx, data, guild_id, channel_id, &user_name).await;
+                }
+            }
+            None => {
+                // Bot disconnected — connect to the user's channel and greet them.
+                if has_permission(ctx, guild_id, channel_id).await {
+                    log::info!("auto_join: bot disconnected, joining {} for user {}", channel_id, user_name);
+                    join_channel(ctx, guild_id, channel_id).await;
+                    speak_welcome(ctx, data, guild_id, channel_id, &user_name).await;
+                }
+            }
+        }
     }
 
-    // Best-effort display name for the welcome phrase. Fall back to a generic
-    // label if the user cannot be fetched.
-    let user_name = new
-        .user_id
-        .to_user(ctx.http.clone())
-        .await
-        .map(|u| u.name)
-        .unwrap_or_else(|_| "qualcuno".to_string());
+    // ── USER LEFT A CHANNEL ────────────────────────────────────────────────
+    if let Some(left_channel) = left_channel {
+        // Only insult if the user left the bot's current channel and goodbye is enabled.
+        let bot_channel = current_bot_channel(ctx, guild_id).await;
+        if bot_channel == Some(left_channel) && data.auto_join_goodbye {
+            // Fetch the user's name before they fully disconnect from the cache.
+            let user_name = new
+                .user_id
+                .to_user(ctx.http.clone())
+                .await
+                .map(|u| u.name)
+                .unwrap_or_else(|_| "qualcuno".to_string());
 
-    let bot_channel = current_bot_channel(ctx, guild_id).await;
-
-    match bot_channel {
-        Some(c) if c == new_channel => {
-            // User joined the channel the bot is already in — just welcome them.
-            log::info!("auto_join: user {} joined bot's channel {}, welcoming", user_name, new_channel);
-            speak_welcome(ctx, data, guild_id, new_channel, &user_name).await;
-        }
-        Some(c) => {
-            // Bot is in a different channel. Only follow the user if the bot is
-            // otherwise alone — never abandon people currently in the channel.
-            if count_humans(ctx, guild_id, c) == 0 && has_permission(ctx, guild_id, new_channel).await {
-                log::info!("auto_join: bot alone, switching from {} to {}", c, new_channel);
-                switch_to(ctx, guild_id, c, new_channel).await;
-                speak_welcome(ctx, data, guild_id, new_channel, &user_name).await;
-            }
-        }
-        None => {
-            // Bot disconnected — connect to the user's channel and greet them.
-            if has_permission(ctx, guild_id, new_channel).await {
-                log::info!("auto_join: bot disconnected, joining {} for user {}", new_channel, user_name);
-                join_channel(ctx, guild_id, new_channel).await;
-                speak_welcome(ctx, data, guild_id, new_channel, &user_name).await;
-            }
+            log::info!("auto_join: user {} left bot's channel {}, insulting", user_name, left_channel);
+            speak_goodbye(ctx, data, guild_id, left_channel, &user_name).await;
         }
     }
 }
@@ -295,6 +321,73 @@ async fn speak_welcome(
                 let vol = *data.volume.lock().unwrap();
                 let _ = track.set_volume(vol);
                 log::info!("auto_join: playing welcome for {} (effect: {}, volume: {}): {}", user_name, effect, vol, phrase);
+            }
+        }
+    }
+}
+
+/// Speak a short, insulting goodbye phrase when a user leaves the bot's voice
+/// channel. Throttled per-channel so rapid successive leaves don't spam the
+/// LLM. Mirrors `speak_welcome` but biases the LLM towards cheeky insults.
+async fn speak_goodbye(
+    ctx: &serenity::Context,
+    data: &Data,
+    guild_id: serenity::GuildId,
+    channel_id: serenity::ChannelId,
+    user_name: &str,
+) {
+    // Throttle: at most one goodbye per channel every 30 seconds.
+    const COOLDOWN: Duration = Duration::from_secs(30);
+    let now = Instant::now();
+    {
+        let mut last_goodbye = data.last_goodbye.lock().unwrap();
+        if let Some(last) = last_goodbye.get(&channel_id.get()) {
+            if now.duration_since(*last) < COOLDOWN {
+                return;
+            }
+        }
+        last_goodbye.insert(channel_id.get(), now);
+    }
+
+    let db_sentences = database::select_all_sentence(&data.db_pool).await.unwrap_or_default();
+
+    // Prefer LLM insult, fall back to a random DB sentence (often already
+    // insulting in tone, given the bot's database content).
+    let mut phrase = None;
+    if llm::is_configured() {
+        match llm::goodbye(user_name, &db_sentences).await {
+            Ok(p) => phrase = Some(p),
+            Err(e) => log::warn!("auto_join: goodbye LLM error: {}", e),
+        }
+    }
+    let phrase = match phrase {
+        Some(p) => p,
+        None => match db_sentences.choose(&mut rand::thread_rng()) {
+            Some(s) => s.clone(),
+            None => return,
+        },
+    };
+
+    // Goodbye is always played without effects for clarity and reliability.
+    let effect = "none";
+
+    let tts_result = match tts::get_or_generate_tts_with_effect(&phrase, "Google", effect).await {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("auto_join: TTS failed for goodbye: {}", e);
+            return;
+        }
+    };
+
+    if let Some(manager) = songbird::get(ctx).await {
+        if let Some(handler) = manager.get(guild_id) {
+            let mut h = handler.lock().await;
+            if h.current_channel().is_some() {
+                let source = songbird::input::File::new(tts_result.file_path.clone());
+                let track = h.play_only(source.into());
+                let vol = *data.volume.lock().unwrap();
+                let _ = track.set_volume(vol);
+                log::info!("auto_join: playing goodbye for {} (volume: {}): {}", user_name, vol, phrase);
             }
         }
     }

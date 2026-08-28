@@ -111,10 +111,16 @@ pub struct Data {
     /// Whether to speak a (humorous) welcome phrase when auto-joining/welcoming.
     /// Config: AUTO_JOIN_WELCOME.
     pub auto_join_welcome: bool,
+    /// Whether to speak an insulting goodbye phrase when a user leaves the
+    /// bot's voice channel. Config: AUTO_JOIN_GOODBYE.
+    pub auto_join_goodbye: bool,
     /// Per-channel timestamp of the last spoken welcome phrase, used to throttle
     /// so multiple rapid joins don't trigger an LLM call each time. Keyed by
     /// channel id so different channels get independent throttling.
     pub last_welcome: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, std::time::Instant>>>,
+    /// Per-channel timestamp of the last spoken goodbye phrase. Same throttling
+    /// rationale as `last_welcome`.
+    pub last_goodbye: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, std::time::Instant>>>,
     /// Active /soundboard sessions keyed by a short session id, so the
     /// pagination/play component buttons can resolve the stored search results.
     pub soundboard_sessions: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, soundboard::SoundboardSession>>>,
@@ -2892,6 +2898,7 @@ async fn main() {
 
                 let auto_join_enabled = auto_join::config_enabled();
                 let auto_join_welcome = auto_join::config_welcome();
+                let auto_join_goodbye = auto_join::config_goodbye();
 
                 // If auto-join is enabled, spawn a background loop that watches
                 // each connected voice channel and disconnects the bot after it
@@ -2914,7 +2921,9 @@ async fn main() {
                     conversations: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                     auto_join_enabled,
                     auto_join_welcome,
+                    auto_join_goodbye,
                     last_welcome: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    last_goodbye: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                     soundboard_sessions: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                 })
             })
