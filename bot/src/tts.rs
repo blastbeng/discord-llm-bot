@@ -307,8 +307,8 @@ async fn get_or_generate_tts_inner(text: &str, voice: &str, effect: &str) -> Res
                 tokio::fs::create_dir_all(&temp_dir).await?;
                 let temp_path = format!("{}/tts_{}_{}_{}.mp3", temp_dir, voice_token, effect, hash);
                 compress_and_save_mp3_with_effect(bytes.clone(), &temp_path, effect).await?;
-                // …and cache the plain audio for future reuse.
-                compress_and_save_mp3(bytes, &plain_path).await?;
+                // …and cache the raw Google TTS bytes for future reuse (no MP3 round-trip).
+                tokio::fs::write(&plain_path, &bytes).await?;
                 // Title is the spoken text, artist is the voice — so the audio
                 // shows e.g. "Google - <sentence>" instead of "Google - Google".
                 write_id3_tags(&plain_path, &actual_voice, text, text);
@@ -319,7 +319,8 @@ async fn get_or_generate_tts_inner(text: &str, voice: &str, effect: &str) -> Res
                 });
                 return Ok(TtsResult { file_path: temp_path, actual_voice });
             } else {
-                compress_and_save_mp3(bytes, &plain_path).await?;
+                // No effect - write raw Google TTS bytes directly to cache
+                tokio::fs::write(&plain_path, &bytes).await?;
                 // The title is the spoken text, the artist is the voice.
                 write_id3_tags(&plain_path, &actual_voice, text, text);
             }
@@ -335,10 +336,13 @@ async fn get_or_generate_tts_inner(text: &str, voice: &str, effect: &str) -> Res
     } else {
         format!("{}/tts_{}_{}.mp3", temp_dir, voice_token, hash)
     };
+    
     if apply_effect {
         compress_and_save_mp3_with_effect(bytes, &temp_path, effect).await?;
     } else {
-        compress_and_save_mp3(bytes, &temp_path).await?;
+        // No effect requested - write the raw Google TTS bytes directly to avoid
+        // unnecessary MP3 decode/encode round-trip which can cause audio corruption
+        tokio::fs::write(&temp_path, &bytes).await?;
     }
     let path_clone = temp_path.clone();
     tokio::spawn(async move {

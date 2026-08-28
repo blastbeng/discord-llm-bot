@@ -1,7 +1,7 @@
 # =============================================================================
 # Stage 1: Plan — generate cargo-chef recipe from Cargo.toml
 # =============================================================================
-FROM rust:1.88-slim AS chef
+FROM rust:1.89-slim AS chef
 RUN cargo install cargo-chef --locked
 WORKDIR /app
 

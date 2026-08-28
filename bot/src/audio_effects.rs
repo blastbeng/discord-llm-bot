@@ -238,7 +238,6 @@ fn apply_bass_boost(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Resul
             .chunks_exact(2)
             .map(|chunk| (chunk[0], chunk[1]))
             .unzip();
-        filter.process(&mut left);
         filter.process_stereo(&mut left, &mut right);
         output = left.into_iter().zip(right).flat_map(|(l, r)| [l, r]).collect();
     }
@@ -321,9 +320,7 @@ fn apply_telephone(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Result
             .chunks_exact(2)
             .map(|chunk| (chunk[0], chunk[1]))
             .unzip();
-        hp_filter.process(&mut left);
         hp_filter.process_stereo(&mut left, &mut right);
-        lp_filter.process(&mut left);
         lp_filter.process_stereo(&mut left, &mut right);
         output = left.into_iter().zip(right).flat_map(|(l, r)| [l, r]).collect();
     }
@@ -346,7 +343,6 @@ fn apply_underwater(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Resul
             .chunks_exact(2)
             .map(|chunk| (chunk[0], chunk[1]))
             .unzip();
-        filter.process(&mut left);
         filter.process_stereo(&mut left, &mut right);
         output = left.into_iter().zip(right).flat_map(|(l, r)| [l, r]).collect();
     }
