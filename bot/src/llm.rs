@@ -348,6 +348,7 @@ pub async fn goodbye(user: &str, db_sentences: &[String]) -> Result<String, Stri
              A user named \"{user}\" just left the voice channel like a coward.\n\
              Roast them with a SINGLE short sentence (max 200 characters) that is funny, \
              dismissive, and a bit idiotic/stronza. Mock the user for leaving.\n\
+             You MUST include the user's name \"{user}\" in your response.\n\
              Respond in English. No markdown, no emojis, no multi-line. Just the spoken text.\n\
              Here are example phrases that reflect your personality and style:\n{sentences_text}"
         ),
@@ -356,6 +357,7 @@ pub async fn goodbye(user: &str, db_sentences: &[String]) -> Result<String, Stri
              Un utente di nome \"{user}\" ha appena lasciato il canale vocale come un codardo.\n\
              Insultalo con UNA singola frase breve (massimo 200 caratteri) che sia divertente, \
              offensiva, idiota e un po' cattiva. Prendilo in giro per essere andato via.\n\
+             DEVI includere il nome dell'utente \"{user}\" nella tua risposta.\n\
              Rispondi in italiano. Niente markdown, niente emoji, niente testo extra. Solo il testo da dire.\n\
              Ecco alcune frasi di esempio che riflettono la tua personalità e il tuo stile:\n{sentences_text}"
         ),
@@ -370,7 +372,7 @@ pub async fn goodbye(user: &str, db_sentences: &[String]) -> Result<String, Stri
             "model": endpoint.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": format!("Roast {user} for leaving")}
+                {"role": "user", "content": format!("Roast {user} by name for leaving")}
             ],
             "stream": false,
             "temperature": 1.0,
@@ -438,7 +440,7 @@ pub async fn goodbye(user: &str, db_sentences: &[String]) -> Result<String, Stri
                         break Err(format!("Empty response at {}", endpoint.base_url));
                     }
 
-                    let validated = validate_phrase(content);
+                    let validated = validate_phrase(content, user);
                     match validated {
                         Some(cleaned) => {
                             log::info!("llm::goodbye: success from {} (length: {})", endpoint.base_url, cleaned.len());
@@ -638,10 +640,11 @@ pub async fn translate(text: &str, target_lang: &str) -> Result<String, String> 
 /// Validate that an LLM-generated welcome/goodbye phrase is actually a spoken
 /// sentence and not a system artifact (e.g. "user safety: safe", metadata,
 /// classification labels, or empty content after stripping reasoning markers).
+/// Also verifies that the user's name appears in the response.
 ///
 /// Returns the cleaned phrase if it passes validation, or `None` if the
-/// response looks like a system/garbage output.
-fn validate_phrase(raw: &str) -> Option<String> {
+/// response looks like a system/garbage output or doesn't contain the username.
+fn validate_phrase(raw: &str, expected_user: &str) -> Option<String> {
     let trimmed = raw.trim().trim_matches('"').trim_matches('\'').trim();
 
     if trimmed.is_empty() {
@@ -717,6 +720,18 @@ fn validate_phrase(raw: &str) -> Option<String> {
         return None;
     }
 
+    // Verify the user's name appears in the response (case-insensitive).
+    // The LLM is explicitly instructed to include it, so a missing name
+    // means the response is off-topic or garbage.
+    let user_lower = expected_user.to_lowercase();
+    if !lower.contains(&user_lower) && !expected_user.is_empty() {
+        log::warn!(
+            "llm::validate_phrase: rejected response '{}' (missing username '{}')",
+            cleaned, expected_user
+        );
+        return None;
+    }
+
     Some(cleaned)
 }
 
@@ -747,6 +762,7 @@ pub async fn welcome(user: &str, db_sentences: &[String]) -> Result<String, Stri
              A user named \"{user}\" just joined the voice channel.\n\
              Greet them with a SINGLE short sentence (max 200 characters) that is funny, \
              idiotic, insulting, and a bit stronza. Insult the user or mock them right away.\n\
+             You MUST include the user's name \"{user}\" in your response.\n\
              Respond in English. No markdown, no emojis, no multi-line. Just the spoken text.\n\
              Here are example phrases that reflect your personality and style:\n{sentences_text}"
         ),
@@ -755,6 +771,7 @@ pub async fn welcome(user: &str, db_sentences: &[String]) -> Result<String, Stri
              Un utente di nome \"{user}\" è appena entrato nel canale vocale.\n\
              Salutalo con UNA singola frase breve (massimo 200 caratteri) che sia divertente, \
              idiota, offensiva, e cattiva. Insulta subito l'utente o prendilo in giro.\n\
+             DEVI includere il nome dell'utente \"{user}\" nella tua risposta.\n\
              Rispondi in italiano. Niente markdown, niente emoji, niente testo extra. Solo il testo da dire.\n\
              Ecco alcune frasi di esempio che riflettono la tua personalità e il tuo stile:\n{sentences_text}"
         ),
@@ -769,7 +786,7 @@ pub async fn welcome(user: &str, db_sentences: &[String]) -> Result<String, Stri
             "model": endpoint.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": format!("Greet {user}")}
+                {"role": "user", "content": format!("Greet {user} by name with an insult")}
             ],
             "stream": false,
             "temperature": 0.9,
@@ -841,7 +858,7 @@ pub async fn welcome(user: &str, db_sentences: &[String]) -> Result<String, Stri
                         }
                         break Err(format!("Empty response at {}", endpoint.base_url));
                     }
-                    let validated = validate_phrase(content);
+                    let validated = validate_phrase(content, user);
                     match validated {
                         Some(cleaned) => {
                             log::info!("llm::welcome: success from {} (length: {})", endpoint.base_url, cleaned.len());
