@@ -59,8 +59,10 @@ async function connectToWhatsApp() {
             const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
             if (shouldReconnect) {
-                console.log('[bridge] Connection closed, reconnecting...');
-                connectToWhatsApp();
+                // Delay the reconnect so a persistent network outage doesn't
+                // turn into a tight reconnect loop.
+                console.log('[bridge] Connection closed, will reconnect in 5s...');
+                setTimeout(() => connectToWhatsApp(), 5000);
             } else {
                 console.log('[bridge] Connection closed permanently. Delete auth_state/ to re-scan QR.');
             }

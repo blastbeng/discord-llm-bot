@@ -127,8 +127,10 @@ pub async fn handle_voice_state_update(
                 // otherwise alone — never abandon people currently in the channel.
                 if count_humans(ctx, guild_id, c) == 0 && has_permission(ctx, guild_id, channel_id).await {
                     log::info!("auto_join: bot alone, switching from {} to {}", c, channel_id);
-                    switch_to(ctx, guild_id, c, channel_id).await;
-                    speak_welcome(ctx, data, guild_id, channel_id, &user_name).await;
+                    match switch_to(ctx, guild_id, c, channel_id).await {
+                        Ok(()) => speak_welcome(ctx, data, guild_id, channel_id, &user_name).await,
+                        Err(e) => log::warn!("auto_join: switch to {} failed: {}", channel_id, e),
+                    }
                 }
             }
             None => {
@@ -199,9 +201,17 @@ pub async fn idle_disconnect_loop(ctx: serenity::Context) {
                 let entry = alone_since.entry(guild_id.get()).or_insert_with(Instant::now);
                 if entry.elapsed() >= timeout {
                     let mut h = handler.lock().await;
-                    let _ = h.leave().await;
-                    alone_since.remove(&guild_id.get());
-                    log::info!("auto_join: disconnected from guild {} after {}s alone", guild_id, timeout.as_secs());
+                    match h.leave().await {
+                        Ok(()) => {
+                            drop(h);
+                            alone_since.remove(&guild_id.get());
+                            log::info!("auto_join: disconnected from guild {} after {}s alone", guild_id, timeout.as_secs());
+                        }
+                        Err(e) => {
+                            // Keep the entry so the next cycle retries the leave.
+                            log::warn!("auto_join: leave failed for guild {}: {} (will retry next cycle)", guild_id, e);
+                        }
+                    }
                 }
             } else {
                 alone_since.remove(&guild_id.get());
@@ -225,6 +235,9 @@ pub async fn channel_scanner_loop(ctx: serenity::Context, shared: AutoJoinShared
 
         // Get the bot's user ID once per tick (needed for filtering)
         let bot_user_id = cache.cache.current_user().id;
+
+        // Fetch the songbird manager once per tick instead of per guild.
+        let Some(manager) = songbird::get(&cache).await else { continue };
 
         // Iterate over all cached guilds
         for guild_id in cache.cache.guilds() {
@@ -252,8 +265,7 @@ pub async fn channel_scanner_loop(ctx: serenity::Context, shared: AutoJoinShared
                     .collect()
             };
 
-            // Step 2: now safe to await — no cache lock held.
-            let Some(manager) = songbird::get(&cache).await else { continue };
+            // Skip guilds the bot is already connected to.
             if manager.get(guild_id).is_some() {
                 continue;
             }
@@ -295,7 +307,7 @@ pub async fn channel_scanner_loop(ctx: serenity::Context, shared: AutoJoinShared
 }
 
 /// The channel the bot is currently connected to in a guild, if any.
-async fn current_bot_channel(
+pub async fn current_bot_channel(
     ctx: &serenity::Context,
     guild_id: serenity::GuildId,
 ) -> Option<serenity::ChannelId> {
@@ -309,9 +321,8 @@ async fn current_bot_channel(
     }
 }
 
-/// Number of non-bot voice-state users present in a channel.
-/// Count non-bot, non-bot-account humans in a voice channel.
-/// Filters out the local bot itself AND any Discord bot accounts.
+/// Number of real humans present in a voice channel.
+/// Filters out the local bot itself AND any other Discord bot accounts.
 fn count_humans(ctx: &serenity::Context, guild_id: serenity::GuildId, channel_id: serenity::ChannelId) -> usize {
     let Some(guild) = ctx.cache.guild(guild_id) else { return 0 };
     let bot_user_id = ctx.cache.current_user().id;
@@ -324,7 +335,6 @@ fn count_humans(ctx: &serenity::Context, guild_id: serenity::GuildId, channel_id
             if vs.channel_id != Some(channel_id) || vs.user_id == bot_user_id {
                 return false;
             }
-            // Exclude Discord bot accounts — only count real humans
             // Exclude Discord bot accounts — only count real humans
             if let Some(user) = ctx.cache.user(vs.user_id) {
                 !user.bot
@@ -374,21 +384,27 @@ async fn join_channel(
 }
 
 /// Leave the current channel and join a new one.
-async fn switch_to(
+pub async fn switch_to(
     ctx: &serenity::Context,
     guild_id: serenity::GuildId,
     _current: serenity::ChannelId,
     target: serenity::ChannelId,
-) {
-    if let Some(manager) = songbird::get(ctx).await {
-        if let Some(handler) = manager.get(guild_id) {
-            let mut h = handler.lock().await;
-            let _ = h.leave().await;
-            drop(h);
-            tokio::time::sleep(Duration::from_millis(500)).await;
+) -> Result<(), String> {
+    let manager = songbird::get(ctx).await
+        .ok_or_else(|| "Songbird not initialized".to_string())?;
+    if let Some(handler) = manager.get(guild_id) {
+        let mut h = handler.lock().await;
+        if let Err(e) = h.leave().await {
+            log::warn!("auto_join: switch_to: leave failed for guild {}: {}", guild_id, e);
         }
-        let _ = manager.join(guild_id, target).await;
+        drop(h);
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
+    manager
+        .join(guild_id, target)
+        .await
+        .map_err(|e| format!("join failed: {e}"))?;
+    Ok(())
 }
 
 /// Speak a welcome phrase in the given channel, throttled so rapid successive
