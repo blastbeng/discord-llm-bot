@@ -2,7 +2,7 @@
 # Docker image management script for the discord-llm-bot stack.
 #
 # The services pull their images from Docker Hub (docker-compose.yml uses
-# pull_policy: pull and has no build sections). This script gives you control
+# pull_policy: always and has no build sections). This script gives you control
 # over that workflow, and does everything ONE container at a time because we
 # host on a slow Raspberry Pi 5 (parallel builds thrash CPU/memory).
 #
