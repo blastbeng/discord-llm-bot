@@ -310,12 +310,30 @@ async fn current_bot_channel(
 }
 
 /// Number of non-bot voice-state users present in a channel.
+/// Count non-bot, non-bot-account humans in a voice channel.
+/// Filters out the local bot itself AND any Discord bot accounts.
 fn count_humans(ctx: &serenity::Context, guild_id: serenity::GuildId, channel_id: serenity::ChannelId) -> usize {
     let Some(guild) = ctx.cache.guild(guild_id) else { return 0 };
+    let bot_user_id = ctx.cache.current_user().id;
+
     guild
         .voice_states
         .values()
-        .filter(|vs| vs.channel_id == Some(channel_id) && vs.user_id != ctx.cache.current_user().id)
+        .filter(|vs| {
+            // Must be in the target channel and not the local bot
+            if vs.channel_id != Some(channel_id) || vs.user_id == bot_user_id {
+                return false;
+            }
+            // Exclude Discord bot accounts — only count real humans
+            // Exclude Discord bot accounts — only count real humans
+            if let Some(user) = ctx.cache.user(vs.user_id) {
+                !user.bot
+            } else {
+                // Not cached — conservatively count as human to avoid
+                // disconnecting when a human just joined and hasn't been cached yet.
+                true
+            }
+        })
         .count()
 }
 
