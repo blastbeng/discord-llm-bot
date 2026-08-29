@@ -12,15 +12,16 @@ services:
       dockerfile: Dockerfile
       network: host
 
-  whatsapp-bridge:
-    build:
-      context: ./wapp-bridge
-      dockerfile: Dockerfile
-
-  whatsapp-bot:
-    build:
-      context: ./wapp-bot
-      dockerfile: Dockerfile
+  # [TEMP-DISABLED] WhatsApp services are temporarily disabled. Uncomment to re-enable.
+  # whatsapp-bridge:
+  #   build:
+  #     context: ./wapp-bridge
+  #     dockerfile: Dockerfile
+  #
+  # whatsapp-bot:
+  #   build:
+  #     context: ./wapp-bot
+  #     dockerfile: Dockerfile
 
   telegram-bot:
     build:

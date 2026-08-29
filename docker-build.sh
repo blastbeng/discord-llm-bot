@@ -6,7 +6,7 @@
 # over that workflow, and does everything ONE container at a time because we
 # host on a slow Raspberry Pi 5 (parallel builds thrash CPU/memory).
 #
-# Build order: discord-llm-bot -> telegram-bot -> whatsapp-bridge -> whatsapp-bot
+# Build order: discord-llm-bot -> telegram-bot (whatsapp services temporarily disabled)
 #
 # Usage:
 #   ./docker-build.sh                 Pull the latest images from Docker Hub
@@ -30,8 +30,10 @@ export COMPOSE_DOCKER_CLI_BUILD=1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Processing order: discord -> telegram -> whatsapp-bridge -> whatsapp-bot
-SERVICES=(discord-llm-bot telegram-bot whatsapp-bridge whatsapp-bot)
+# Processing order: discord -> telegram.
+# Temporarily disabled (uncomment to re-enable, matching the compose files):
+#   whatsapp-bridge whatsapp-bot
+SERVICES=(discord-llm-bot telegram-bot)
 
 BUILD_ARGS=()
 FORCE_LOCAL=0
