@@ -361,7 +361,7 @@ pub async fn translate(text: &str, target_lang: &str) -> Result<String, String> 
             "stream": false,
             "temperature": 0.3,
             // Generous budget for reasoning models (see ask for details).
-            "max_tokens": 400
+            "max_tokens": 500
         });
 
         // Reasoning models intermittently return empty content — retry the same

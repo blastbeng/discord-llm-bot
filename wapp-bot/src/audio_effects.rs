@@ -438,6 +438,19 @@ pub const AVAILABLE_EFFECTS: &[&str] = &[
     "random",
 ];
 
+/// Effects that actually apply DSP processing (excludes the pass-through
+/// "none" and "random"). Used when resolving a "random" effect request so the
+/// user always gets a real effect instead of occasionally no effect at all.
+pub const ACTUAL_EFFECTS: &[&str] = &[
+    "echo",
+    "reverb",
+    "bass",
+    "chipmunk",
+    "demon",
+    "telephone",
+    "underwater",
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;

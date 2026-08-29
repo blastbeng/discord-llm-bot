@@ -397,6 +397,15 @@ pub async fn compress_and_save_mp3_with_effect(
     file_path: &str,
     effect: &str,
 ) -> Result<(), AudioEffectError> {
+    // Skip encoding when no effect is applied to avoid unnecessary decode/encode round-trip
+    if effect == "none" {
+        if let Some(parent) = std::path::Path::new(file_path).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        tokio::fs::write(file_path, input_bytes).await?;
+        return Ok(());
+    }
+
     let sample_rate = 24000;
     let _channels = 1;
 
@@ -428,6 +437,19 @@ pub const AVAILABLE_EFFECTS: &[&str] = &[
     "telephone",
     "underwater",
     "random",
+];
+
+/// Effects that actually apply DSP processing (excludes the pass-through
+/// "none" and "random"). Used when resolving a "random" effect request so the
+/// user always gets a real effect instead of occasionally no effect at all.
+pub const ACTUAL_EFFECTS: &[&str] = &[
+    "echo",
+    "reverb",
+    "bass",
+    "chipmunk",
+    "demon",
+    "telephone",
+    "underwater",
 ];
 
 #[cfg(test)]

@@ -498,7 +498,7 @@ async fn speak(
     // Resolve "random" effect to a random choice
     let actual_effect = if effect == "random" {
         let mut rng = rand::thread_rng();
-        crate::audio_effects::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::ACTUAL_EFFECTS.choose(&mut rng).unwrap().to_string()
     } else {
         effect
     };
@@ -663,7 +663,7 @@ async fn random(
     // Resolve "random" effect to a random choice
     let actual_effect = if effect == "random" {
         let mut rng = rand::thread_rng();
-        crate::audio_effects::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::ACTUAL_EFFECTS.choose(&mut rng).unwrap().to_string()
     } else {
         effect
     };
@@ -968,7 +968,7 @@ async fn ask(
     // Resolve "random" effect to a random choice
     let actual_effect = if effect == "random" {
         let mut rng = rand::thread_rng();
-        crate::audio_effects::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::ACTUAL_EFFECTS.choose(&mut rng).unwrap().to_string()
     } else {
         effect
     };
@@ -1190,7 +1190,7 @@ async fn translate(
 
     let actual_effect = if effect == "random" {
         let mut rng = rand::thread_rng();
-        crate::audio_effects::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::ACTUAL_EFFECTS.choose(&mut rng).unwrap().to_string()
     } else {
         effect
     };
@@ -1365,7 +1365,7 @@ async fn joke(
 
     let actual_effect = if effect == "random" {
         let mut rng = rand::thread_rng();
-        crate::audio_effects::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::ACTUAL_EFFECTS.choose(&mut rng).unwrap().to_string()
     } else {
         effect
     };
@@ -1977,7 +1977,7 @@ async fn soundboard(
     let effect = effect.unwrap_or_else(|| "none".to_string());
     let actual_effect = if effect == "random" {
         let mut rng = rand::thread_rng();
-        crate::audio_effects::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::ACTUAL_EFFECTS.choose(&mut rng).unwrap().to_string()
     } else {
         effect
     };
