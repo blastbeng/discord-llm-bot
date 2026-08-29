@@ -8,6 +8,7 @@ mod llm;
 mod soundboard;
 mod tts;
 
+mod voice_eavesdrop;
 use error::{ErrorTracker, Logger};
 use poise::serenity_prelude as serenity;
 use poise::serenity_prelude::Mentionable;
@@ -128,6 +129,9 @@ pub struct Data {
     /// Active /soundboard sessions keyed by a short session id, so the
     /// pagination/play component buttons can resolve the stored search results.
     pub soundboard_sessions: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, soundboard::SoundboardSession>>>,
+    /// Shared state for the voice eavesdrop feature (random timeout scheduler).
+    pub voice_eavesdrop: std::sync::Arc<std::sync::RwLock<voice_eavesdrop::VoiceEavesdropState>>,
+    /// Shared state for the voice eavesdrop feature (random timeout scheduler).
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -646,7 +650,7 @@ async fn random(
     // the shortcut only fires when the effect resolves to "none".
     let voice_explicitly_set = voice.is_some();
     let voice = voice.unwrap_or_else(|| "Google".to_string());
-    let effect = effect.unwrap_or_else(|| "random".to_string());
+    let effect = effect.unwrap_or_else(|| "none".to_string());
     let actual_voice = if voice == "random" {
         let mut rng = rand::thread_rng();
         tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()

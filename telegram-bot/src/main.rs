@@ -17,7 +17,6 @@ use std::sync::Arc;
 
 use rand::seq::SliceRandom;
 use teloxide::prelude::*;
-use teloxide::types::{ChatId, ChatKind, InputFile, Message};
 
 /// Shared application state, mirroring the WhatsApp bot's `AppState`.
 struct AppState {
@@ -30,13 +29,11 @@ struct AppState {
     /// Allowlist of chat/group IDs the bot is allowed to operate in.
     /// `None` means all chats are allowed (no restriction).
     allowed_chats: Option<std::collections::HashSet<i64>>,
-}
 
 /// Whether the Telegram bot is enabled. When not "true", the process starts
 /// and stays idle (no polling, no processing) so the container stays healthy.
 fn config_enabled() -> bool {
     env::var("TEL_ENABLED").unwrap_or_else(|_| "false".to_string()).to_lowercase() == "true"
-}
 
 /// Parse the `TEL_ALLOWED_CHATS` allowlist (comma-separated chat/group IDs).
 /// Returns `None` when the variable is empty/unset, meaning all chats are
@@ -51,10 +48,7 @@ fn config_allowed_chats() -> Option<std::collections::HashSet<i64>> {
         .collect();
     if ids.is_empty() {
         None
-    } else {
         Some(ids)
-    }
-}
 
 #[tokio::main]
 async fn main() {
@@ -74,7 +68,6 @@ async fn main() {
     let db_path = db_url.strip_prefix("sqlite:").unwrap_or(&db_url);
     if !tokio::fs::try_exists(db_path).await.unwrap_or(false) {
         tokio::fs::File::create(db_path).await.expect("Failed to create database file");
-    }
     let db_pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(
@@ -91,14 +84,10 @@ async fn main() {
 
     if enabled {
         database::populate_db_if_empty(&db_pool).await.expect("Database population failed");
-    }
 
     let allowed_chats = config_allowed_chats();
     if let Some(ids) = &allowed_chats {
-        log::info!("telegram-bot: restricting to allowed chats: {:?}", ids);
-    } else {
         log::info!("telegram-bot: TEL_ALLOWED_CHATS not set — all chats allowed");
-    }
 
     let state = Arc::new(AppState {
         db_pool,
@@ -106,15 +95,12 @@ async fn main() {
         conversations: std::sync::Mutex::new(std::collections::HashMap::new()),
         enabled,
         allowed_chats,
-    });
 
     if !enabled {
         log::info!("telegram-bot: TEL_ENABLED is not 'true' — staying idle (no polling, no processing). Set TEL_ENABLED=true in .env.telegram to enable.");
         // Keep the process alive so the container stays healthy.
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
-        }
-    }
 
     let token = env::var("TELOXIDE_TOKEN").expect("TELOXIDE_TOKEN must be set");
     let bot = Bot::new(token);
@@ -125,18 +111,13 @@ async fn main() {
         let state = state.clone();
         move |bot: Bot, msg: Message| {
             let state = state.clone();
-            async move { handle_message(bot, msg, state).await }
-        }
-    };
 
     teloxide::repl(bot, handler).await;
-}
 
 /// Dispatch an incoming message to the appropriate command handler.
 async fn handle_message(bot: Bot, msg: Message, state: Arc<AppState>) -> ResponseResult<()> {
     if !state.enabled {
         return Ok(());
-    }
     let chat_id = msg.chat.id;
 
     // Enforce the chat/group allowlist. When TEL_ALLOWED_CHATS is set, only
@@ -144,19 +125,14 @@ async fn handle_message(bot: Bot, msg: Message, state: Arc<AppState>) -> Respons
     // is ignored silently (mirrors the WhatsApp bot's allowed-groups filter).
     if let Some(allowed) = &state.allowed_chats {
         if !allowed.contains(&chat_id.0) {
-            log::debug!("telegram-bot: ignoring message from non-allowed chat {}", chat_id);
             return Ok(());
-        }
-    }
 
-    let Some(text) = msg.text() else { return Ok(()) };
     let text = text.trim();
 
     // Parse "/command" or "/command@BotName args".
     let (command, args) = match text.split_once(' ') {
         Some((cmd, rest)) => (cmd, rest.trim().to_string()),
         None => (text, String::new()),
-    };
     // Strip any @botname suffix from the command.
     let command = command.split('@').next().unwrap_or(command).to_lowercase();
 
@@ -166,23 +142,18 @@ async fn handle_message(bot: Bot, msg: Message, state: Arc<AppState>) -> Respons
         "/ask" | "/a" => {
             let r = cmd_ask(&state, &chat_id.to_string(), &args).await;
             let _ = bot.send_message(chat_id, r).await;
-        }
         "/translate" | "/t" => {
             let r = cmd_translate(&state, &args).await;
             let _ = bot.send_message(chat_id, r).await;
-        }
         "/joke" | "/j" => {
             let r = cmd_joke(&state).await;
             let _ = bot.send_message(chat_id, r).await;
-        }
         "/stats" => {
             let r = cmd_stats(&state).await;
             let _ = bot.send_message(chat_id, r).await;
-        }
         "/help" | "/h" | "/start" => {
             let r = cmd_help(&state).await;
             let _ = bot.send_message(chat_id, r).await;
-        }
         _ => {
             // In a private (direct) chat, treat any non-command message as an
             // /ask query — the user is chatting with the bot directly, so a
@@ -192,11 +163,7 @@ async fn handle_message(bot: Bot, msg: Message, state: Arc<AppState>) -> Respons
             if !text.starts_with('/') && matches!(msg.chat.kind, ChatKind::Private(_)) {
                 let r = cmd_ask(&state, &chat_id.to_string(), text).await;
                 let _ = bot.send_message(chat_id, r).await;
-            }
-        }
-    }
     Ok(())
-}
 
 // ─── Helpers ──────────────────────────────────────────────────────
 
@@ -209,15 +176,10 @@ async fn pick_cached_mp3() -> Option<String> {
         if path.extension().is_some_and(|ext| ext == "mp3") {
             if let Some(s) = path.to_str() {
                 mp3_files.push(s.to_string());
-            }
-        }
-    }
     if mp3_files.is_empty() {
         return None;
-    }
     let mut rng = rand::thread_rng();
     mp3_files.choose(&mut rng).map(|s| s.clone())
-}
 
 /// Parse "text" / "text --voice X --effect Y" into (text, voice, effect).
 fn parse_voice_effect(args: &str) -> (String, String, String) {
@@ -233,34 +195,21 @@ fn parse_voice_effect(args: &str) -> (String, String, String) {
                 if i + 1 < parts.len() && !parts[i + 1].starts_with("--") {
                     voice = parts[i + 1].to_string();
                     i += 2;
-                } else {
                     i += 1;
-                }
-            }
             "--effect" => {
                 if i + 1 < parts.len() && !parts[i + 1].starts_with("--") {
                     effect = parts[i + 1].to_string();
                     i += 2;
-                } else {
                     i += 1;
-                }
-            }
             token => {
                 text_parts.push(token.to_string());
                 i += 1;
-            }
-        }
-    }
 
     (text_parts.join(" "), voice, effect)
-}
 
 /// Send an audio file to the chat.
 async fn send_audio(bot: &Bot, chat_id: ChatId, file_path: &str) {
     if let Err(e) = bot.send_audio(chat_id, InputFile::file(file_path.to_string())).await {
-        log::error!("telegram-bot: failed to send audio {}: {}", file_path, e);
-    }
-}
 
 // ─── Commands ─────────────────────────────────────────────────────
 
@@ -270,56 +219,36 @@ async fn cmd_speak(bot: &Bot, chat_id: ChatId, state: &AppState, args: &str) {
     if text.is_empty() {
         let _ = bot.send_message(chat_id, &state.lang.speak_usage).await;
         return;
-    }
     if text.chars().count() > 200 {
         let _ = bot.send_message(chat_id, &state.lang.text_too_long).await;
         return;
-    }
 
     let actual_voice = if voice == "random" {
         let mut rng = rand::thread_rng();
         tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
-    } else {
         voice
-    };
     if !tts::is_valid_voice(&actual_voice) {
         let _ = bot.send_message(chat_id, &state.lang.invalid_voice).await;
         return;
-    }
 
     let actual_effect = if effect == "random" {
         let mut rng = rand::thread_rng();
         crate::audio_effects::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
-    } else {
         effect
-    };
     if !crate::audio_effects::is_valid_effect(&actual_effect) {
         let _ = bot.send_message(chat_id, &state.lang.invalid_effect).await;
         return;
-    }
 
     match tts::get_or_generate_tts_with_effect(&text, &actual_voice, &actual_effect).await {
         Ok(tts_result) => {
             if let Err(e) = database::insert_sentence(&state.db_pool, &text).await {
-                log::error!("Failed to insert sentence: {}", e);
-            }
             send_audio(bot, chat_id, &tts_result.file_path).await;
-        }
         Err(e) => {
-            log::error!("TTS generation failed: {}", e);
             let _ = bot.send_message(chat_id, &state.lang.error_generating_audio).await;
-        }
-    }
-}
 
 async fn cmd_random(bot: &Bot, chat_id: ChatId, state: &AppState, args: &str) {
     let (search_text, voice, mut effect) = parse_voice_effect(args);
 
-    // Mirror the Discord/WhatsApp bot: default to a random effect when the
-    // user doesn't pick one explicitly.
-    if effect == "none" && !args.contains("--effect") {
-        effect = "random".to_string();
-    }
 
     let voice_explicitly_set = args.contains("--voice");
     let save_mp3 = std::env::var("SAVE_MP3_ON_DISK")
@@ -330,171 +259,113 @@ async fn cmd_random(bot: &Bot, chat_id: ChatId, state: &AppState, args: &str) {
     // (explicitly "none"), no search text, and disk caching is enabled.
     if !voice_explicitly_set && effect == "none" && search_text.is_empty() && save_mp3 {
         if let Some(chosen) = pick_cached_mp3().await {
-            log::info!("telegram-bot random: picked cached MP3: {}", chosen);
             send_audio(bot, chat_id, &chosen).await;
             return;
-        }
-    }
 
     // Fetch sentences from database.
     let sentences = if !search_text.is_empty() {
         match database::select_like_sentence(&state.db_pool, &search_text).await {
             Ok(s) => s,
             Err(e) => {
-                log::error!("Database error: {}", e);
                 let _ = bot.send_message(chat_id, &state.lang.database_error).await;
                 return;
-            }
-        }
-    } else {
         match database::select_all_sentence(&state.db_pool).await {
             Ok(s) => s,
             Err(e) => {
-                log::error!("Database error: {}", e);
                 let _ = bot.send_message(chat_id, &state.lang.database_error).await;
                 return;
-            }
-        }
-    };
 
     if sentences.is_empty() {
         if search_text.is_empty() {
             let _ = bot.send_message(chat_id, &state.lang.no_sentences_found).await;
-        } else {
-            let _ = bot.send_message(chat_id, state.lang.no_sentence_with_text.replacen("{}", &search_text, 1)).await;
-        }
         return;
-    }
 
     let random_sentence = {
         let mut rng = rand::thread_rng();
         sentences.choose(&mut rng).unwrap().to_string()
-    };
 
     // Record that this sentence was spoken (increments usage_count).
     if let Err(e) = database::insert_sentence(&state.db_pool, &random_sentence).await {
-        log::error!("telegram-bot random: failed to record sentence usage: {}", e);
-    }
 
     // Google TTS truncates on text longer than ~200 chars.
     let tts_text: String = if random_sentence.chars().count() > 200 {
         let truncated: String = random_sentence.chars().take(200).collect();
-        format!("{truncated}...")
-    } else {
         random_sentence.clone()
-    };
 
     let actual_voice = if voice == "random" {
         let mut rng = rand::thread_rng();
         tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
-    } else {
         voice
-    };
     if !tts::is_valid_voice(&actual_voice) {
         let _ = bot.send_message(chat_id, &state.lang.invalid_voice).await;
         return;
-    }
 
     let actual_effect = if effect == "random" {
         let mut rng = rand::thread_rng();
         crate::audio_effects::AVAILABLE_EFFECTS.choose(&mut rng).unwrap().to_string()
-    } else {
         effect
-    };
     if !crate::audio_effects::is_valid_effect(&actual_effect) {
         let _ = bot.send_message(chat_id, &state.lang.invalid_effect).await;
         return;
-    }
 
     match tts::get_or_generate_tts_with_effect(&tts_text, &actual_voice, &actual_effect).await {
         Ok(tts_result) => {
             send_audio(bot, chat_id, &tts_result.file_path).await;
-        }
         Err(e) => {
-            log::error!("TTS generation failed: {}", e);
             let _ = bot.send_message(chat_id, &state.lang.error_generating_audio).await;
-        }
-    }
-}
 
 async fn cmd_ask(state: &AppState, chat_id: &str, args: &str) -> String {
     if !llm::is_configured() {
         return state.lang.ask_not_configured.clone();
-    }
 
     let (text, _voice, _effect) = parse_voice_effect(args);
 
     if text.is_empty() {
         return state.lang.ask_usage.clone();
-    }
     if text.chars().count() > 500 {
         return state.lang.ask_text_too_long.clone();
-    }
 
     let db_sentences = database::select_all_sentence(&state.db_pool).await.unwrap_or_default();
 
     let history = {
         let conversations = state.conversations.lock().unwrap();
         conversations.get(chat_id).cloned().unwrap_or_default()
-    };
 
     match llm::ask(&text, &db_sentences, "Telegram Bot", &history).await {
         Ok(response) => {
-            log::info!("telegram-bot: LLM response: {:?}", response);
 
             if let Err(e) = database::insert_sentence(&state.db_pool, &response).await {
-                log::error!("Failed to insert LLM response: {}", e);
-            }
 
             {
                 let mut conversations = state.conversations.lock().unwrap();
                 let history = conversations.entry(chat_id.to_string()).or_insert_with(Vec::new);
-                history.push(llm::ConversationMessage { role: "user".to_string(), content: text.clone() });
-                history.push(llm::ConversationMessage { role: "assistant".to_string(), content: response.clone() });
                 if history.len() > 20 {
                     let start = history.len() - 20;
                     history.drain(0..start);
-                }
-            }
 
             response
-        }
         Err(e) => {
-            log::error!("LLM failed: {}", e);
             state.lang.ai_unavailable.clone()
-        }
-    }
-}
 
 async fn cmd_translate(state: &AppState, args: &str) -> String {
     if !llm::is_configured() {
         return state.lang.ask_not_configured.clone();
-    }
 
     let parts: Vec<&str> = args.rsplitn(2, ' ').collect();
     if parts.len() < 2 {
         return state.lang.translate_usage.clone();
-    }
     let target_lang = parts[0].trim().to_string();
     let text = parts[1].trim().to_string();
 
     if text.is_empty() || target_lang.is_empty() {
         return state.lang.translate_usage.clone();
-    }
 
     match llm::translate(&text, &target_lang).await {
         Ok(response) => {
             if let Err(e) = database::insert_sentence(&state.db_pool, &response).await {
-                log::error!("Failed to insert translation: {}", e);
-            }
             response
-        }
         Err(e) => {
-            log::error!("Translation failed: {}", e);
             state.lang.translation_failed.clone()
-        }
-    }
-}
 
 async fn cmd_joke(state: &AppState) -> String {
     // JokeAPI has no Italian jokes, so fetch English ones and translate to the
@@ -507,40 +378,25 @@ async fn cmd_joke(state: &AppState) -> String {
     {
         Ok(c) => c,
         Err(e) => {
-            log::error!("telegram-bot joke: failed to build client: {}", e);
             return state.lang.joke_error.clone();
-        }
-    };
 
     let joke_text = match client.get(joke_url).send().await {
         Ok(resp) => {
             if !resp.status().is_success() {
                 return state.lang.joke_error.clone();
-            }
             match resp.json::<serde_json::Value>().await {
                 Ok(json) => {
                     if json.get("error").is_some_and(|e| e.as_bool().unwrap_or(false)) {
                         return state.lang.joke_error.clone();
-                    }
                     let setup = json.get("setup").and_then(|s| s.as_str()).unwrap_or("");
                     let delivery = json.get("delivery").and_then(|d| d.as_str()).unwrap_or("");
                     let single = json.get("joke").and_then(|j| j.as_str()).unwrap_or("");
                     if !setup.is_empty() && !delivery.is_empty() {
-                        format!("{}. {}", setup, delivery)
-                    } else if !single.is_empty() {
                         single.to_string()
-                    } else {
                         return state.lang.joke_error.clone();
-                    }
-                }
                 Err(_) => return state.lang.joke_error.clone(),
-            }
-        }
         Err(e) => {
-            log::error!("JokeAPI request failed: {}", e);
             return state.lang.joke_error.clone();
-        }
-    };
 
     // Translate the joke to the configured language when it isn't English and
     // an LLM is available (JokeAPI only serves English + a few non-Italian
@@ -548,10 +404,7 @@ async fn cmd_joke(state: &AppState) -> String {
     let joke_text = translate_joke_to_lang(&joke_text).await;
 
     if let Err(e) = database::insert_sentence(&state.db_pool, &joke_text).await {
-        log::error!("Failed to insert joke: {}", e);
-    }
     joke_text
-}
 
 /// Translate a joke to the bot's configured language via the LLM, if needed.
 /// JokeAPI only serves a fixed set of languages (no Italian), so for any
@@ -562,21 +415,14 @@ async fn translate_joke_to_lang(joke: &str) -> String {
     let target = match lang.as_str() {
         "eng" => return joke.to_string(), // English — JokeAPI already returned it
         _ => "it",                        // e.g. ita → translate to Italian
-    };
     if !llm::is_configured() {
         return joke.to_string();
-    }
     match llm::translate(joke, target).await {
         Ok(translated) => translated,
         Err(e) => {
-            log::error!("telegram-bot joke: failed to translate joke: {}", e);
             joke.to_string()
-        }
-    }
-}
 
 async fn cmd_stats(state: &AppState) -> String {
-    let db_stats = database::get_db_statistics(&state.db_pool).await.unwrap_or_else(|e| format!("Error: {}", e));
 
     let cache_info = match tokio::fs::read_dir("audios").await {
         Ok(mut entries) => {
@@ -587,38 +433,22 @@ async fn cmd_stats(state: &AppState) -> String {
                     count += 1;
                     if let Ok(meta) = entry.metadata().await {
                         size_bytes += meta.len();
-                    }
-                }
-            }
             let size_mb = size_bytes as f64 / (1024.0 * 1024.0);
-            format!("{} files ({:.1} MB)", count, size_mb)
-        }
         Err(_) => "N/A".to_string(),
-    };
 
     let llm_status = if llm::is_configured() {
         let endpoints = env::var("LLM_ENDPOINTS").unwrap_or_default();
         let count = endpoints.split(',').filter(|s| !s.trim().is_empty()).count();
-        format!("{} {}", count, state.lang.endpoint_label)
-    } else {
         state.lang.not_configured.clone()
-    };
 
     format!(
-        "{}\n\n🗄️ {}: {}\n🎵 {}: {}\n🤖 {}: {}",
         state.lang.stats_title,
         state.lang.stats_database, db_stats,
         state.lang.stats_cache, cache_info,
         state.lang.stats_llm, llm_status,
     )
-}
 
 async fn cmd_help(state: &AppState) -> String {
-    let voices = tts::AVAILABLE_VOICES.iter().map(|v| format!("`{}`", v)).collect::<Vec<_>>().join(", ");
-    let effects = crate::audio_effects::AVAILABLE_EFFECTS.iter().map(|e| format!("`{}`", e)).collect::<Vec<_>>().join(", ");
     format!(
-        "{}{}",
         state.lang.help_title,
-        state.lang.help_text.replacen("{}", &voices, 1).replacen("{}", &effects, 1),
     )
-}

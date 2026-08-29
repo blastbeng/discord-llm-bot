@@ -318,9 +318,6 @@ async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) {
 async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
     let (search_text, voice, mut effect) = parse_voice_effect(args);
 
-    // Mirror the Discord bot's /random: when the user does not explicitly
-    // pick an effect, apply a random one. This keeps both bots' behaviour
-    // consistent.
     if effect == "none" && !args.contains("--effect") {
         effect = "random".to_string();
     }
