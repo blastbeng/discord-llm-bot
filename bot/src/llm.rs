@@ -1,5 +1,7 @@
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
+use sqlx::SqlitePool;
 static LLM_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 /// A reqwest DNS resolver that resolves hostnames to IPv4 addresses only.
@@ -126,7 +128,7 @@ pub async fn ask(
         .join("\n");
 
     let lang = std::env::var("LANG").unwrap_or_else(|_| "ita".to_string());
-    let (lang_instruction, personality) = match lang.as_str() {
+    let (lang_instruction, personality) = match &*lang {
         "eng" => (
             "Respond in English.",
             "You are a humorous Discord voice bot. Keep your answer to a single short sentence (max 200 characters). Be funny and casual.",
@@ -342,7 +344,7 @@ pub async fn goodbye(user: &str, db_sentences: &[String]) -> Result<String, Stri
         .join("\n");
 
     let lang = std::env::var("LANG").unwrap_or_else(|_| "ita".to_string());
-    let system_prompt = match lang.as_str() {
+    let system_prompt = match &*lang {
         "eng" => format!(
             "You are a Discord voice bot with a dry, insulting, and chaotic sense of humor.\n\
              A user named \"{user}\" just left the voice channel like a coward.\n\
@@ -497,7 +499,7 @@ pub async fn translate(text: &str, target_lang: &str) -> Result<String, String> 
     }
 
     let lang = std::env::var("LANG").unwrap_or_else(|_| "ita".to_string());
-    let bot_lang = match lang.as_str() {
+    let bot_lang = match &*lang {
         "eng" => "English",
         _ => "Italian",
     };
@@ -662,7 +664,7 @@ pub async fn here_i_am(db_sentences: &[String]) -> Result<String, String> {
         .join("\n");
 
     let lang = std::env::var("LANG").unwrap_or_else(|_| "ita".to_string());
-    let system_prompt = match lang.as_str() {
+    let system_prompt = match &*lang {
         "eng" => format!(
             "You are a Discord voice bot with a chaotic, insulting, and idiotic sense of humor.\n\
              You have just entered a voice channel where real people are already talking.\n\
@@ -935,7 +937,7 @@ pub async fn welcome(user: &str, db_sentences: &[String]) -> Result<String, Stri
         .join("\n");
 
     let lang = std::env::var("LANG").unwrap_or_else(|_| "ita".to_string());
-    let system_prompt = match lang.as_str() {
+    let system_prompt = match &*lang {
         "eng" => format!(
             "You are a Discord voice bot with a chaotic, insulting, and idiotic sense of humor.\n\
              A user named \"{user}\" just joined the voice channel.\n\
@@ -1065,6 +1067,156 @@ pub async fn welcome(user: &str, db_sentences: &[String]) -> Result<String, Stri
                 Err(e) => {
                     log::warn!(
                         "llm::welcome: endpoint {} connection failed (URL: {}), error: {}, trying next",
+                        endpoint.base_url, url, e
+                    );
+                    break Err(format!("Connection error at {}: {}", endpoint.base_url, e));
+                }
+            }
+        };
+
+        match attempt {
+            Ok(response) => return Ok(response),
+            Err(e) => {
+                last_error = e;
+                continue;
+            }
+        }
+    }
+
+    Err(format!("All LLM endpoints failed. Last error: {}", last_error))
+}
+/// Fetch a random sample of sentences from the database for style context.
+pub async fn fetch_random_sentences(pool: &SqlitePool, count: i64) -> Result<Vec<String>, String> {
+    let sentences: Vec<String> = sqlx::query_scalar(
+        "SELECT sentence FROM sentences ORDER BY RANDOM() LIMIT ?"
+    )
+    .bind(count)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("Failed to fetch random sentences: {}", e))?;
+    Ok(sentences)
+}
+
+/// Generate a funny, idiotic, insulting response for the voice eavesdrop feature.
+/// The bot "overhears" a random user and roasts them.
+pub async fn eavesdrop_response(
+    user: &str,
+    db_sentences: &[String],
+    lang: &str,
+) -> Result<String, String> {
+    let endpoints = get_endpoint_configs();
+    if endpoints.is_empty() {
+        return Err("No LLM endpoints configured".to_string());
+    }
+
+    let sentences_text = db_sentences
+        .iter()
+        .map(|s| format!("- {}", s))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let system_prompt = match &*lang {
+        "eng" => format!(
+            "You are a Discord voice bot with a chaotic, insulting, and idiotic sense of humor.\\n\
+             You just 'overheard' a user named \"{user}\" and you are about to roast them.\\n\
+             Generate a SINGLE short sentence (max 200 characters) that is funny, sarcastic, \
+             idiota, and a bit insulting. Mock their personality, their voice, or whatever \
+             you think they're doing. Be creative and vulgar if appropriate.\\n\
+             You MUST include the user's name \"{user}\" in your response.\\n\
+             Respond in English. No markdown, no emojis, no multi-line. Just the spoken text.\\n\
+             Here are example phrases that reflect your personality and style:\\n{sentences_text}"
+        ),
+        _ => format!(
+            "Sei un bot vocale Discord con un senso dell'umorismo caotico, offensivo, idiota e un po' stronzo.\\n\
+             Hai appena 'nascosto' un utente di nome \"{user}\" e stai per prenderlo in giro.\\n\
+             Crea UNA singola frase breve (massimo 200 caratteri) che sia divertente, sarcastica, \
+             idiota, e un po' offensiva. Prendi in giro la loro personalità, la loro voce, o \
+             quello che pensi stiano facendo. Sii creativo e volgare se appropriato.\\n\
+             DEVI includere il nome dell'utente \"{user}\" nella tua risposta.\\n\
+             Rispondi in italiano. Niente markdown, niente emoji, niente testo extra. Solo il testo da dire.\\n\
+             Ecco alcune frasi di esempio che riflettono la tua personalità e il tuo stile:\\n{sentences_text}"
+        ),
+    };
+
+    let client = llm_client();
+    let mut last_error = String::new();
+
+    for (i, endpoint) in endpoints.iter().enumerate() {
+        let url = format!("{}/chat/completions", endpoint.base_url.trim_end_matches('/'));
+        let body = serde_json::json!({
+            "model": endpoint.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "Roast the user"}
+            ],
+            "stream": false,
+            "temperature": 0.9,
+            "max_tokens": 400
+        });
+
+        let mut empty_retries: u32 = 0;
+        const MAX_EMPTY_RETRIES: u32 = 2;
+
+        let attempt = loop {
+            log::info!(
+                "llm::eavesdrop_response: trying endpoint {}/{} (model: {}, url: {})",
+                i + 1,
+                endpoints.len(),
+                endpoint.model,
+                url
+            );
+
+            let resp = client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {}", endpoint.api_key))
+                .json(&body)
+                .send()
+                .await;
+
+            match resp {
+                Ok(r) => {
+                    let status = r.status();
+                    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                        break Err(format!("Rate limited at {}", endpoint.base_url));
+                    }
+                    if !status.is_success() {
+                        let body_text = r.text().await.unwrap_or_default();
+                        log::warn!("llm::eavesdrop_response: endpoint {} returned {}: {}", endpoint.base_url, status, body_text);
+                        break Err(format!("HTTP {} at {}", status, endpoint.base_url));
+                    }
+                    let json: serde_json::Value = match r.json().await {
+                        Ok(j) => j,
+                        Err(e) => {
+                            break Err(format!("JSON parse error at {}: {}", endpoint.base_url, e));
+                        }
+                    };
+                    let content = json
+                        .get("choices")
+                        .and_then(|c| c.get(0))
+                        .and_then(|c| c.get("message"))
+                        .and_then(|m| m.get("content"))
+                        .and_then(|c| c.as_str())
+                        .unwrap_or("");
+                    if content.is_empty() {
+                        log::warn!(
+                            "llm::eavesdrop_response: endpoint {} returned empty content, raw body: {}",
+                            endpoint.base_url,
+                            json
+                        );
+                        empty_retries += 1;
+                        if empty_retries < MAX_EMPTY_RETRIES {
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            continue;
+                        }
+                        break Err(format!("Empty content from {}", endpoint.base_url));
+                    }
+                    log::info!("llm::eavesdrop_response: success from {} (length: {})", endpoint.base_url, content.len());
+                    break Ok(content.to_string());
+                }
+                Err(e) => {
+                    log::warn!(
+                        "llm::eavesdrop_response: endpoint {} connection failed (URL: {}), error: {}, trying next",
                         endpoint.base_url, url, e
                     );
                     break Err(format!("Connection error at {}: {}", endpoint.base_url, e));

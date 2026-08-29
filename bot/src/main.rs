@@ -131,7 +131,6 @@ pub struct Data {
     pub soundboard_sessions: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, soundboard::SoundboardSession>>>,
     /// Shared state for the voice eavesdrop feature (random timeout scheduler).
     pub voice_eavesdrop: std::sync::Arc<std::sync::RwLock<voice_eavesdrop::VoiceEavesdropState>>,
-    /// Shared state for the voice eavesdrop feature (random timeout scheduler).
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -2966,6 +2965,7 @@ async fn main() {
                     last_welcome: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                     last_goodbye: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                     soundboard_sessions: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                    voice_eavesdrop: std::sync::Arc::new(std::sync::RwLock::new(crate::voice_eavesdrop::VoiceEavesdropState::default())),
                 })
             })
         })

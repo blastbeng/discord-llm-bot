@@ -277,3 +277,23 @@ impl Lang {
         }
     }
 }
+
+pub fn config_enabled() -> bool {
+    std::env::var("VOICE_EAVESDROP_ENABLED")
+        .unwrap_or_else(|_| "false".to_string())
+        .to_lowercase() == "true"
+}
+
+pub fn config_min_secs() -> u64 {
+    std::env::var("VOICE_EAVESDROP_MIN_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300)
+}
+
+pub fn config_max_secs() -> u64 {
+    std::env::var("VOICE_EAVESDROP_MAX_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1200)
+}
