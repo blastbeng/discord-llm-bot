@@ -3,7 +3,7 @@ use std::time::Duration;
 use rand::Rng;
 use sqlx::SqlitePool;
 use serenity::all::{Context, GuildId};
-use crate::{Data, llm, tts, lang};
+use crate::{llm, tts, lang};
 use crate::error::BotError;
 
 /// Shared state for the voice eavesdrop feature.
@@ -36,7 +36,12 @@ fn validate_response(text: &str) -> bool {
 
 /// Start the voice eavesdrop loop. Runs in a background task, scanning for
 /// active voice channels and periodically "eavesdropping" on random users.
-pub async fn start_eavesdrop_loop(ctx: Context, data: Arc<Data>) {
+///
+/// Takes the pieces it needs directly (db pool + volume) instead of the whole
+/// poise `Data`, because it is spawned from the framework setup closure before
+/// poise's user data exists — same pattern as the auto-join scanner loop.
+pub async fn start_eavesdrop_loop(ctx: Context, db_pool: SqlitePool, volume: Arc<std::sync::Mutex<f32>>) {
+    let state = Arc::new(tokio::sync::RwLock::new(VoiceEavesdropState::default()));
     log::info!("voice_eavesdrop: loop starting (min={}s, max={}s)",
         lang::config_min_secs(), lang::config_max_secs());
 
@@ -49,7 +54,7 @@ pub async fn start_eavesdrop_loop(ctx: Context, data: Arc<Data>) {
 
         // Check if we have an active timer, or schedule a new one
         let should_eavesdrop = {
-            let mut state = data.voice_eavesdrop.write().unwrap();
+            let mut state = state.write().await;
             if state.next_eavesdrop_secs.is_none() {
                 let mut rng = rand::thread_rng();
                 let secs = rng.gen_range(lang::config_min_secs()..=lang::config_max_secs());
@@ -76,54 +81,62 @@ pub async fn start_eavesdrop_loop(ctx: Context, data: Arc<Data>) {
         log::info!("voice_eavesdrop: triggered, looking for a voice channel with humans");
 
         let bot_user_id = ctx.cache.current_user().id;
+        // Materialize guild IDs up front so no cache borrow is held across
+        // the awaits below (the future must be Send for tokio::spawn).
+        let guild_ids: Vec<GuildId> = ctx.cache.guilds();
         let mut target: Option<(GuildId, String)> = None;
 
-        for guild_id in ctx.cache.guilds() {
-            let guild = match ctx.cache.guild(guild_id) {
-                Some(g) => g,
-                None => continue,
-            };
-
-            let bot_vs = match guild.voice_states.get(&bot_user_id) {
-                Some(vs) => vs,
-                None => continue,
-            };
-            let bot_channel = match bot_vs.channel_id {
-                Some(c) => c,
-                None => continue,
-            };
-
-            let mut human_count = 0;
-            let mut target_username: Option<String> = None;
-
-            for vs in guild.voice_states.values() {
-                if vs.channel_id != Some(bot_channel) {
+        for guild_id in guild_ids {
+            // The CacheRef guard is !Send, so keep it alive only inside this
+            // block and drop it before the await below.
+            let found = {
+                let Some(guild) = ctx.cache.guild(guild_id) else {
                     continue;
-                }
-                if vs.user_id == bot_user_id {
+                };
+
+                let Some(bot_vs) = guild.voice_states.get(&bot_user_id) else {
                     continue;
-                }
-                if let Some(user) = ctx.cache.user(vs.user_id) {
-                    if user.bot {
+                };
+                let Some(bot_channel) = bot_vs.channel_id else {
+                    continue;
+                };
+
+                let mut human_count = 0;
+                let mut target_username: Option<String> = None;
+
+                for vs in guild.voice_states.values() {
+                    if vs.channel_id != Some(bot_channel) {
                         continue;
                     }
+                    if vs.user_id == bot_user_id {
+                        continue;
+                    }
+                    if let Some(user) = ctx.cache.user(vs.user_id) {
+                        if user.bot {
+                            continue;
+                        }
+                    }
+                    human_count += 1;
+                    if target_username.is_none() {
+                        target_username = Some(
+                            ctx.cache.user(vs.user_id)
+                                .map(|u| u.name.clone())
+                                .unwrap_or_else(|| vs.user_id.to_string()),
+                        );
+                    }
                 }
-                human_count += 1;
-                if target_username.is_none() {
-                    target_username = Some(
-                        ctx.cache.user(vs.user_id)
-                            .map(|u| u.name.clone())
-                            .unwrap_or_else(|| vs.user_id.to_string()),
-                    );
-                }
-            }
+
+                (human_count, bot_channel, target_username)
+            };
+
+            let (human_count, bot_channel, target_username) = found;
 
             if human_count > 0 {
                 log::info!("voice_eavesdrop: found channel {} in guild {} with {} human(s)",
                     bot_channel, guild_id, human_count);
 
                 {
-                    let mut state = data.voice_eavesdrop.write().unwrap();
+                    let mut state = state.write().await;
                     let mut rng = rand::thread_rng();
                     let secs = rng.gen_range(lang::config_min_secs()..=lang::config_max_secs());
                     state.next_eavesdrop_secs = Some(secs);
@@ -137,7 +150,7 @@ pub async fn start_eavesdrop_loop(ctx: Context, data: Arc<Data>) {
         if let Some((guild_id, username)) = target {
             log::info!("voice_eavesdrop: eavesdropping on user {} in guild {}", username, guild_id);
 
-            let pool = data.db_pool.clone();
+            let pool = db_pool.clone();
             let lang_code = std::env::var("LANG").unwrap_or_else(|_| "ita".to_string());
 
             // Fetch random sentences from DB for style context
@@ -176,7 +189,7 @@ pub async fn start_eavesdrop_loop(ctx: Context, data: Arc<Data>) {
             };
 
             // Play audio using songbird's get() pattern like auto_join does
-            if let Err(e) = play_eavesdrop_audio(&ctx, &data, guild_id, tts_result.file_path).await {
+            if let Err(e) = play_eavesdrop_audio(&ctx, &volume, guild_id, tts_result.file_path).await {
                 log::warn!("voice_eavesdrop: playback failed: {}", e);
             } else {
                 log::info!("voice_eavesdrop: playback started in guild {}", guild_id);
@@ -187,7 +200,7 @@ pub async fn start_eavesdrop_loop(ctx: Context, data: Arc<Data>) {
 
 async fn play_eavesdrop_audio(
     ctx: &Context,
-    data: &Data,
+    volume: &Arc<std::sync::Mutex<f32>>,
     guild_id: GuildId,
     file_path: String,
 ) -> Result<(), BotError> {
@@ -206,7 +219,7 @@ async fn play_eavesdrop_audio(
     let track_handle = handler.play_only(source.into());
 
     // Apply the user-set volume
-    let vol = *data.volume.lock().unwrap();
+    let vol = *volume.lock().unwrap();
     let _ = track_handle.set_volume(vol);
 
     Ok(())

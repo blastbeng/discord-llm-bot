@@ -378,7 +378,7 @@ pub async fn goodbye(user: &str, db_sentences: &[String]) -> Result<String, Stri
             ],
             "stream": false,
             "temperature": 1.0,
-            "max_tokens": 400
+            "max_tokens": 500
         });
 
         let mut empty_retries: u32 = 0;
@@ -526,7 +526,7 @@ pub async fn translate(text: &str, target_lang: &str) -> Result<String, String> 
             "stream": false,
             "temperature": 0.3,
             // Generous budget for reasoning models (see ask for details).
-            "max_tokens": 400
+            "max_tokens": 500
         });
 
         // Reasoning models intermittently return empty content — retry the same
@@ -703,7 +703,7 @@ pub async fn here_i_am(db_sentences: &[String]) -> Result<String, String> {
             "stream": false,
             "temperature": 1.0,
             // Generous budget for reasoning models (see ask for details).
-            "max_tokens": 400
+            "max_tokens": 500
         });
 
         // Reasoning models intermittently return empty content — retry the same
@@ -972,7 +972,7 @@ pub async fn welcome(user: &str, db_sentences: &[String]) -> Result<String, Stri
             "stream": false,
             "temperature": 0.9,
             // Generous budget for reasoning models (see ask for details).
-            "max_tokens": 400
+            "max_tokens": 500
         });
 
         // Reasoning models intermittently return empty content — retry the same
@@ -1151,7 +1151,7 @@ pub async fn eavesdrop_response(
             ],
             "stream": false,
             "temperature": 0.9,
-            "max_tokens": 400
+            "max_tokens": 500
         });
 
         let mut empty_retries: u32 = 0;

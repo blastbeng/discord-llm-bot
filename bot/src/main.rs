@@ -129,8 +129,6 @@ pub struct Data {
     /// Active /soundboard sessions keyed by a short session id, so the
     /// pagination/play component buttons can resolve the stored search results.
     pub soundboard_sessions: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, soundboard::SoundboardSession>>>,
-    /// Shared state for the voice eavesdrop feature (random timeout scheduler).
-    pub voice_eavesdrop: std::sync::Arc<std::sync::RwLock<voice_eavesdrop::VoiceEavesdropState>>,
 }
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -2949,6 +2947,24 @@ async fn main() {
                     });
                 }
 
+                // Spawn the voice eavesdrop loop: periodically "eavesdrops" on a
+                // random user in the bot's voice channel and comments via LLM+TTS.
+                // The loop itself checks VOICE_EAVESDROP_ENABLED every tick, so it
+                // can be toggled at runtime without restarting the bot.
+                {
+                    let eavesdrop_ctx = ctx.clone();
+                    let eavesdrop_pool = db_pool.clone();
+                    let eavesdrop_volume = volume_arc.clone();
+                    tokio::spawn(async move {
+                        voice_eavesdrop::start_eavesdrop_loop(
+                            eavesdrop_ctx,
+                            eavesdrop_pool,
+                            eavesdrop_volume,
+                        )
+                        .await;
+                    });
+                }
+
                 log::info!("Framework setup complete with enhanced error tracking");
                 Logger::info("INIT", "Error tracking system initialized successfully");
 
@@ -2965,7 +2981,6 @@ async fn main() {
                     last_welcome: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                     last_goodbye: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                     soundboard_sessions: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
-                    voice_eavesdrop: std::sync::Arc::new(std::sync::RwLock::new(crate::voice_eavesdrop::VoiceEavesdropState::default())),
                 })
             })
         })
