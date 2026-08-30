@@ -20,7 +20,7 @@ pub async fn ensure_bot_not_muted(ctx: &Context, guild_id: serenity::model::id::
 
     // Read the cache inside a block: the returned CacheRef holds a
     // (non-Send) shard guard and must not be held across an await.
-    let (is_muted, has_perm) = {
+    let (is_muted, cached_perm) = {
         let Some(guild) = ctx.cache.guild(guild_id) else {
             return;
         };
@@ -31,22 +31,45 @@ pub async fn ensure_bot_not_muted(ctx: &Context, guild_id: serenity::model::id::
             .map(|vs| vs.mute)
             .unwrap_or(false);
 
-        // Only act when we have the right (ADMINISTRATOR or MUTE_MEMBERS).
-        let has_perm = guild
+        // None = inconclusive (member not cached, or permissions absent).
+        let cached_perm = guild
             .members
             .get(&bot_user_id)
             .and_then(|m| m.permissions)
             .map(|p| {
                 p.contains(Permissions::ADMINISTRATOR) || p.contains(Permissions::MUTE_MEMBERS)
-            })
-            .unwrap_or(false);
+            });
 
-        (is_muted, has_perm)
+        (is_muted, cached_perm)
     };
 
     if !is_muted {
         return;
     }
+
+    // Only act when we have the right (ADMINISTRATOR or MUTE_MEMBERS).
+    // The cache is sometimes inconclusive (member entry missing or
+    // permissions field absent), so fall back to asking Discord — this
+    // extra API call only happens while the bot is actually muted.
+    let has_perm = match cached_perm {
+        Some(p) => p,
+        None => match ctx.http.get_current_user_guild_member(guild_id).await {
+            Ok(m) => m
+                .permissions
+                .map(|p| {
+                    p.contains(Permissions::ADMINISTRATOR)
+                        || p.contains(Permissions::MUTE_MEMBERS)
+                })
+                .unwrap_or(false),
+            Err(e) => {
+                log::warn!(
+                    "voice_mute: bot is server-muted in guild {} but permission check failed: {}",
+                    guild_id, e
+                );
+                return;
+            }
+        },
+    };
 
     if !has_perm {
         log::warn!(
