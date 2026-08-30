@@ -9,6 +9,7 @@ mod soundboard;
 mod tts;
 
 mod voice_eavesdrop;
+mod voice_mute;
 use error::{ErrorTracker, Logger};
 use poise::serenity_prelude as serenity;
 use poise::serenity_prelude::Mentionable;
@@ -54,7 +55,7 @@ async fn play_audio_with_ffmpeg_pipe(
     // Create the audio source only after confirming the bot is connected,
     // so we don't open a file handle that's immediately dropped on error.
     let source = songbird::input::File::new(file_path.to_string());
-    play_with_volume(&mut handler, source.into(), ctx.data());
+    play_with_volume(ctx.serenity_context(), &mut handler, source.into(), &ctx.data().volume, guild_id).await;
     log::info!("Audio playback started for guild {}", guild_id);
     Ok(())
 }
@@ -354,13 +355,22 @@ async fn voice_autocomplete(
         .collect()
 }
 
-/// Play an audio source and apply the stored volume from Data.
-/// Call this instead of `handler.play_only(source)` to ensure the
-/// bot respects the volume set by /volume across all tracks.
-fn play_with_volume(handler: &mut songbird::Call, source: songbird::input::Input, data: &Data) {
+/// Centralized playback entry point. Every audio playback path must go
+/// through this instead of calling `handler.play_only(source)` directly:
+/// it first self-demutes the bot if a server admin voice-muted it (see
+/// [`crate::voice_mute`]), then plays the source and applies the stored
+/// volume so the bot respects the level set by /volume across all tracks.
+pub async fn play_with_volume(
+    ctx: &serenity::Context,
+    handler: &mut songbird::Call,
+    source: songbird::input::Input,
+    volume: &std::sync::Arc<std::sync::Mutex<f32>>,
+    guild_id: serenity::GuildId,
+) {
+    crate::voice_mute::ensure_bot_not_muted(ctx, guild_id).await;
     let track_handle = handler.play_only(source.into());
     // Apply the stored volume level to the new track
-    let vol = *data.volume.lock().unwrap();
+    let vol = *volume.lock().unwrap();
     let _ = track_handle.set_volume(vol);
 }
 
@@ -589,7 +599,7 @@ async fn speak(
     }
     log::info!("Playing audio file: {}", tts_result.file_path);
     let source = songbird::input::File::new(tts_result.file_path.clone());
-    play_with_volume(&mut handler, source.into(), ctx.data());
+    play_with_volume(ctx.serenity_context(), &mut handler, source.into(), &ctx.data().volume, guild_id).await;
     log::info!("Audio playback started in guild {}", guild_id);
 
     let components = vec![
@@ -775,7 +785,7 @@ async fn random(
 
         log::info!("Playing cached audio file: {}", audio_path);
         let source = songbird::input::File::new(audio_path.clone());
-        play_with_volume(&mut handler, source.into(), ctx.data());
+        play_with_volume(ctx.serenity_context(), &mut handler, source.into(), &ctx.data().volume, guild_id).await;
         log::info!("Audio playback started in guild {}", guild_id);
 
         let components = vec![
@@ -896,7 +906,7 @@ async fn random(
     }
     log::info!("Playing audio file: {}", tts_result.file_path);
     let source = songbird::input::File::new(tts_result.file_path.clone());
-    play_with_volume(&mut handler, source.into(), ctx.data());
+    play_with_volume(ctx.serenity_context(), &mut handler, source.into(), &ctx.data().volume, guild_id).await;
     log::info!("Audio playback started in guild {}", guild_id);
 
     let components = vec![
@@ -1118,7 +1128,7 @@ async fn ask(
     }
     log::info!("ask: Playing audio file: {}", tts_result.file_path);
     let source = songbird::input::File::new(tts_result.file_path.clone());
-    play_with_volume(&mut handler, source.into(), ctx.data());
+    play_with_volume(ctx.serenity_context(), &mut handler, source.into(), &ctx.data().volume, guild_id).await;
     log::info!("ask: Audio playback started in guild {}", guild_id);
 
     let components = vec![
@@ -1304,7 +1314,7 @@ async fn translate(
     }
     log::info!("translate: Playing audio file: {}", tts_result.file_path);
     let source = songbird::input::File::new(tts_result.file_path.clone());
-    play_with_volume(&mut handler, source.into(), ctx.data());
+    play_with_volume(ctx.serenity_context(), &mut handler, source.into(), &ctx.data().volume, ctx.guild_id().unwrap()).await;
 
     let components = vec![
         serenity::CreateActionRow::Buttons(vec![
@@ -1526,7 +1536,7 @@ async fn joke(
     }
     log::info!("joke: Playing audio file: {}", tts_result.file_path);
     let source = songbird::input::File::new(tts_result.file_path.clone());
-    play_with_volume(&mut handler, source.into(), ctx.data());
+    play_with_volume(ctx.serenity_context(), &mut handler, source.into(), &ctx.data().volume, ctx.guild_id().unwrap()).await;
 
     let components = vec![
         serenity::CreateActionRow::Buttons(vec![
@@ -2187,9 +2197,7 @@ async fn play_soundboard_item(
             return Err("Bot disconnected while playing.".to_string());
         }
         let source = songbird::input::File::new(play_path.clone());
-        let track = h.play_only(source.into());
-        let vol = *data.volume.lock().unwrap();
-        let _ = track.set_volume(vol);
+        play_with_volume(ctx, &mut h, source.into(), &data.volume, guild_id).await;
     }
 
     // Clean up effect temp files after a delay (the cached plain file is kept).
@@ -2766,13 +2774,13 @@ async fn main() {
                                                 let mut handler = handler_lock.lock().await;
                                                 log::info!("Playing audio file: {}", playback_path);
                                                 let source = songbird::input::File::new(playback_path.clone());
-                                                play_with_volume(&mut handler, source.into(), data);
+                                                play_with_volume(&ctx, &mut handler, source.into(), &data.volume, guild_id).await;
                                                 log::info!("Audio playback started in guild {}", guild_id);
                                             }
                                         } else {
                                             log::info!("Playing audio file: {}", playback_path);
                                             let source = songbird::input::File::new(playback_path.clone());
-                                            play_with_volume(&mut handler, source.into(), data);
+                                            play_with_volume(&ctx, &mut handler, source.into(), &data.volume, guild_id).await;
                                             log::info!("Audio playback started in guild {}", guild_id);
                                         }
                                     } else {
@@ -2783,7 +2791,7 @@ async fn main() {
                                                 let mut handler = handler_lock.lock().await;
                                                 log::info!("Playing audio file: {}", playback_path);
                                                 let source = songbird::input::File::new(playback_path.clone());
-                                                play_with_volume(&mut handler, source.into(), data);
+                                                play_with_volume(&ctx, &mut handler, source.into(), &data.volume, guild_id).await;
                                                 log::info!("Audio playback started in guild {}", guild_id);
                                             }
                                         }

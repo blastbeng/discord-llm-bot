@@ -473,12 +473,11 @@ async fn speak_welcome(
         if let Some(handler) = manager.get(guild_id) {
             let mut h = handler.lock().await;
             if h.current_channel().is_some() {
-                // Play the welcome, applying the user-set volume so it matches
-                // /speak and other commands (which go through play_with_volume).
+                // Play the welcome through the centralized playback path so the
+                // bot self-demutes (if server-muted) and the user-set volume applies.
                 let source = songbird::input::File::new(tts_result.file_path.clone());
-                let track = h.play_only(source.into());
+                crate::play_with_volume(ctx, &mut h, source.into(), &data.volume, guild_id).await;
                 let vol = *data.volume.lock().unwrap();
-                let _ = track.set_volume(vol);
                 log::info!("auto_join: playing welcome for {} (effect: {}, volume: {}): {}", user_name, effect, vol, phrase);
             }
         }
@@ -581,12 +580,11 @@ async fn speak_here_i_am_impl(
         if let Some(handler) = manager.get(guild_id) {
             let mut h = handler.lock().await;
             if h.current_channel().is_some() {
-                // Play the announcement, applying the user-set volume so it
-                // matches /speak and other commands (via play_with_volume).
+                // Play the announcement through the centralized playback path so
+                // the bot self-demutes (if server-muted) and the user-set volume applies.
                 let source = songbird::input::File::new(tts_result.file_path.clone());
-                let track = h.play_only(source.into());
+                crate::play_with_volume(ctx, &mut h, source.into(), volume, guild_id).await;
                 let vol = *volume.lock().unwrap();
-                let _ = track.set_volume(vol);
                 log::info!("auto_join: playing here-i-am (volume: {}): {}", vol, phrase);
             }
         }
@@ -652,10 +650,11 @@ async fn speak_goodbye(
         if let Some(handler) = manager.get(guild_id) {
             let mut h = handler.lock().await;
             if h.current_channel().is_some() {
+                // Play the goodbye through the centralized playback path so the
+                // bot self-demutes (if server-muted) and the user-set volume applies.
                 let source = songbird::input::File::new(tts_result.file_path.clone());
-                let track = h.play_only(source.into());
+                crate::play_with_volume(ctx, &mut h, source.into(), &data.volume, guild_id).await;
                 let vol = *data.volume.lock().unwrap();
-                let _ = track.set_volume(vol);
                 log::info!("auto_join: playing goodbye for {} (volume: {}): {}", user_name, vol, phrase);
             }
         }
