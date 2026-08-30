@@ -2,9 +2,10 @@
 //!
 //! If a server admin voice-mutes the bot, every track it plays is silent.
 //! All playback paths call [`ensure_bot_not_muted`] right before playing:
-//! it checks (from cache) whether the bot is muted and, if so, verifies the
-//! bot has the right to unmute itself (ADMINISTRATOR or MUTE_MEMBERS), then
-//! clears the mute via the Edit Guild Member endpoint
+//! it checks whether the bot is muted (cached voice state, falling back to
+//! the member object's `mute` flag when no voice state is cached), and if so
+//! verifies the bot has the right to unmute itself (ADMINISTRATOR or
+//! MUTE_MEMBERS), then clears the mute via the Edit Guild Member endpoint
 //! (PATCH /guilds/{id}/members/{bot} with `{"mute": false}`) — the REST
 //! voice-state endpoints no longer accept `mute`/`deaf` (stage-channel only).
 
@@ -51,24 +52,26 @@ async fn member_has_demute_right(ctx: &Context, guild_id: serenity::model::id::G
 /// Unmute the bot in `guild_id` if it is server-side muted and has the
 /// permission to do so.
 ///
-/// Fast path: reads the cached voice state, so no API call is made unless
-/// the bot is actually muted. On failure (e.g. missing permission) it logs a
-/// warning and returns; playback proceeds as-is (silent, same as before).
+/// Fast path: reads the cached voice state, so no API call is made while the
+/// bot is connected and not muted. If no voice state is cached (bot just
+/// joined, or muted while disconnected), the member object's `mute` flag is
+/// checked instead. On failure (e.g. missing permission) it logs a warning
+/// and returns; playback proceeds as-is (silent, same as before).
 pub async fn ensure_bot_not_muted(ctx: &Context, guild_id: serenity::model::id::GuildId) {
     let bot_user_id = ctx.cache.current_user().id;
 
     // Read the cache inside a block: the returned CacheRef holds a
     // (non-Send) shard guard and must not be held across an await.
-    let (is_muted, cached_perm) = {
+    let (vs_mute, vs_present, cached_perm) = {
         let Some(guild) = ctx.cache.guild(guild_id) else {
             return;
         };
 
-        let is_muted = guild
+        let (vs_mute, vs_present) = guild
             .voice_states
             .get(&bot_user_id)
-            .map(|vs| vs.mute)
-            .unwrap_or(false);
+            .map(|vs| (vs.mute, true))
+            .unwrap_or((false, false));
 
         // None = inconclusive (member not cached, or permissions absent).
         let cached_perm = guild
@@ -77,9 +80,34 @@ pub async fn ensure_bot_not_muted(ctx: &Context, guild_id: serenity::model::id::
             .and_then(|m| m.permissions)
             .map(grants_demute);
 
-        (is_muted, cached_perm)
+        (vs_mute, vs_present, cached_perm)
     };
 
+    // Fast path: the cached voice state is present and says "not muted".
+    // While connected, VOICE_STATE_UPDATE events keep that flag current.
+    if vs_present && !vs_mute {
+        return;
+    }
+
+    // No cached voice state (bot just joined, or stale cache): the server-side
+    // mute flag persists on the member even while disconnected, so fall back
+    // to the member object, which carries `mute` directly. This extra API
+    // call only happens when the cache has no voice state for the bot.
+    let mut member: Option<Member> = None;
+    if !vs_present {
+        match ctx.http.get_member(guild_id, bot_user_id).await {
+            Ok(m) => member = Some(m),
+            Err(e) => {
+                log::warn!(
+                    "voice_mute: no cached voice state in guild {} and member lookup failed: {}",
+                    guild_id, e
+                );
+                return;
+            }
+        }
+    }
+
+    let is_muted = vs_mute || member.as_ref().is_some_and(|m| m.mute);
     if !is_muted {
         return;
     }
@@ -92,15 +120,18 @@ pub async fn ensure_bot_not_muted(ctx: &Context, guild_id: serenity::model::id::
         Some(p) => p,
         // NOTE: get_current_user_guild_member (GET /users/@me/guilds/{id}/member)
         // is forbidden for bots; use the regular member endpoint instead.
-        None => match ctx.http.get_member(guild_id, bot_user_id).await {
-            Ok(m) => member_has_demute_right(ctx, guild_id, &m).await,
-            Err(e) => {
-                log::warn!(
-                    "voice_mute: bot is server-muted in guild {} but permission check failed: {}",
-                    guild_id, e
-                );
-                return;
-            }
+        None => match &member {
+            Some(m) => member_has_demute_right(ctx, guild_id, m).await,
+            None => match ctx.http.get_member(guild_id, bot_user_id).await {
+                Ok(m) => member_has_demute_right(ctx, guild_id, &m).await,
+                Err(e) => {
+                    log::warn!(
+                        "voice_mute: bot is server-muted in guild {} but permission check failed: {}",
+                        guild_id, e
+                    );
+                    return;
+                }
+            },
         },
     };
 
