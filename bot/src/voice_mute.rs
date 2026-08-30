@@ -4,7 +4,8 @@
 //! All playback paths call [`ensure_bot_not_muted`] right before playing:
 //! it checks (from cache) whether the bot is muted and, if so, verifies the
 //! bot has the right to unmute itself (ADMINISTRATOR or MUTE_MEMBERS), then
-//! clears the mute via a PATCH on its own voice state.
+//! clears the mute via the moderator voice-state endpoint
+//! (PATCH /guilds/{id}/voice-states/{bot}).
 
 use serenity::model::guild::Member;
 use serenity::model::id::RoleId;
@@ -87,7 +88,9 @@ pub async fn ensure_bot_not_muted(ctx: &Context, guild_id: serenity::model::id::
     // extra API call only happens while the bot is actually muted.
     let has_perm = match cached_perm {
         Some(p) => p,
-        None => match ctx.http.get_current_user_guild_member(guild_id).await {
+        // NOTE: get_current_user_guild_member (GET /users/@me/guilds/{id}/member)
+        // is forbidden for bots; use the regular member endpoint instead.
+        None => match ctx.http.get_member(guild_id, bot_user_id).await {
             Ok(m) => member_has_demute_right(ctx, guild_id, &m).await,
             Err(e) => {
                 log::warn!(
@@ -107,7 +110,13 @@ pub async fn ensure_bot_not_muted(ctx: &Context, guild_id: serenity::model::id::
         return;
     }
 
-    match ctx.http.edit_voice_state_me(guild_id, &serde_json::json!({ "mute": false })).await {
+    // The @me voice-state endpoint does not accept a `mute` parameter; use the
+    // moderator endpoint (PATCH /guilds/{id}/voice-states/{user.id}), which is
+    // exactly what the MUTE_MEMBERS/ADMINISTRATOR check above verifies.
+    match ctx
+        .http
+        .edit_voice_state(guild_id, bot_user_id, &serde_json::json!({ "mute": false }))
+        .await {
         Ok(()) => {
             log::info!(
                 "voice_mute: bot was server-muted in guild {}, self-demuted before playback",
