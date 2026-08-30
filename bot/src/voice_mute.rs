@@ -4,9 +4,11 @@
 //! All playback paths call [`ensure_bot_not_muted`] right before playing:
 //! it checks (from cache) whether the bot is muted and, if so, verifies the
 //! bot has the right to unmute itself (ADMINISTRATOR or MUTE_MEMBERS), then
-//! clears the mute via the moderator voice-state endpoint
-//! (PATCH /guilds/{id}/voice-states/{bot}).
+//! clears the mute via the Edit Guild Member endpoint
+//! (PATCH /guilds/{id}/members/{bot} with `{"mute": false}`) — the REST
+//! voice-state endpoints no longer accept `mute`/`deaf` (stage-channel only).
 
+use serenity::builder::EditMember;
 use serenity::model::guild::Member;
 use serenity::model::id::RoleId;
 use serenity::model::permissions::Permissions;
@@ -110,14 +112,16 @@ pub async fn ensure_bot_not_muted(ctx: &Context, guild_id: serenity::model::id::
         return;
     }
 
-    // The @me voice-state endpoint does not accept a `mute` parameter; use the
-    // moderator endpoint (PATCH /guilds/{id}/voice-states/{user.id}), which is
-    // exactly what the MUTE_MEMBERS/ADMINISTRATOR check above verifies.
+    // Server-side voice mute is set via the Edit Guild Member endpoint
+    // (PATCH /guilds/{id}/members/{user.id} with `{"mute": false}`) — the same
+    // mechanism discord.js uses for VoiceState#setMute. The REST voice-state
+    // endpoints no longer accept `mute`/`deaf` (stage-channel only), and the
+    // MUTE_MEMBERS/ADMINISTRATOR check above is exactly what this call requires.
     match ctx
         .http
-        .edit_voice_state(guild_id, bot_user_id, &serde_json::json!({ "mute": false }))
+        .edit_member(guild_id, bot_user_id, &EditMember::default().mute(false), None)
         .await {
-        Ok(()) => {
+        Ok(_) => {
             log::info!(
                 "voice_mute: bot was server-muted in guild {}, self-demuted before playback",
                 guild_id
