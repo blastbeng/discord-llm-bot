@@ -6,8 +6,44 @@
 //! bot has the right to unmute itself (ADMINISTRATOR or MUTE_MEMBERS), then
 //! clears the mute via a PATCH on its own voice state.
 
+use serenity::model::guild::Member;
+use serenity::model::id::RoleId;
 use serenity::model::permissions::Permissions;
 use serenity::prelude::Context;
+
+/// Whether a permission set grants the right to unmute voice members.
+fn grants_demute(p: Permissions) -> bool {
+    p.contains(Permissions::ADMINISTRATOR) || p.contains(Permissions::MUTE_MEMBERS)
+}
+
+/// Determine whether `member` can self-demute in this guild.
+///
+/// Discord sometimes returns `permissions: null` in the member payload
+/// (observed live), so when that field is absent we compute effective
+/// permissions from the guild's role list, restricted to the member's roles.
+/// This extra API call only happens while the bot is actually muted.
+async fn member_has_demute_right(ctx: &Context, guild_id: serenity::model::id::GuildId, m: &Member) -> bool {
+    if let Some(p) = m.permissions {
+        return grants_demute(p);
+    }
+
+    match ctx.http.get_guild_roles(guild_id).await {
+        Ok(roles) => {
+            let member_roles: std::collections::HashSet<RoleId> = m.roles.iter().copied().collect();
+            roles
+                .iter()
+                .filter(|r| member_roles.contains(&r.id))
+                .any(|r| grants_demute(r.permissions))
+        }
+        Err(e) => {
+            log::warn!(
+                "voice_mute: bot is server-muted in guild {} but role lookup failed: {}",
+                guild_id, e
+            );
+            false
+        }
+    }
+}
 
 /// Unmute the bot in `guild_id` if it is server-side muted and has the
 /// permission to do so.
@@ -36,9 +72,7 @@ pub async fn ensure_bot_not_muted(ctx: &Context, guild_id: serenity::model::id::
             .members
             .get(&bot_user_id)
             .and_then(|m| m.permissions)
-            .map(|p| {
-                p.contains(Permissions::ADMINISTRATOR) || p.contains(Permissions::MUTE_MEMBERS)
-            });
+            .map(grants_demute);
 
         (is_muted, cached_perm)
     };
@@ -54,13 +88,7 @@ pub async fn ensure_bot_not_muted(ctx: &Context, guild_id: serenity::model::id::
     let has_perm = match cached_perm {
         Some(p) => p,
         None => match ctx.http.get_current_user_guild_member(guild_id).await {
-            Ok(m) => m
-                .permissions
-                .map(|p| {
-                    p.contains(Permissions::ADMINISTRATOR)
-                        || p.contains(Permissions::MUTE_MEMBERS)
-                })
-                .unwrap_or(false),
+            Ok(m) => member_has_demute_right(ctx, guild_id, &m).await,
             Err(e) => {
                 log::warn!(
                     "voice_mute: bot is server-muted in guild {} but permission check failed: {}",
