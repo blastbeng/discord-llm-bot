@@ -22,30 +22,29 @@ pub async fn apply_effect_to_mp3(
     effect: &str,
     sample_rate: u32,
 ) -> Result<Vec<u8>, AudioEffectError> {
-    // 1. Decode MP3 to raw PCM samples
-    let (mut samples, decoded_sample_rate, channels) = decode_mp3(&input_bytes)?;
+    let (samples, decoded_sample_rate, channels) = decode_mp3(&input_bytes)?;
 
     // Resample if needed (Google TTS is typically 24kHz, music is 44.1/48kHz)
-    if decoded_sample_rate != sample_rate {
-        samples = resample_audio(samples, decoded_sample_rate, sample_rate, channels);
-    }
+    let samples = if decoded_sample_rate != sample_rate {
+        resample_audio(samples, decoded_sample_rate, sample_rate, channels)
+    } else {
+        samples
+    };
 
     // 2. Apply the requested effect
     let processed_samples = apply_effect(samples, effect, sample_rate, channels)?;
 
-    // 2b. Clamp/normalize samples to prevent clipping distortion.
+    // 3. Clamp/normalize samples to prevent clipping distortion.
     let processed_samples = normalize_if_needed(processed_samples);
 
-    // 3. Encode back to MP3
-    let output_bytes = encode_mp3(processed_samples, sample_rate, channels)?;
-
-    Ok(output_bytes)
+    // 4. Encode back to MP3
+    encode_mp3(processed_samples, sample_rate, channels)
 }
 
 /// Peak-based normalization. Down-scales whenever the peak exceeds 0.9
 /// (clipping guard) and applies make-up gain when the peak is very low
-/// (< 0.35), which is common for heavily low-passed effects (underwater,
-/// demon) whose filtered output would otherwise be near-inaudible. Audio
+/// (< 0.35), which is common for heavily low-passed effects (demon) whose
+/// filtered output would otherwise be near-inaudible. Audio
 /// already in a healthy peak range is left untouched.
 fn normalize_if_needed(samples: Vec<f32>) -> Vec<f32> {
     let peak = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
@@ -238,11 +237,8 @@ fn apply_effect(
         "none" | "random" => Ok(samples),
         "echo" => Ok(apply_echo(samples, sample_rate, channels)),
         "reverb" => Ok(apply_reverb(samples, sample_rate, channels)),
-        "bass" => Ok(apply_bass_boost(samples, sample_rate, channels)),
         "chipmunk" => Ok(apply_chipmunk(samples, sample_rate, channels)),
         "demon" => Ok(apply_demon(samples, sample_rate, channels)),
-        "telephone" => Ok(apply_telephone(samples, sample_rate, channels)),
-        "underwater" => Ok(apply_underwater(samples, sample_rate, channels)),
         _ => Err(AudioEffectError::EffectProcessing(format!("Unknown effect: {}", effect))),
     }
 }
@@ -365,38 +361,6 @@ fn apply_reverb(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> 
     output
 }
 
-/// Bass boost: dry signal plus a phase-aligned copy passed through a
-/// resonant low shelf. The low band alone (a hard LP at 250 Hz) reads as
-/// "muffled", so it is always mixed with the dry path for intelligibility.
-fn apply_bass_boost(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
-    let ch = channels.max(1) as usize;
-    let sr = sample_rate as f32;
-    // Two cascaded one-pole low-passes at ~160 Hz form the "bass" band.
-    // The second stage gives a gentler slope so consonants stay audible.
-    let alphas = [lp_alpha(160.0, sr), lp_alpha(180.0, sr)];
-
-    let mut output = samples;
-    let mut state = vec![vec![0.0f32; ch]; alphas.len()];
-    let frames = output.len() / ch;
-    for i in 0..frames {
-        for c in 0..ch {
-            let idx = i * ch + c;
-            let dry = output[idx];
-            // Resonant peak around the corner frequency for extra weight —
-            // approximated by blending back stages of different cutoffs.
-            let mut low = 0.0f32;
-            for (k, alpha) in alphas.iter().enumerate() {
-                state[k][c] += alpha * (dry - state[k][c]);
-                low = state[k][c];
-            }
-            // The two stages differ slightly in phase, creating a mild
-            // emphasis near 150-200 Hz. Mix: 55% dry + bass band boosted.
-            output[idx] = dry + low * 1.8;
-        }
-    }
-    output
-}
-
 /// Chipmunk: pitch up 5 semitones via tape-style speed change.
 fn apply_chipmunk(samples: Vec<f32>, _sample_rate: u32, channels: u16) -> Vec<f32> {
     let ratio = 2.0f32.powf(5.0 / 12.0);
@@ -425,74 +389,6 @@ fn apply_demon(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
         }
     }
     out
-}
-
-/// Telephone: two-stage high-pass + two-stage low-pass (approx. 12 dB/oct
-/// band around 320-3300 Hz) plus tanh gain makeup so the band-limited
-/// result stays clearly audible.
-fn apply_telephone(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
-    let ch = channels.max(1) as usize;
-    let sr = sample_rate as f32;
-    let mut output = samples;
-
-    let hp_alpha = lp_alpha(320.0, sr);
-    let lp_alpha_v = lp_alpha(3300.0, sr);
-
-    let mut hp_state = vec![vec![0.0f32; ch]; 2];
-    let mut lp_state = vec![vec![0.0f32; ch]; 2];
-
-    let frames = output.len() / ch;
-    for i in 0..frames {
-        for c in 0..ch {
-            let idx = i * ch + c;
-            let mut x = output[idx];
-            for stage in hp_state.iter_mut() {
-                stage[c] += hp_alpha * (x - stage[c]);
-                x -= stage[c];
-            }
-            for stage in lp_state.iter_mut() {
-                stage[c] += lp_alpha_v * (x - stage[c]);
-                x = stage[c];
-            }
-            // Drive into soft saturation for the metallic phone-line bite;
-            // the normalize step afterwards tames the level.
-            output[idx] = (x * 2.2).tanh();
-        }
-    }
-    output
-}
-
-/// Underwater: low-pass with a slow wobble. The cutoff sweeps between ~600
-/// and ~1100 Hz — deep enough to sound submerged, high enough that words
-/// remain recognizable (the old 350-850 Hz sweep erased speech). A two-stage
-/// filter gives a steeper, more convincing ducked-ears resonance. Loudness
-/// is handled centrally by normalize_if_needed.
-fn apply_underwater(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
-    let ch = channels.max(1) as usize;
-    let sr = sample_rate as f32;
-    let mut output = samples;
-    let frames = output.len() / ch;
-
-    let mut lp_state = vec![0.0f32; ch];
-    let mut phase = 0.0f32;
-    let phase_inc = std::f32::consts::TAU * 0.7 / sr;
-
-    for i in 0..frames {
-        phase += phase_inc;
-        // wobble the cutoff between ~600 Hz and ~1100 Hz
-        let wobble = (phase.sin() * 0.5 + 0.5) * 500.0 + 600.0;
-        let alpha = lp_alpha(wobble, sr);
-        for c in 0..ch {
-            let idx = i * ch + c;
-            // Two cascaded one-poles: ~12 dB/oct below cutoff, smoother
-            // "pressure" sensation than a single pole.
-            lp_state[c] += alpha * (output[idx] - lp_state[c]);
-            let stage1 = lp_state[c];
-            lp_state[c] += alpha * (stage1 - lp_state[c]);
-            output[idx] = lp_state[c];
-        }
-    }
-    output
 }
 
 /// Simplified API for common use case: compress and save MP3 with effect
@@ -524,10 +420,7 @@ pub async fn compress_and_save_mp3_with_effect(
 
 /// Check if an effect name is valid
 pub fn is_valid_effect(effect: &str) -> bool {
-    matches!(
-        effect,
-        "none" | "echo" | "reverb" | "bass" | "chipmunk" | "demon" | "telephone" | "underwater" | "random"
-    )
+    matches!(effect, "none" | "echo" | "reverb" | "chipmunk" | "demon" | "random")
 }
 
 /// Get available effects
@@ -535,11 +428,8 @@ pub const AVAILABLE_EFFECTS: &[&str] = &[
     "none",
     "echo",
     "reverb",
-    "bass",
     "chipmunk",
     "demon",
-    "telephone",
-    "underwater",
     "random",
 ];
 
@@ -550,11 +440,8 @@ pub const RANDOM_EFFECT_POOL: &[&str] = &[
     "none",
     "echo",
     "reverb",
-    "bass",
     "chipmunk",
     "demon",
-    "telephone",
-    "underwater",
 ];
 
 /// Pick a uniformly random effect from [`RANDOM_EFFECT_POOL`] (real effects
@@ -577,12 +464,12 @@ mod tests {
         assert!(is_valid_effect("none"));
         assert!(is_valid_effect("echo"));
         assert!(is_valid_effect("reverb"));
-        assert!(is_valid_effect("bass"));
         assert!(is_valid_effect("chipmunk"));
         assert!(is_valid_effect("demon"));
-        assert!(is_valid_effect("telephone"));
-        assert!(is_valid_effect("underwater"));
         assert!(is_valid_effect("random"));
+        assert!(!is_valid_effect("bass"));
+        assert!(!is_valid_effect("telephone"));
+        assert!(!is_valid_effect("underwater"));
         assert!(!is_valid_effect("invalid"));
     }
 
