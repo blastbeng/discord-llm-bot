@@ -378,9 +378,9 @@ async fn effect_autocomplete(
     _ctx: Context<'_>,
     current: &str,
 ) -> Vec<serenity::AutocompleteChoice> {
-crate::audio_effects::AVAILABLE_EFFECTS
+    // AVAILABLE_EFFECTS already includes "random"; no need to append it again.
+    crate::audio_effects::AVAILABLE_EFFECTS
         .iter()
-        .chain(std::iter::once(&"random"))
         .filter(|e| e.to_lowercase().contains(&current.to_lowercase()))
         .map(|e| {
             let name = e.to_string();
