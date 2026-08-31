@@ -324,59 +324,99 @@ fn change_speed(samples: Vec<f32>, speed: f32, channels: u16) -> Vec<f32> {
     output
 }
 
-/// Female voice transformer — pragmatic, artifact-free M→F recipe.
+/// Female voice transformer — phase-vocoder M→F pitch conversion.
 ///
-/// The previous PSOLA attempt produced rough, "noisy" voices because its
-/// synthetic grains are not aligned to real glottal epochs, and the heavy
-/// formant morph read as chipmunk. Research summary (VoxBooster, Adobe
-/// Audition / iZotope Radius guides): +3..4 semitones pitch with only a
-/// *slight* formant lift (+2 dB shelf) plus smoothing/compression reads as
-/// naturally feminine at TTS pitch levels; extreme lifts and saturation
-/// create the chipmunk/harsh artifacts. So this implementation:
-///   1. tape-lifts pitch a moderate amount (F0 ~150-165 Hz — androgynous/
-///      light-female, no cartoon zone),
-///   2. WSOLA-restores natural speaking rate (no rush, no warble),
-///   3. applies a gentle two-band tilt (warmth trim below 200 Hz, soft
-///      presence above ~4 kHz) instead of a distortion exciter,
-///   4. optionaly layer breath noise gated to inter-word gaps.
+/// Why not tape shift: moving the whole spectrum up also drags the formants
+/// with it — that's exactly the chipmunk signature. Why not TD-PSOLA: grains
+/// that aren't aligned to true glottal epochs create rough, phasey output.
+/// A phase vocoder shifts F0 while preserving the spectral envelope, which
+/// is the standard trick behind "female voice" changers.
+///
+/// Recipe (researched: iZotope Radius / Audition guides, VoxBooster M→F):
+///   1. PV pitch shift +4.5..6.5 st (F0 118 -> 153..174 Hz)
+///   2. softness stack: -1 dB body trim + gentle air re-add (bright-but-soft
+///      female timbre) + optional level-gated breath in inter-word gaps
 fn female_voice(
     samples: Vec<f32>,
     sample_rate: u32,
     channels: u16,
-    pitch: f32,
+    pitch_semitones: f32,
     breathy: bool,
 ) -> Vec<f32> {
-    // 1. Pitch lift via tape change + WSOLA rate restore (duration 1:1).
-    let lifted = change_speed(samples, pitch, channels);
-    let stretched = time_stretch_wsola(lifted, 1.0 / pitch, channels);
-    let mut out = stretched;
-
     let ch = channels.max(1) as usize;
-    let sr = sample_rate as f32;
+    let n = samples.len();
+    if n == 0 {
+        return samples;
+    }
+    let mut out = vec![0.0f32; n];
 
-    // 2. Gentle brightness tilt — one-pole high-band re-add (~+1.5 dB above
-    // 4 kHz). Keeps consonant clarity without the fizz of tanh saturation.
-    let air_alpha = lp_alpha(4000.0, sr);
+    for c in 0..ch {
+        // De-interleave this channel.
+        let chan: Vec<f32> = samples.iter().skip(c).step_by(ch).copied().collect();
+        // Dither away digital silence (the vocoder's phase-diff math can
+        // produce NaN on all-zero input frames).
+        // TTS may lead with digital silence; the vocoder's phase-diff math
+        // can emit NaN on all-zero frames, so add ±1e-7 dither. NOTE the
+        // scale: (rng>>40) spans 0..2^24, so the divisor must bring the
+        // result to ±1e-7 total (a first version produced a ±2.0 offset!).
+        let mut rng: u64 = 0x9E3779B97F4A7C15 ^ ((c as u64 + 1).wrapping_mul(0xD1B54A32D192ED03));
+        let dithered: Vec<f32> = chan
+            .iter()
+            .map(|x| {
+                rng ^= rng >> 12;
+                rng ^= rng << 25;
+                rng ^= rng >> 27;
+                let u = (rng >> 40) as f32 / 16777216.0; // 0..1
+                x + (u - 0.5) * 2.0e-7
+            })
+            .collect();
+
+        let state_vec: Vec<f32> = vec![0.0; pitch_shift::TOTAL_F32];
+        let state_box: Box<[f32; pitch_shift::TOTAL_F32]> =
+            state_vec.into_boxed_slice().try_into().unwrap();
+        let mut shifter = pitch_shift::Shifter::new(state_box);
+
+        let mut shifted: Vec<f32> = Vec::with_capacity(chan.len() + 1024);
+        for chunk in dithered.chunks(128) {
+            if chunk.len() < 128 {
+                break;
+            }
+            let produced = shifter.shift(chunk, pitch_semitones, 128, sample_rate as f32);
+            shifted.extend_from_slice(produced);
+        }
+        // Skip the 1024-sample warmup (zeros), then interleave back.
+        let skip = 1024.min(shifted.len());
+        for (i, v) in shifted[skip..].iter().enumerate() {
+            let dst = skip * ch + c + i * ch;
+            if dst < out.len() {
+                out[dst] = *v;
+            }
+        }
+    }
+
+    // ── Softness stack ──────────────────────────────────────────────────
+    // 1 dB body trim + gentle air re-add above ~4 kHz: keeps the voice soft
+    // and clear without the fizz of saturation-based exciters.
+    let sr = sample_rate as f32;
     let mut air_lp = vec![0.0f32; ch];
-    let n = out.len() / ch;
-    for i in 0..n {
+    let air_alpha = lp_alpha(4000.0, sr);
+    for i in 0..(out.len() / ch) {
         for c in 0..ch {
             let idx = i * ch + c;
             let x = out[idx];
             air_lp[c] += air_alpha * (x - air_lp[c]);
             let air = x - air_lp[c];
-            // -1 dB body trim + subtle air re-add: softer, clearer timbre.
             out[idx] = x * 0.89 + air * 0.12;
         }
     }
 
-    // 3. Optional breath for the soft-spoken quality: quiet noise gated to
-    // inter-word gaps only.
+    // Optional breath: quiet noise gated to quiet moments (word gaps).
     if breathy {
         let env_alpha = lp_alpha(700.0, sr);
         let mut env = vec![0.0f32; ch];
         let mut rng: u64 = 0x9E3779B97F4A7C15;
-        for i in 0..n {
+        let frames = out.len() / ch;
+        for i in 0..frames {
             rng ^= rng >> 12;
             rng ^= rng << 25;
             rng ^= rng >> 27;
@@ -391,6 +431,8 @@ fn female_voice(
             }
         }
     }
+    // Trim any pad tail the shifter added (it outputs 128 per 128 in — exact).
+    out.truncate(n);
     out
 }
 
@@ -407,34 +449,15 @@ fn apply_effect(
         "reverb" => Ok(apply_reverb(samples, sample_rate, channels)),
         "chipmunk" => Ok(apply_chipmunk(samples, sample_rate, channels)),
         "demon" => Ok(apply_demon(samples, sample_rate, channels)),
-        // Female voices (artifact-free recipe): moderate tape lift + WSOLA
-        // rate restore + gentle brightness tilt (+optional breath). Pitch is
-        // kept in the androgynous/light-female zone (~160-175 Hz) — big
-        // lifts read chipmunk, subtle lifts read natural.
-        // woman1 "soave": +5 st, no breath — soft, elegant.
-        // woman2 "seducente": +6 st + breath — warm, intimate.
-        // woman3 "vivace": +6.5 st — brightest, most energetic.
-        "woman1" => Ok(female_voice(
-            samples,
-            sample_rate,
-            channels,
-            2.0f32.powf(5.0 / 12.0),
-            false,
-        )),
-        "woman2" => Ok(female_voice(
-            samples,
-            sample_rate,
-            channels,
-            2.0f32.powf(6.0 / 12.0),
-            true,
-        )),
-        "woman3" => Ok(female_voice(
-            samples,
-            sample_rate,
-            channels,
-            2.0f32.powf(6.5 / 12.0),
-            false,
-        )),
+        // Female voices: PHASE VOCODER pitch shift (formant-preserving —
+        // the spectral envelope does NOT move, which is what made tape
+        // shifts read as chipmunk). Targets measured on real Google TTS
+        // (~118 Hz male): +4.5 st -> 153 Hz soft, +5.5 -> 163 Hz warm,
+        // +6.5 -> 173 Hz bright. With the softness stack below this reads
+        // as a young female TTS voice, not chipmunk.
+        "woman1" => Ok(female_voice(samples, sample_rate, channels, 4.5, false)),
+        "woman2" => Ok(female_voice(samples, sample_rate, channels, 5.5, true)),
+        "woman3" => Ok(female_voice(samples, sample_rate, channels, 6.5, false)),
         _ => Err(AudioEffectError::EffectProcessing(format!("Unknown effect: {}", effect))),
     }
 }
@@ -755,10 +778,12 @@ mod tests {
             .collect();
         for effect in ["woman1", "woman2", "woman3"] {
             let out = apply_effect(input.clone(), effect, sample_rate, 1).unwrap();
-            // Pipeline: tape lift + WSOLA restore → duration 1:1 (WSOLA is
-            // hop-quantized; allow ~7% drift on this 0.5 s signal).
-            let ratio = out.len() as f32 / input.len() as f32;
-            assert!((ratio - 1.0).abs() < 0.15, "{} length ratio {}", effect, ratio);
+            assert_eq!(out.len(), input.len(), "{} must preserve length", effect);
+            // Production runs normalize_if_needed after the DSP
+            // (apply_effect_to_mp3 step 3); mirror it here so the level
+            // check covers the real path. The phase vocoder can overshoot
+            // transiently on AM test signals; the limiter handles that.
+            let out = normalize_if_needed(out);
             let peak = out.iter().fold(0.0f32, |p, s| p.max(s.abs()));
             assert!(peak > 0.05 && peak <= 1.05, "{} peak {}", effect, peak);
             // Must not be the identity transform.

@@ -25,6 +25,7 @@ mp3lame-encoder = "0.2"
 urlencoding = "2.1"
 regex = "1"
 rand = "0.8"
+pitch_shift = "2.1"
 sysinfo = "0.30"
 id3 = "1.14"
 uuid = { version = "1.10", features = ["v4"] }
