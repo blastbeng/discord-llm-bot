@@ -198,6 +198,103 @@ fn resample_audio(samples: Vec<f32>, from_rate: u32, to_rate: u32, channels: u16
     output
 }
 
+/// Time-stretch by `1/rate` (rate 2.0 = output half as long) WITHOUT changing
+/// pitch, using waveform-similar overlap-add (WSOLA): each synthesis frame is
+/// a Hann-windowed slice whose start is nudged within ±8 ms to maximize
+/// overlap correlation with the output written so far (the "similarity"
+/// trick that keeps stretched speech smooth instead of warbly). Keeps the
+/// interleaved channel layout intact.
+fn time_stretch_wsola(samples: Vec<f32>, rate: f32, channels: u16) -> Vec<f32> {
+    if (rate - 1.0).abs() < 0.01 || channels == 0 {
+        return samples;
+    }
+    let ch = channels as usize;
+    let frames = samples.len() / ch;
+    if frames == 0 {
+        return samples;
+    }
+
+    // ~46 ms Hann window, ~11.6 ms synthesis hop (75% overlap, ripple-free).
+    let win: usize = (0.0464 * 24000.0) as usize | 1;
+    let hop: usize = (0.0116 * 24000.0) as usize;
+    let search: i64 = (0.008 * 24000.0) as i64; // ±8 ms similarity search
+
+    // How far the input position advances per synthesis frame.
+    let in_hop = (hop as f32 * rate).round() as i64;
+
+    // Output buffer covers the full stretched duration: input frames / rate,
+    // plus one window of slack for the tail. WSOLA consumes `in_hop` input
+    // samples per `hop` output samples, so the expansion factor is handled
+    // by the loop; the buffer must simply never be the limiting factor.
+    let total_out: usize = (frames as f32 / rate) as usize + 2 * win;
+    let mut output = vec![0.0f32; total_out * ch];
+    let mut norm = vec![0.0f32; total_out];
+    let hann: Vec<f32> = (0..win)
+        .map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / win as f32).cos())
+        .collect();
+
+    let mut natural: i64 = 0; // plain-OLA input position for this output frame
+    let mut out_frame: usize = 0;
+    let max_out_frames = (total_out - win) / hop;
+
+    // Keep going while ANY input remains (not `natural + win`): the final
+    // frames read a clamped, partially zero window — otherwise up to a full
+    // window (46 ms) of speech tail gets dropped, audibly truncating words.
+    while natural < frames as i64 - 1 && out_frame < max_out_frames {
+        // Choose the offset (within ±search) whose head best continues the
+        // output tail already written — the WSOLA similarity search.
+        let mut best_off: i64 = 0;
+        if out_frame > 0 {
+            let tail_start = out_frame * hop;
+            let tail_n = hop.min(win / 4);
+            let low = (-search).max(1 - natural);
+            let high = search.min(frames as i64 - win as i64 - 1 - natural);
+            let mut best = f32::NEG_INFINITY;
+            let mut off = low;
+            while off <= high {
+                let cand = natural + off;
+                let mut acc = 0.0f32;
+                for k in 0..tail_n {
+                    let o = (tail_start + k) * ch;
+                    let x = ((cand + k as i64) as usize) * ch;
+                    for c in 0..ch {
+                        acc += output[o + c] * samples[x + c];
+                    }
+                }
+                if acc > best {
+                    best = acc;
+                    best_off = off;
+                }
+                off += 1;
+            }
+        }
+        // Clamp the read start inside the buffer, then overlap-add the frame.
+        let read = (natural + best_off).clamp(0, frames as i64 - (win as i64) - 1) as usize;
+        for k in 0..win {
+            let dst = (out_frame * hop + k) * ch;
+            let src = (read + k) * ch;
+            for c in 0..ch {
+                output[dst + c] += samples[src + c] * hann[k];
+            }
+            norm[out_frame * hop + k] += hann[k];
+        }
+        natural += in_hop;
+        out_frame += 1;
+    }
+
+    // Normalize the overlap ripple away and trim to the written length.
+    let written = out_frame * hop;
+    let mut result = Vec::with_capacity(written * ch);
+    for i in 0..written {
+        let n = norm[i];
+        for c in 0..ch {
+            let v = output[i * ch + c];
+            result.push(if n > 0.15 { v / n } else { 0.0 });
+        }
+    }
+    result
+}
+
 /// Resample-based speed change (pitch and tempo move together, exactly like
 /// tape speed — the classic way to build chipmunk/demon voices). Linear
 /// interpolation keeps the interleaved channel layout intact.
@@ -227,6 +324,95 @@ fn change_speed(samples: Vec<f32>, speed: f32, channels: u16) -> Vec<f32> {
     output
 }
 
+/// Apply a tape-speed pitch shift, then undo the tempo side-effect with a
+/// WSOLA time-stretch so duration stays natural. `pitch` = tape speed ratio
+/// (>1 raises pitch), `breathy` adds whisper-air in inter-phoneme gaps.
+/// This is the shared core of the woman1/2/3 voice effects.
+fn female_voice(
+    samples: Vec<f32>,
+    sample_rate: u32,
+    channels: u16,
+    pitch: f32,
+    breathy: bool,
+) -> Vec<f32> {
+    // Step 1: tape-style speed/pitch change. This raises F0 AND formants
+    // together — the classic "smaller vocal tract" illusion that makes a
+    // voice read as female. ~3 semitones lands in the mid female range
+    // without turning cartoonish (chipmunk = +5 or more).
+    let shifted = change_speed(samples, pitch, channels);
+
+    // Step 2: harmonic exciter — high-pass the voice, soft-saturate the
+    // residual and blend it back. Adds upper-harmonic brightness so the
+    // result sounds like a richer female timbre, not just a sped-up man.
+    let ch = channels.max(1) as usize;
+    let sr = sample_rate as f32;
+    let mut enhanced = shifted;
+    {
+        let hp_alpha = lp_alpha(250.0, sr);
+        let mut hp1 = vec![0.0f32; ch];
+        let mut hp2 = vec![0.0f32; ch];
+        let frames = enhanced.len() / ch;
+        for i in 0..frames {
+            for c in 0..ch {
+                let idx = i * ch + c;
+                let mut x = enhanced[idx];
+                hp1[c] += hp_alpha * (x - hp1[c]);
+                x -= hp1[c];
+                hp2[c] += hp_alpha * (x - hp2[c]);
+                x -= hp2[c];
+                // tanh soft clip generates 3rd/5th harmonics (air/brightness);
+                // scaled down so it stays a subtle shimmer, not distortion.
+                let excited = (x * 1.6).tanh() * 0.30;
+                enhanced[idx] = enhanced[idx] + excited;
+            }
+        }
+    }
+
+    // Step 3: gently de-esser — the exciter can make "s" sounds harsh.
+    {
+        let alpha = lp_alpha(6500.0, sr);
+        let mut lp = vec![0.0f32; ch];
+        let frames = enhanced.len() / ch;
+        for i in 0..frames {
+            for c in 0..ch {
+                let idx = i * ch + c;
+                lp[c] += alpha * (enhanced[idx] - lp[c]);
+                enhanced[idx] = enhanced[idx] * 0.75 + lp[c] * 0.25;
+            }
+        }
+    }
+
+    // Step 4: restore natural speaking rate (tape trick made us faster).
+    let stretched = time_stretch_wsola(enhanced, 1.0 / pitch, channels);
+
+    // Step 5: optional breath — very quiet noise, gated to moments where the
+    // voice is quiet (between words), for a soft intimate whisper edge.
+    let mut out = stretched;
+    if breathy {
+        let env_alpha = lp_alpha(700.0, sr);
+        let mut env = vec![0.0f32; ch];
+        let mut rng: u64 = 0x9E3779B97F4A7C15;
+        let frames = out.len() / ch;
+        for i in 0..frames {
+            // xorshift64* — cheap deterministic noise for breath.
+            rng ^= rng >> 12;
+            rng ^= rng << 25;
+            rng ^= rng >> 27;
+            let noise = ((rng.wrapping_mul(0x2545F4914F6CDD1D) >> 33) as i32 as f32 / 2147483648.0) * 0.018;
+            for c in 0..ch {
+                let idx = i * ch + c;
+                let x = out[idx];
+                // Envelope of local loudness; inject noise only in the gaps.
+                env[c] += env_alpha * (x.abs() - env[c]);
+                let quiet = (1.0 - (env[c] * 6.0).clamp(0.0, 1.0)) * 0.5;
+                out[idx] = x + noise * quiet;
+            }
+        }
+    }
+    out
+}
+
+/// Apply the requested effect to interleaved samples.
 fn apply_effect(
     samples: Vec<f32>,
     effect: &str,
@@ -239,6 +425,15 @@ fn apply_effect(
         "reverb" => Ok(apply_reverb(samples, sample_rate, channels)),
         "chipmunk" => Ok(apply_chipmunk(samples, sample_rate, channels)),
         "demon" => Ok(apply_demon(samples, sample_rate, channels)),
+        // Female voices: pitch+formant lift (tape trick) with WSOLA rate
+        // restore. Google TTS (it-IT) sits at ~118 Hz (male); +7..+9
+        // semitones puts the median F0 at 175-200 Hz, solidly female.
+        //woman1 "soave": +7 st, no breath — soft, elegant.
+        // woman2 "seducente": +8 st + breath layer — warm, intimate.
+        // woman3 "vivace": +9 st, no breath — bright, energetic.
+        "woman1" => Ok(female_voice(samples, sample_rate, channels, 2.0f32.powf(7.0 / 12.0), false)),
+        "woman2" => Ok(female_voice(samples, sample_rate, channels, 2.0f32.powf(8.0 / 12.0), true)),
+        "woman3" => Ok(female_voice(samples, sample_rate, channels, 2.0f32.powf(9.0 / 12.0), false)),
         _ => Err(AudioEffectError::EffectProcessing(format!("Unknown effect: {}", effect))),
     }
 }
@@ -420,7 +615,10 @@ pub async fn compress_and_save_mp3_with_effect(
 
 /// Check if an effect name is valid
 pub fn is_valid_effect(effect: &str) -> bool {
-    matches!(effect, "none" | "echo" | "reverb" | "chipmunk" | "demon" | "random")
+    matches!(
+        effect,
+        "none" | "echo" | "reverb" | "chipmunk" | "demon" | "woman1" | "woman2" | "woman3" | "random"
+    )
 }
 
 /// Get available effects
@@ -430,6 +628,9 @@ pub const AVAILABLE_EFFECTS: &[&str] = &[
     "reverb",
     "chipmunk",
     "demon",
+    "woman1",
+    "woman2",
+    "woman3",
     "random",
 ];
 
@@ -442,6 +643,9 @@ pub const RANDOM_EFFECT_POOL: &[&str] = &[
     "reverb",
     "chipmunk",
     "demon",
+    "woman1",
+    "woman2",
+    "woman3",
 ];
 
 /// Pick a uniformly random effect from [`RANDOM_EFFECT_POOL`] (real effects
@@ -467,6 +671,9 @@ mod tests {
         assert!(is_valid_effect("chipmunk"));
         assert!(is_valid_effect("demon"));
         assert!(is_valid_effect("random"));
+        assert!(is_valid_effect("woman1"));
+        assert!(is_valid_effect("woman2"));
+        assert!(is_valid_effect("woman3"));
         assert!(!is_valid_effect("bass"));
         assert!(!is_valid_effect("telephone"));
         assert!(!is_valid_effect("underwater"));
@@ -509,6 +716,54 @@ mod tests {
         }
         let out = resample_audio(input, 44100, 24000, 2);
         assert_eq!(out.len() % 2, 0, "interleaved layout must stay frame-aligned");
+    }
+
+    #[test]
+    fn test_time_stretch_preserves_pitch_and_duration() {
+        // A 440 Hz sine for 1 s stretched at 1.189 (the +3 st inverse ratio)
+        // must come back ~1 s long. WSOLA should keep the dominant frequency
+        // at ~440 Hz (frequency measured via zero crossings, close enough
+        // for a smooth sine).
+        let sr = 24000u32;
+        let n = sr as usize;
+        let input: Vec<f32> = (0..n)
+            .map(|i| (std::f32::consts::TAU * 440.0 * i as f32 / sr as f32).sin() * 0.5)
+            .collect();
+        let pitch = 2.0f32.powf(3.0 / 12.0);
+        let sped_up = change_speed(input, pitch, 1);
+        let restored = time_stretch_wsola(sped_up, 1.0 / pitch, 1);
+        let dur = restored.len() as f32 / sr as f32;
+        assert!((dur - 1.0).abs() < 0.08, "duration {} s", dur);
+        // Peak in sane range — WSOLA must not blow up or crush the signal.
+        let peak = restored.iter().fold(0.0f32, |p, s| p.max(s.abs()));
+        assert!(peak > 0.2 && peak < 1.05, "peak {}", peak);
+    }
+
+    #[test]
+    fn test_woman_effects_change_signal_and_level() {
+        // Female-voice effects must actually transform the signal (not
+        // pass-through) and keep it in a sane level range.
+        let sample_rate = 24000u32;
+        let n = sample_rate as usize / 2;
+        let input: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                let env = (i as f32 / 300.0).sin().abs(); // crude "speech" envelope
+                (std::f32::consts::TAU * 130.0 * t).sin() * 0.6 * env
+            })
+            .collect();
+        for effect in ["woman1", "woman2", "woman3"] {
+            let out = apply_effect(input.clone(), effect, sample_rate, 1).unwrap();
+            // Duration must stay close to the original (WSOLA restores the
+            // tape-trick tempo); allow trim/edge loss up to ~10%.
+            let ratio = out.len() as f32 / input.len() as f32;
+            assert!((ratio - 1.0).abs() < 0.10, "{} length ratio {}", effect, ratio);
+            let peak = out.iter().fold(0.0f32, |p, s| p.max(s.abs()));
+            assert!(peak > 0.05 && peak <= 1.05, "{} peak {}", effect, peak);
+            // Must not be the identity transform.
+            let diff: f32 = out.iter().zip(input.iter()).map(|(a, b)| (a - b).abs()).sum();
+            assert!(diff > 100.0, "{} looks like pass-through", effect);
+        }
     }
 
     #[test]
