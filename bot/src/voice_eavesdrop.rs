@@ -292,7 +292,8 @@ async fn play_eavesdrop_audio(
 
     let mut handler = handler_lock.lock().await;
     let source = songbird::input::File::new(file_path);
-    // Centralized playback: self-demutes the bot if server-muted, then applies
+    // Centralized playback: self-demutes the bot if server-muted (and
+    // self-untimeouts if server-timed-out), then applies
     // the user-set volume.
     crate::play_with_volume(ctx, &mut handler, source.into(), volume, guild_id).await;
 

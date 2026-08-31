@@ -10,6 +10,7 @@ mod tts;
 
 mod voice_eavesdrop;
 mod voice_mute;
+mod voice_timeout;
 use error::{ErrorTracker, Logger};
 use poise::serenity_prelude as serenity;
 use poise::serenity_prelude::Mentionable;
@@ -358,8 +359,10 @@ async fn voice_autocomplete(
 /// Centralized playback entry point. Every audio playback path must go
 /// through this instead of calling `handler.play_only(source)` directly:
 /// it first self-demutes the bot if a server admin voice-muted it (see
-/// [`crate::voice_mute`]), then plays the source and applies the stored
-/// volume so the bot respects the level set by /volume across all tracks.
+/// [`crate::voice_mute`]), then self-removes the bot's timeout if a server
+/// admin timed it out (see [`crate::voice_timeout`]), then plays the source
+/// and applies the stored volume so the bot respects the level set by
+/// /volume across all tracks.
 pub async fn play_with_volume(
     ctx: &serenity::Context,
     handler: &mut songbird::Call,
@@ -368,6 +371,7 @@ pub async fn play_with_volume(
     guild_id: serenity::GuildId,
 ) {
     crate::voice_mute::ensure_bot_not_muted(ctx, guild_id).await;
+    crate::voice_timeout::ensure_bot_not_timed_out(ctx, guild_id).await;
     let track_handle = handler.play_only(source.into());
     // Apply the stored volume level to the new track
     let vol = *volume.lock().unwrap();

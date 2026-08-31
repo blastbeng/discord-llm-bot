@@ -474,7 +474,7 @@ async fn speak_welcome(
             let mut h = handler.lock().await;
             if h.current_channel().is_some() {
                 // Play the welcome through the centralized playback path so the
-                // bot self-demutes (if server-muted) and the user-set volume applies.
+                // bot self-demutes/self-untimeouts and the user-set volume applies.
                 let source = songbird::input::File::new(tts_result.file_path.clone());
                 crate::play_with_volume(ctx, &mut h, source.into(), &data.volume, guild_id).await;
                 let vol = *data.volume.lock().unwrap();
@@ -581,7 +581,7 @@ async fn speak_here_i_am_impl(
             let mut h = handler.lock().await;
             if h.current_channel().is_some() {
                 // Play the announcement through the centralized playback path so
-                // the bot self-demutes (if server-muted) and the user-set volume applies.
+                // the bot self-demutes/self-untimeouts and the user-set volume applies.
                 let source = songbird::input::File::new(tts_result.file_path.clone());
                 crate::play_with_volume(ctx, &mut h, source.into(), volume, guild_id).await;
                 let vol = *volume.lock().unwrap();
@@ -653,7 +653,7 @@ async fn speak_goodbye(
             let mut h = handler.lock().await;
             if h.current_channel().is_some() {
                 // Play the goodbye through the centralized playback path so the
-                // bot self-demutes (if server-muted) and the user-set volume applies.
+                // bot self-demutes/self-untimeouts and the user-set volume applies.
                 let source = songbird::input::File::new(tts_result.file_path.clone());
                 crate::play_with_volume(ctx, &mut h, source.into(), &data.volume, guild_id).await;
                 let vol = *data.volume.lock().unwrap();
