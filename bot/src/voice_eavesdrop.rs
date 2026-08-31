@@ -241,7 +241,10 @@ pub async fn start_eavesdrop_loop(ctx: Context, db_pool: SqlitePool, volume: Arc
             log::info!("voice_eavesdrop: LLM response ({} chars): {}", response.len(), preview);
 
             // Generate TTS and play using songbird::get() pattern
-            let tts_result = match tts::get_or_generate_tts_with_effect(&response, "Google", "none").await {
+            // Random effect per eavesdrop comment: the bot never comments the
+            // same way twice. Applied on-the-fly from the plain cache.
+            let effect = crate::audio_effects::random_effect();
+            let tts_result = match tts::get_or_generate_tts_with_effect(&response, "Google", effect).await {
                 Ok(r) => r,
                 Err(e) => {
                     log::warn!("voice_eavesdrop: TTS generation error: {}", e);

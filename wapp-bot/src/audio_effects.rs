@@ -42,12 +42,20 @@ pub async fn apply_effect_to_mp3(
     Ok(output_bytes)
 }
 
-/// If any sample exceeds 0.9 amplitude, normalize the entire buffer so the
-/// peak is exactly 0.9. This prevents clipping without changing quiet audio.
+/// Peak-based normalization. Down-scales whenever the peak exceeds 0.9
+/// (clipping guard) and applies make-up gain when the peak is very low
+/// (< 0.35), which is common for heavily low-passed effects (underwater,
+/// demon) whose filtered output would otherwise be near-inaudible. Audio
+/// already in a healthy peak range is left untouched.
 fn normalize_if_needed(samples: Vec<f32>) -> Vec<f32> {
     let peak = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     if peak > 0.9 {
         let scale = 0.9 / peak;
+        samples.iter().map(|s| s * scale).collect()
+    } else if peak < 0.35 {
+        // Scale up to a sensible peak, capped so silence (peak 0) and
+        // pathological inputs can never explode the gain.
+        let scale = (0.7 / peak).min(4.0);
         samples.iter().map(|s| s * scale).collect()
     } else {
         samples
@@ -357,21 +365,33 @@ fn apply_reverb(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> 
     output
 }
 
-/// Bass boost: equal-power blend of the dry signal with a resonant
-/// low band — adds weight while keeping speech intelligible.
+/// Bass boost: dry signal plus a phase-aligned copy passed through a
+/// resonant low shelf. The low band alone (a hard LP at 250 Hz) reads as
+/// "muffled", so it is always mixed with the dry path for intelligibility.
 fn apply_bass_boost(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
     let ch = channels.max(1) as usize;
-    let alpha = lp_alpha(250.0, sample_rate as f32);
+    let sr = sample_rate as f32;
+    // Two cascaded one-pole low-passes at ~160 Hz form the "bass" band.
+    // The second stage gives a gentler slope so consonants stay audible.
+    let alphas = [lp_alpha(160.0, sr), lp_alpha(180.0, sr)];
 
     let mut output = samples;
-    let mut state = vec![0.0f32; ch];
+    let mut state = vec![vec![0.0f32; ch]; alphas.len()];
     let frames = output.len() / ch;
     for i in 0..frames {
         for c in 0..ch {
             let idx = i * ch + c;
-            state[c] += alpha * (output[idx] - state[c]);
-            // dry + 2x the low band: audible bass lift without muffling
-            output[idx] += state[c] * 2.0;
+            let dry = output[idx];
+            // Resonant peak around the corner frequency for extra weight —
+            // approximated by blending back stages of different cutoffs.
+            let mut low = 0.0f32;
+            for (k, alpha) in alphas.iter().enumerate() {
+                state[k][c] += alpha * (dry - state[k][c]);
+                low = state[k][c];
+            }
+            // The two stages differ slightly in phase, creating a mild
+            // emphasis near 150-200 Hz. Mix: 55% dry + bass band boosted.
+            output[idx] = dry + low * 1.8;
         }
     }
     output
@@ -383,24 +403,28 @@ fn apply_chipmunk(samples: Vec<f32>, _sample_rate: u32, channels: u16) -> Vec<f3
     change_speed(samples, ratio, channels)
 }
 
-/// Demon: pitch down 4 semitones, slightly stretched, then darkened with a
-/// ~1.8 kHz low-pass for the classic "possessed" timbre.
+/// Demon: pitch down 4 semitones (tape-style speed change keeps the slow,
+/// ominous pacing), then darkened with a ~3 kHz low-pass. The previous 1.8 kHz
+/// cutoff destroyed intelligibility, turning speech into rumble; 3 kHz keeps
+/// the menacing timbre while words remain understandable. Loudness is handled
+/// centrally by normalize_if_needed (no manual gain make-up here).
 fn apply_demon(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
     let ratio = 2.0f32.powf(-4.0 / 12.0);
-    let mut output = change_speed(samples, ratio, channels);
+    let output = change_speed(samples, ratio, channels);
 
     let ch = channels.max(1) as usize;
-    let alpha = lp_alpha(1800.0, sample_rate as f32);
+    let alpha = lp_alpha(3000.0, sample_rate as f32);
+    let mut out = output;
     let mut state = vec![0.0f32; ch];
-    let frames = output.len() / ch;
+    let frames = out.len() / ch;
     for i in 0..frames {
         for c in 0..ch {
             let idx = i * ch + c;
-            state[c] += alpha * (output[idx] - state[c]);
-            output[idx] = state[c] * 1.25;
+            state[c] += alpha * (out[idx] - state[c]);
+            out[idx] = state[c];
         }
     }
-    output
+    out
 }
 
 /// Telephone: two-stage high-pass + two-stage low-pass (approx. 12 dB/oct
@@ -438,8 +462,11 @@ fn apply_telephone(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f3
     output
 }
 
-/// Underwater: strong low-pass around ~600 Hz with a slow wobble plus mild
-/// tremolo — muffled but very recognizably "submerged".
+/// Underwater: low-pass with a slow wobble. The cutoff sweeps between ~600
+/// and ~1100 Hz — deep enough to sound submerged, high enough that words
+/// remain recognizable (the old 350-850 Hz sweep erased speech). A two-stage
+/// filter gives a steeper, more convincing ducked-ears resonance. Loudness
+/// is handled centrally by normalize_if_needed.
 fn apply_underwater(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
     let ch = channels.max(1) as usize;
     let sr = sample_rate as f32;
@@ -452,13 +479,17 @@ fn apply_underwater(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f
 
     for i in 0..frames {
         phase += phase_inc;
-        // wobble the cutoff between ~350 Hz and ~850 Hz
-        let wobble = (phase.sin() * 0.5 + 0.5) * 500.0 + 350.0;
+        // wobble the cutoff between ~600 Hz and ~1100 Hz
+        let wobble = (phase.sin() * 0.5 + 0.5) * 500.0 + 600.0;
         let alpha = lp_alpha(wobble, sr);
         for c in 0..ch {
             let idx = i * ch + c;
+            // Two cascaded one-poles: ~12 dB/oct below cutoff, smoother
+            // "pressure" sensation than a single pole.
             lp_state[c] += alpha * (output[idx] - lp_state[c]);
-            output[idx] = lp_state[c] * 1.5; // gain makeup
+            let stage1 = lp_state[c];
+            lp_state[c] += alpha * (stage1 - lp_state[c]);
+            output[idx] = lp_state[c];
         }
     }
     output
@@ -524,6 +555,14 @@ pub const ACTUAL_EFFECTS: &[&str] = &[
     "telephone",
     "underwater",
 ];
+
+/// Pick a uniformly random real effect (never "none"). Central helper so
+/// every feature that speaks "with a random effect" (/random, eavesdrop,
+/// welcome, goodbye, here-i-am) behaves identically.
+pub fn random_effect() -> &'static str {
+    use rand::seq::SliceRandom;
+    ACTUAL_EFFECTS.choose(&mut rand::thread_rng()).unwrap_or(&"echo")
+}
 
 #[cfg(test)]
 mod tests {

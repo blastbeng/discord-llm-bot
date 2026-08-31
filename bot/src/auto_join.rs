@@ -456,10 +456,10 @@ async fn speak_welcome(
         return;
     };
 
-    // Welcome audio is always played without effects. The raw Google TTS bytes
-    // are written directly to disk (no MP3 round-trip) so playback is reliable
-    // and the welcome is always clear/intelligible.
-    let effect = "none";
+    // A random real effect per welcome keeps the bot's personality fresh;
+    // the raw Google TTS bytes are persisted first (plain cache) and the
+    // effect is applied on-the-fly from there.
+    let effect = crate::audio_effects::random_effect();
 
     let tts_result = match tts::get_or_generate_tts_with_effect(&phrase, "Google", effect).await {
         Ok(r) => r,
@@ -563,10 +563,10 @@ async fn speak_here_i_am_impl(
         }
     };
 
-    // Announcement audio is always played without effects. The raw Google TTS
-    // bytes are written directly to disk (no MP3 round-trip) so playback is
-    // reliable and the announcement is always clear/intelligible.
-    let effect = "none";
+    // A random real effect per announcement keeps arrivals varied; the raw
+    // Google TTS bytes are persisted first (plain cache) and the effect is
+    // applied on-the-fly from there.
+    let effect = crate::audio_effects::random_effect();
 
     let tts_result = match tts::get_or_generate_tts_with_effect(&phrase, "Google", effect).await {
         Ok(r) => r,
@@ -635,8 +635,10 @@ async fn speak_goodbye(
         }
     };
 
-    // Goodbye is always played without effects for clarity and reliability.
-    let effect = "none";
+    // A random real effect per goodbye keeps the insults varied; the raw
+    // Google TTS bytes are persisted first (plain cache) and the effect is
+    // applied on-the-fly from there.
+    let effect = crate::audio_effects::random_effect();
 
     let tts_result = match tts::get_or_generate_tts_with_effect(&phrase, "Google", effect).await {
         Ok(r) => r,
