@@ -74,6 +74,7 @@ pub struct Lang {
     pub no_sentences_found: String,
     pub error_generating_audio: String,
     pub ai_unavailable: String,
+    pub ai_refused: String,
     pub translation_failed: String,
 }
 
@@ -171,6 +172,7 @@ impl Lang {
                 no_sentences_found: "No sentences found in the database.".to_string(),
                 error_generating_audio: "Error generating audio. Please try again later.".to_string(),
                 ai_unavailable: "The AI is currently unavailable. Please try again later.".to_string(),
+                ai_refused: "The AI declined to answer that one 🙈. Try asking something else.".to_string(),
                 translation_failed: "Translation failed. Please try again later.".to_string(),
             },
             _ => Self {
@@ -263,6 +265,7 @@ impl Lang {
                 no_sentences_found: "Nessuna frase trovata nel database.".to_string(),
                 error_generating_audio: "Errore nella generazione dell'audio. Riprova piú tardi.".to_string(),
                 ai_unavailable: "L'IA non é al momento disponibile. Riprova piú tardi.".to_string(),
+                ai_refused: "L'IA ha declinato di rispondere 🙈. Prova a chiedere qualcos'altro.".to_string(),
                 translation_failed: "Traduzione non riuscita. Riprova piú tardi.".to_string(),
             }
         }

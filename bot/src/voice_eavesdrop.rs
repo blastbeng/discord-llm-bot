@@ -10,6 +10,47 @@ use crate::error::BotError;
 pub struct VoiceEavesdropState {
     /// Random timeout in seconds for the next eavesdrop session.
     pub next_eavesdrop_secs: Option<u64>,
+    /// Runtime enable flag (toggled by /enable and /disable). The loop only
+    /// schedules new eavesdrop sessions while this is true. Initialized from
+    /// VOICE_EAVESDROP_ENABLED so the env var still controls the default.
+    pub enabled: bool,
+}
+
+/// Global handle to the eavesdrop state so the /enable and /disable slash
+/// commands can flip the runtime flag the background loop reads. Populated
+/// once by start_eavesdrop_loop; commands are a no-op before that.
+static SHARED_STATE: std::sync::OnceLock<Arc<tokio::sync::RwLock<VoiceEavesdropState>>> =
+    std::sync::OnceLock::new();
+
+fn set_shared_state(state: Arc<tokio::sync::RwLock<VoiceEavesdropState>>) {
+    let _ = SHARED_STATE.set(state);
+}
+
+/// Enable/disable new eavesdrop sessions at runtime. Returns the new state,
+/// or None if the eavesdrop loop has not started yet.
+pub async fn set_enabled(enable: bool) -> Option<bool> {
+    match SHARED_STATE.get() {
+        Some(state) => {
+            let mut s = state.write().await;
+            s.enabled = enable;
+            // Reset any pending timer so re-enabling schedules a fresh
+            // randomized session instead of firing immediately.
+            if !enable {
+                s.next_eavesdrop_secs = None;
+            }
+            Some(s.enabled)
+        }
+        None => None,
+    }
+}
+
+/// Current runtime eavesdrop state, if the loop has started.
+#[allow(dead_code)]
+pub async fn is_enabled() -> Option<bool> {
+    match SHARED_STATE.get() {
+        Some(state) => Some(state.read().await.enabled),
+        None => None,
+    }
 }
 
 /// Validate an LLM response — reject anything that looks like a safety block,
@@ -43,14 +84,24 @@ fn validate_response(text: &str) -> bool {
 /// poise `Data`, because it is spawned from the framework setup closure before
 /// poise's user data exists — same pattern as the auto-join scanner loop.
 pub async fn start_eavesdrop_loop(ctx: Context, db_pool: SqlitePool, volume: Arc<std::sync::Mutex<f32>>) {
-    let state = Arc::new(tokio::sync::RwLock::new(VoiceEavesdropState::default()));
-    log::info!("voice_eavesdrop: loop starting (min={}s, max={}s)",
-        lang::config_min_secs(), lang::config_max_secs());
+    // The runtime flag starts as the configured default (VOICE_EAVESDROP_ENABLED)
+    // and can be flipped at runtime by the /enable and /disable commands.
+    let initial = lang::config_enabled();
+    let state = Arc::new(tokio::sync::RwLock::new(VoiceEavesdropState {
+        enabled: initial,
+        ..Default::default()
+    }));
+    // Share the state with the slash commands via OnceLock so /enable and
+    // /disable can flip the flag the loop reads.
+    set_shared_state(state.clone());
+    log::info!("voice_eavesdrop: loop starting (min={}s, max={}s, initially {})",
+        lang::config_min_secs(), lang::config_max_secs(),
+        if initial { "enabled" } else { "disabled" });
 
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
 
-        if !lang::config_enabled() {
+        if !state.read().await.enabled {
             continue;
         }
 

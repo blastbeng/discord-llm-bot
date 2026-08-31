@@ -2251,6 +2251,40 @@ async fn cap_soundboard_cache(cache_dir: &str, max_files: usize) {
     }
 }
 
+/// Toggle voice eavesdropping runtime flag and reply with a lang message.
+async fn toggle_eavesdrop(ctx: Context<'_>, enable: bool) -> Result<(), Error> {
+    ctx.defer_ephemeral().await?;
+    let action = if enable { "enable" } else { "disable" };
+    log::info!("[GUILDID : {}] {} command invoked by user {}", ctx.guild_id().unwrap(), action, ctx.author().id);
+    let lang = &ctx.data().lang;
+
+    // Available to every user who can use slash commands — toggling
+    // eavesdropping is a community moderation action, not admin-gated.
+
+    match voice_eavesdrop::set_enabled(enable).await {
+        Some(_) => {
+            let msg = if enable { &lang.eavesdrop_enabled } else { &lang.eavesdrop_disabled };
+            ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await?;
+        }
+        None => {
+            ctx.send(poise::CreateReply::default().content(&lang.eavesdrop_not_ready).ephemeral(true)).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Disable voice eavesdropping at runtime.
+#[poise::command(slash_command, user_cooldown = 5)]
+async fn disable(ctx: Context<'_>) -> Result<(), Error> {
+    toggle_eavesdrop(ctx, false).await
+}
+
+/// Enable voice eavesdropping at runtime.
+#[poise::command(slash_command, user_cooldown = 5)]
+async fn enable(ctx: Context<'_>) -> Result<(), Error> {
+    toggle_eavesdrop(ctx, true).await
+}
+
 /// Restart bot.
 #[poise::command(slash_command, user_cooldown = 5)]
 async fn restart(ctx: Context<'_>) -> Result<(), Error> {
@@ -2502,7 +2536,7 @@ async fn main() {
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![join(), leave(), stop(), speak(), random(), ask(), translate(), volume(), audio(), soundboard(), restart(), rename(), avatar(), help(), stats(), joke()],
+            commands: vec![join(), leave(), stop(), speak(), random(), ask(), translate(), volume(), audio(), soundboard(), restart(), rename(), avatar(), help(), stats(), joke(), disable(), enable()],
             pre_command: |ctx| {
                 Box::pin(async move {
                     let command_name = ctx.command().name.as_str();
@@ -2637,7 +2671,9 @@ async fn main() {
                                         .field("📊 /stats", &lang.help_stats_desc, false)
                                         .field("🔄 /restart", &lang.help_restart_desc, false)
                                         .field("✏️ /rename", &lang.help_rename_desc, false)
-                                        .field("🖼️ /avatar", &lang.help_avatar_desc, false),
+                                        .field("🖼️ /avatar", &lang.help_avatar_desc, false)
+                                        .field("🔇 /disable", &lang.eavesdrop_disabled_desc, false)
+                                        .field("🔊 /enable", &lang.eavesdrop_enabled_desc, false),
                                     "all" => serenity::CreateEmbed::new()
                                         .title(&lang.help_title)
                                         .color(0x57F287)
@@ -2656,7 +2692,9 @@ async fn main() {
                                         .field("❓ /help", &lang.help_help_desc, false)
                                         .field("🔄 /restart", &lang.help_restart_desc, false)
                                         .field("✏️ /rename", &lang.help_rename_desc, false)
-                                        .field("🖼️ /avatar", &lang.help_avatar_desc, false),
+                                        .field("🖼️ /avatar", &lang.help_avatar_desc, false)
+                                        .field("🔇 /disable", &lang.eavesdrop_disabled_desc, false)
+                                        .field("🔊 /enable", &lang.eavesdrop_enabled_desc, false),
                                     _ => return Ok(()),
                                 };
                                 component.edit_response(ctx, serenity::EditInteractionResponse::new().embed(embed)).await?;

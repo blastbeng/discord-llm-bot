@@ -85,6 +85,11 @@ pub struct Lang {
     pub help_rename_desc: String,
     pub help_avatar_desc: String,
     pub help_help_desc: String,
+    pub eavesdrop_enabled: String,
+    pub eavesdrop_disabled: String,
+    pub eavesdrop_not_ready: String,
+    pub eavesdrop_enabled_desc: String,
+    pub eavesdrop_disabled_desc: String,
 }
 
 impl Lang {
@@ -183,6 +188,11 @@ impl Lang {
                 help_rename_desc: "Change the bot's nickname (admin only, parent server only)".to_string(),
                 help_avatar_desc: "Change the bot's avatar image (admin only, parent server only)".to_string(),
                 help_help_desc: "Show this help message".to_string(),
+                eavesdrop_enabled: "Voice eavesdropping ENABLED — I may randomly comment on conversations again.".to_string(),
+                eavesdrop_disabled: "Voice eavesdropping DISABLED — I will stay quiet until you use /enable.".to_string(),
+                eavesdrop_not_ready: "The eavesdrop feature is not initialized yet, please try again later.".to_string(),
+                eavesdrop_enabled_desc: "Re-enable random voice eavesdropping".to_string(),
+                eavesdrop_disabled_desc: "Silence random voice eavesdropping".to_string(),
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
@@ -276,6 +286,11 @@ impl Lang {
                 help_rename_desc: "Cambia il nickname del bot (solo admin, solo server padre)".to_string(),
                 help_avatar_desc: "Cambia l'immagine avatar del bot (solo admin, solo server padre)".to_string(),
                 help_help_desc: "Mostra questo messaggio di aiuto".to_string(),
+                eavesdrop_enabled: "Ascolto casuale ATTIVATO — potrei commentare di nuovo le conversazioni a caso.".to_string(),
+                eavesdrop_disabled: "Ascolto casuale DISATTIVATO — starò zitto finché non usi /enable.".to_string(),
+                eavesdrop_not_ready: "La funzione di ascolto casuale non è ancora inizializzata, riprova più tardi.".to_string(),
+                eavesdrop_enabled_desc: "Riattiva i commenti vocali casuali".to_string(),
+                eavesdrop_disabled_desc: "Silenzia i commenti vocali casuali".to_string(),
             }
         }
     }

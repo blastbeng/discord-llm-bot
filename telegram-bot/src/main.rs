@@ -439,6 +439,13 @@ async fn cmd_ask(state: &AppState, chat_id: &str, args: &str) -> String {
     };
 
     match llm::ask(&text, &db_sentences, "Telegram Bot", &history).await {
+        Ok(response) if llm::is_refusal_error(&response) => {
+            // The LLM refused — never answer with the refusal boilerplate and
+            // never persist it (it would poison the shared sentence database
+            // and resurface via other bots' TTS).
+            log::warn!("telegram-bot: LLM refused the request, not answering with it");
+            state.lang.ai_refused.clone()
+        }
         Ok(response) => {
             log::info!("telegram-bot: LLM response: {:?}", response);
 

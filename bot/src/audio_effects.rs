@@ -2,19 +2,6 @@ use std::io::Cursor;
 use thiserror::Error;
 use mp3lame_encoder::Builder;
 use minimp3::Decoder;
-use oximedia_effects::{
-    AudioEffect,
-    delay::delay::{DelayConfig, MonoDelay, FeedbackSaturationMode},
-    filter::state_variable::{StateVariableConfig, StateVariableFilter, FilterMode},
-    pitch::shifter::{PitchShifter, PitchShifterConfig},
-    reverb::freeverb::Freeverb,
-    ReverbConfig,
-};
-
-// `chunks_exact(2)` is used to split interleaved stereo samples into left/right
-// channels. The constant chunk size is intentional for the split-then-recombine
-// pattern used below; `as_chunks` doesn't compose well with `.unzip()`.
-#[allow(clippy::chunks_exact_to_as_chunks)]
 
 #[derive(Debug, Error)]
 pub enum AudioEffectError {
@@ -29,7 +16,7 @@ pub enum AudioEffectError {
 }
 
 /// Apply an audio effect to MP3 bytes and return processed MP3 bytes.
-/// This replaces the ffmpeg-based approach with pure Rust DSP processing.
+/// Pure-Rust DSP (decode -> process -> encode), no external effect crates.
 pub async fn apply_effect_to_mp3(
     input_bytes: Vec<u8>,
     effect: &str,
@@ -38,7 +25,7 @@ pub async fn apply_effect_to_mp3(
     // 1. Decode MP3 to raw PCM samples
     let (mut samples, decoded_sample_rate, channels) = decode_mp3(&input_bytes)?;
 
-    // Resample if needed (Google TTS is typically 24kHz or 44.1kHz)
+    // Resample if needed (Google TTS is typically 24kHz, music is 44.1/48kHz)
     if decoded_sample_rate != sample_rate {
         samples = resample_audio(samples, decoded_sample_rate, sample_rate, channels);
     }
@@ -47,9 +34,6 @@ pub async fn apply_effect_to_mp3(
     let processed_samples = apply_effect(samples, effect, sample_rate, channels)?;
 
     // 2b. Clamp/normalize samples to prevent clipping distortion.
-    // Some effects (especially reverb) can produce samples with amplitude > 1.0,
-    // which causes severe clipping during MP3 encoding and results in distorted
-    // or silent audio. We normalize to 0.9 max to leave headroom.
     let processed_samples = normalize_if_needed(processed_samples);
 
     // 3. Encode back to MP3
@@ -64,7 +48,6 @@ fn normalize_if_needed(samples: Vec<f32>) -> Vec<f32> {
     let peak = samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
     if peak > 0.9 {
         let scale = 0.9 / peak;
-        log::debug!("apply_effect_to_mp3: normalizing, peak={:.4} -> scale={:.4}", peak, scale);
         samples.iter().map(|s| s * scale).collect()
     } else {
         samples
@@ -78,11 +61,16 @@ fn decode_mp3(data: &[u8]) -> Result<(Vec<f32>, u32, u16), AudioEffectError> {
     let mut sample_rate = 0;
     let mut channels = 0;
 
-    while let Ok(frame) = decoder.next_frame() {
-        sample_rate = frame.sample_rate as u32;
-        channels = frame.channels as u16;
-        for sample in frame.data {
-            all_samples.push(sample as f32 / 32768.0);
+    loop {
+        match decoder.next_frame() {
+            Ok(frame) => {
+                sample_rate = frame.sample_rate as u32;
+                channels = frame.channels as u16;
+                for sample in frame.data {
+                    all_samples.push(sample as f32 / 32768.0);
+                }
+            }
+            Err(_) => break,
         }
     }
 
@@ -101,7 +89,7 @@ fn encode_mp3(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Result<Vec<
         .map_err(|e| AudioEffectError::Mp3Encode(format!("{:?}", e)))?
         .with_sample_rate(sample_rate)
         .map_err(|e| AudioEffectError::Mp3Encode(format!("{:?}", e)))?
-        .with_brate(mp3lame_encoder::Bitrate::Kbps64)
+        .with_brate(mp3lame_encoder::Bitrate::Kbps128)
         .map_err(|e| AudioEffectError::Mp3Encode(format!("{:?}", e)))?
         .with_quality(mp3lame_encoder::Quality::Good)
         .map_err(|e| AudioEffectError::Mp3Encode(format!("{:?}", e)))?
@@ -144,32 +132,94 @@ fn encode_mp3(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Result<Vec<
     Ok(output)
 }
 
-/// Simple linear resampling (basic, for demo - can be improved with rubato)
+/// One-pole low-pass coefficient for a given cutoff at a sample rate.
+#[inline]
+fn lp_alpha(cutoff_hz: f32, sample_rate: f32) -> f32 {
+    1.0 - (-std::f32::consts::TAU * cutoff_hz / sample_rate).exp()
+}
+
+/// High-quality resampling: anti-alias filtering when downsampling plus
+/// linear interpolation. Keeps the interleaved stereo layout intact.
 fn resample_audio(samples: Vec<f32>, from_rate: u32, to_rate: u32, channels: u16) -> Vec<f32> {
-    if from_rate == to_rate {
+    if from_rate == to_rate || channels == 0 {
         return samples;
+    }
+    let ch = channels as usize;
+    let mut padded = samples;
+    // Truncate to whole frames, then append one zero frame so interpolation
+    // can reach the end of the signal without reading past the buffer.
+    let frames = padded.len() / ch;
+    padded.truncate(frames * ch);
+    if frames == 0 {
+        return vec![0.0; ch];
+    }
+    padded.resize((frames + 1) * ch, 0.0);
+
+    // Downsampling: frequencies above the new Nyquist must be removed first,
+    // otherwise linear interpolation aliases them into the audible band.
+    if to_rate < from_rate {
+        let cutoff = (to_rate as f32 / 2.0) * 0.85;
+        let alpha = lp_alpha(cutoff, from_rate as f32);
+        // Three passes of one-pole filtering approximate a gentler rolloff
+        // while keeping the speech band flat.
+        for _pass in 0..3 {
+            let mut state = vec![0.0f32; ch];
+            for frame in padded.chunks_mut(ch) {
+                for c in 0..ch {
+                    state[c] += alpha * (frame[c] - state[c]);
+                    frame[c] = state[c];
+                }
+            }
+        }
     }
 
     let ratio = from_rate as f32 / to_rate as f32;
-    let frames = samples.len() / channels as usize;
-    let new_frames = (frames as f32 / ratio) as usize;
-    let mut output = Vec::with_capacity(new_frames * channels as usize);
+    let new_frames = ((frames as f32) / ratio).ceil() as usize;
+    let mut output = Vec::with_capacity(new_frames * ch);
 
-    for ch in 0..channels as usize {
-        for i in 0..new_frames {
-            let src_idx = (i as f32 * ratio) as usize * channels as usize + ch;
-            if src_idx < samples.len() {
-                output.push(samples[src_idx]);
-            } else {
-                output.push(0.0);
-            }
+    for i in 0..new_frames {
+        let src_pos = i as f32 * ratio;
+        let idx = (src_pos as usize).min(frames);
+        let frac = src_pos - (idx as f32);
+        for c in 0..ch {
+            let s0 = padded[idx * ch + c];
+            let s1 = padded[(idx + 1) * ch + c];
+            output.push(s0 + frac * (s1 - s0));
         }
     }
 
     output
 }
 
-/// Apply a specific effect to the audio samples
+/// Resample-based speed change (pitch and tempo move together, exactly like
+/// tape speed — the classic way to build chipmunk/demon voices). Linear
+/// interpolation keeps the interleaved channel layout intact.
+fn change_speed(samples: Vec<f32>, speed: f32, channels: u16) -> Vec<f32> {
+    if (speed - 1.0).abs() < 0.01 || channels == 0 {
+        return samples;
+    }
+    let ch = channels as usize;
+    let frames = samples.len() / ch;
+    if frames == 0 {
+        return samples;
+    }
+    let new_frames = (frames as f32 / speed).max(1.0).floor() as usize;
+    let mut output = Vec::with_capacity(new_frames * ch);
+
+    for i in 0..new_frames {
+        let src_pos = i as f32 * speed;
+        let idx = (src_pos as usize).min(frames - 1);
+        let frac = src_pos - idx as f32;
+        let next = (idx + 1).min(frames - 1);
+        for c in 0..ch {
+            let s0 = samples[idx * ch + c];
+            let s1 = samples[next * ch + c];
+            output.push(s0 + frac * (s1 - s0));
+        }
+    }
+    output
+}
+
 fn apply_effect(
     samples: Vec<f32>,
     effect: &str,
@@ -178,214 +228,237 @@ fn apply_effect(
 ) -> Result<Vec<f32>, AudioEffectError> {
     match effect {
         "none" | "random" => Ok(samples),
-        "echo" => apply_echo(samples, sample_rate, channels),
-        "reverb" => apply_reverb(samples, sample_rate, channels),
-        "bass" => apply_bass_boost(samples, sample_rate, channels),
-        "chipmunk" => apply_chipmunk(samples, sample_rate, channels),
-        "demon" => apply_demon(samples, sample_rate, channels),
-        "telephone" => apply_telephone(samples, sample_rate, channels),
-        "underwater" => apply_underwater(samples, sample_rate, channels),
+        "echo" => Ok(apply_echo(samples, sample_rate, channels)),
+        "reverb" => Ok(apply_reverb(samples, sample_rate, channels)),
+        "bass" => Ok(apply_bass_boost(samples, sample_rate, channels)),
+        "chipmunk" => Ok(apply_chipmunk(samples, sample_rate, channels)),
+        "demon" => Ok(apply_demon(samples, sample_rate, channels)),
+        "telephone" => Ok(apply_telephone(samples, sample_rate, channels)),
+        "underwater" => Ok(apply_underwater(samples, sample_rate, channels)),
         _ => Err(AudioEffectError::EffectProcessing(format!("Unknown effect: {}", effect))),
     }
 }
 
-/// Apply echo using MonoDelay from oximedia-effects
-fn apply_echo(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Result<Vec<f32>, AudioEffectError> {
-    let config = DelayConfig {
-        delay_ms: 300.0,
-        feedback: 0.4,
-        wet: 0.3,
-        dry: 1.0,
-        tone: 0.7,
-        saturation: FeedbackSaturationMode::None,
-        saturation_drive: 1.0,
-    };
+/// Echo: dry signal + decaying, progressively darker repeats.
+/// The tail is padded out so the repeats are not cut at file end.
+fn apply_echo(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
+    let ch = channels.max(1) as usize;
+    let sr = sample_rate as f32;
+    let delay_ms = 250.0;
+    let delay_samples = ((delay_ms / 1000.0 * sr).max(1.0)) as usize;
+    let feedback = 0.35f32;
+    let wet_per_repeat = 0.45f32;
 
-    let mut delay = MonoDelay::new(config, sample_rate as f32);
-    let mut output = samples.clone();
-    if channels == 1 {
-        delay.process(&mut output);
-    } else {
-        let (mut left, mut right): (Vec<f32>, Vec<f32>) = samples
-            .chunks_exact(2)
-            .map(|chunk| (chunk[0], chunk[1]))
-            .unzip();
-        delay.process_stereo(&mut left, &mut right);
-        output = left.into_iter().zip(right).flat_map(|(l, r)| [l, r]).collect();
+    // 4 repeats are audible before the feedback decays into noise.
+    let tail_frames = (delay_ms / 1000.0 * sr * 4.0) as usize;
+    let mut output = samples;
+    let orig_frames = output.len() / ch;
+    output.resize((orig_frames + tail_frames) * ch, 0.0);
+
+    // Feedback path passes through a one-pole low-pass (analog tape echo):
+    // each repeat is darker than the previous one.
+    let tone_alpha = lp_alpha(3200.0, sr);
+    let mut line = vec![0.0f32; delay_samples * ch];
+    let mut tone_state = vec![0.0f32; ch];
+
+    let frames = output.len() / ch;
+    for i in 0..frames {
+        let line_base = (i % delay_samples) * ch;
+        for c in 0..ch {
+            let idx = i * ch + c;
+            let delayed = line[line_base + c];
+            tone_state[c] += tone_alpha * (delayed - tone_state[c]);
+            line[line_base + c] = output[idx] + tone_state[c] * feedback;
+            output[idx] += delayed * wet_per_repeat;
+        }
     }
-    Ok(output)
+    output
 }
 
-/// Apply reverb using Freeverb from oximedia-effects
-fn apply_reverb(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Result<Vec<f32>, AudioEffectError> {
-    let config = ReverbConfig {
-        room_size: 0.7,
-        damping: 0.5,
-        wet: 0.3,
-        dry: 0.7,
-        width: 0.5,
-        predelay_ms: 20.0,
-    };
-    let mut reverb = Freeverb::new(config, sample_rate as f32);
-    let mut output = samples.clone();
-    if channels == 1 {
-        reverb.process(&mut output);
-    } else {
-        let (mut left, mut right): (Vec<f32>, Vec<f32>) = samples
-            .chunks_exact(2)
-            .map(|chunk| (chunk[0], chunk[1]))
-            .unzip();
-        reverb.process_stereo(&mut left, &mut right);
-        output = left.into_iter().zip(right).flat_map(|(l, r)| [l, r]).collect();
+/// Reverb: classic Freeverb architecture (8 parallel combs into 4 series
+/// all-passes, with damping in the comb feedback path), pure Rust, with a
+/// padded tail so the reverb rings out naturally after speech ends.
+fn apply_reverb(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
+    let ch = channels.max(1) as usize;
+    let sr = sample_rate as f32;
+    const COMB_DELAYS: [f32; 8] = [1116.0, 1188.0, 1277.0, 1356.0, 1422.0, 1491.0, 1557.0, 1617.0];
+    const ALLPASS_DELAYS: [f32; 4] = [556.0, 441.0, 341.0, 225.0];
+    // Freeverb's fixed delay table is defined at 44.1 kHz.
+    let scale = sr / 44100.0;
+    let room_size = 0.7f32;
+    let damping = 0.5f32;
+
+    // Classic Freeverb parameter mappings.
+    let feedback = room_size * 0.28 + 0.7;
+    let damp = damping * 0.4;
+    let fixed_gain = 0.015f32; // input attenuation into the comb network
+    let wet_gain = 0.9f32; // wet slider 0.3 * scalewet(3)
+    let dry_gain = 0.8f32;
+
+    let tail_frames = (0.45 * sr) as usize;
+    let mut output = samples;
+    output.resize(output.len() / ch * ch + tail_frames * ch, 0.0);
+
+    let n_combs = COMB_DELAYS.len();
+    let n_aps = ALLPASS_DELAYS.len();
+
+    let mut comb_buf: Vec<Vec<f32>> = Vec::with_capacity(n_combs * ch);
+    let mut comb_pos = vec![0usize; n_combs * ch];
+    let mut comb_store = vec![0.0f32; n_combs * ch];
+    for d in COMB_DELAYS.iter() {
+        for _ in 0..ch {
+            comb_buf.push(vec![0.0f32; ((d * scale) as usize).max(1)]);
+        }
     }
-    Ok(output)
-}
-
-/// Apply bass boost using low-pass filter with high resonance
-fn apply_bass_boost(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Result<Vec<f32>, AudioEffectError> {
-    let config = StateVariableConfig {
-        frequency: 200.0,
-        resonance: 5.0,
-        mode: FilterMode::LowPass,
-    };
-    let mut filter = StateVariableFilter::new(config, sample_rate as f32);
-    let mut output = samples.clone();
-    if channels == 1 {
-        filter.process(&mut output);
-    } else {
-        let (mut left, mut right): (Vec<f32>, Vec<f32>) = samples
-            .chunks_exact(2)
-            .map(|chunk| (chunk[0], chunk[1]))
-            .unzip();
-        filter.process_stereo(&mut left, &mut right);
-        output = left.into_iter().zip(right).flat_map(|(l, r)| [l, r]).collect();
+    let mut ap_buf: Vec<Vec<f32>> = Vec::with_capacity(n_aps * ch);
+    let mut ap_pos = vec![0usize; n_aps * ch];
+    for d in ALLPASS_DELAYS.iter() {
+        for _ in 0..ch {
+            ap_buf.push(vec![0.0f32; ((d * scale) as usize).max(1)]);
+        }
     }
-    Ok(output)
-}
 
-/// Apply chipmunk effect: pitch up 7 semitones and tempo up
-fn apply_chipmunk(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Result<Vec<f32>, AudioEffectError> {
-    let mut shifter = PitchShifter::new(
-        PitchShifterConfig {
-            semitones: 7.0,
-            cents: 0.0,
-            mix: 1.0,
-        },
-        sample_rate as f32,
-    );
-    let mut output = samples.clone();
-    if channels == 1 {
-        shifter.process(&mut output);
-    } else {
-        let (mut left, mut right): (Vec<f32>, Vec<f32>) = samples
-            .chunks_exact(2)
-            .map(|chunk| (chunk[0], chunk[1]))
-            .unzip();
-        shifter.process_stereo(&mut left, &mut right);
-        output = left.into_iter().zip(right).flat_map(|(l, r)| [l, r]).collect();
-    }
-    output = change_tempo(output, 1.5, channels);
-    Ok(output)
-}
+    let frames = output.len() / ch;
+    let mut wet_out = vec![0.0f32; output.len()];
+    for i in 0..frames {
+        for c in 0..ch {
+            let idx = i * ch + c;
+            let input = output[idx] * fixed_gain;
 
-/// Apply demon effect: pitch down 12 semitones and tempo down
-fn apply_demon(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Result<Vec<f32>, AudioEffectError> {
-    let mut shifter = PitchShifter::new(
-        PitchShifterConfig {
-            semitones: -12.0,
-            cents: 0.0,
-            mix: 1.0,
-        },
-        sample_rate as f32,
-    );
-    let mut output = samples.clone();
-    if channels == 1 {
-        shifter.process(&mut output);
-    } else {
-        let (mut left, mut right): (Vec<f32>, Vec<f32>) = samples
-            .chunks_exact(2)
-            .map(|chunk| (chunk[0], chunk[1]))
-            .unzip();
-        shifter.process_stereo(&mut left, &mut right);
-        output = left.into_iter().zip(right).flat_map(|(l, r)| [l, r]).collect();
-    }
-    output = change_tempo(output, 0.7, channels);
-    output = apply_bass_boost(output, sample_rate, channels)?;
-    Ok(output)
-}
-
-/// Apply telephone effect: bandpass filter 300-3400 Hz
-fn apply_telephone(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Result<Vec<f32>, AudioEffectError> {
-    let hp_config = StateVariableConfig {
-        frequency: 300.0,
-        resonance: 0.707,
-        mode: FilterMode::HighPass,
-    };
-    let mut hp_filter = StateVariableFilter::new(hp_config, sample_rate as f32);
-
-    let lp_config = StateVariableConfig {
-        frequency: 3400.0,
-        resonance: 0.707,
-        mode: FilterMode::LowPass,
-    };
-    let mut lp_filter = StateVariableFilter::new(lp_config, sample_rate as f32);
-
-    let mut output = samples.clone();
-    if channels == 1 {
-        hp_filter.process(&mut output);
-        lp_filter.process(&mut output);
-    } else {
-        let (mut left, mut right): (Vec<f32>, Vec<f32>) = samples
-            .chunks_exact(2)
-            .map(|chunk| (chunk[0], chunk[1]))
-            .unzip();
-        hp_filter.process_stereo(&mut left, &mut right);
-        lp_filter.process_stereo(&mut left, &mut right);
-        output = left.into_iter().zip(right).flat_map(|(l, r)| [l, r]).collect();
-    }
-    Ok(output)
-}
-
-/// Apply underwater effect: low-pass + slow tempo
-fn apply_underwater(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Result<Vec<f32>, AudioEffectError> {
-    let config = StateVariableConfig {
-        frequency: 400.0,
-        resonance: 1.0,
-        mode: FilterMode::LowPass,
-    };
-    let mut filter = StateVariableFilter::new(config, sample_rate as f32);
-    let mut output = samples.clone();
-    if channels == 1 {
-        filter.process(&mut output);
-    } else {
-        let (mut left, mut right): (Vec<f32>, Vec<f32>) = samples
-            .chunks_exact(2)
-            .map(|chunk| (chunk[0], chunk[1]))
-            .unzip();
-        filter.process_stereo(&mut left, &mut right);
-        output = left.into_iter().zip(right).flat_map(|(l, r)| [l, r]).collect();
-    }
-    output = change_tempo(output, 0.8, channels);
-    Ok(output)
-}
-
-/// Simple tempo change by resampling
-fn change_tempo(samples: Vec<f32>, factor: f32, channels: u16) -> Vec<f32> {
-    if (factor - 1.0).abs() < 0.01 {
-        return samples;
-    }
-    let frames = samples.len() / channels as usize;
-    let new_frames = (frames as f32 / factor) as usize;
-    let mut output = Vec::with_capacity(new_frames * channels as usize);
-
-    for ch in 0..channels as usize {
-        for i in 0..new_frames {
-            let src_idx = (i as f32 * factor) as usize * channels as usize + ch;
-            if src_idx < samples.len() {
-                output.push(samples[src_idx]);
-            } else {
-                output.push(0.0);
+            // Parallel comb filters
+            let mut out = 0.0f32;
+            for k in 0..n_combs {
+                let slot = k * ch + c;
+                let buf_len = comb_buf[slot].len();
+                let pos = comb_pos[slot];
+                let delayed = comb_buf[slot][pos];
+                comb_store[slot] = delayed * (1.0 - damp) + comb_store[slot] * damp;
+                comb_buf[slot][pos] = input + comb_store[slot] * feedback;
+                comb_pos[slot] = (pos + 1) % buf_len;
+                out += delayed;
             }
+            // Series all-pass filters
+            for k in 0..n_aps {
+                let slot = k * ch + c;
+                let buf_len = ap_buf[slot].len();
+                let pos = ap_pos[slot];
+                let bufout = ap_buf[slot][pos];
+                let ap_out = -out + bufout;
+                ap_buf[slot][pos] = out + bufout * 0.5;
+                ap_pos[slot] = (pos + 1) % buf_len;
+                out = ap_out;
+            }
+            wet_out[idx] = out;
+        }
+    }
+    for i in 0..output.len() {
+        output[i] = output[i] * dry_gain + wet_out[i] * wet_gain;
+    }
+    output
+}
+
+/// Bass boost: equal-power blend of the dry signal with a resonant
+/// low band — adds weight while keeping speech intelligible.
+fn apply_bass_boost(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
+    let ch = channels.max(1) as usize;
+    let alpha = lp_alpha(250.0, sample_rate as f32);
+
+    let mut output = samples;
+    let mut state = vec![0.0f32; ch];
+    let frames = output.len() / ch;
+    for i in 0..frames {
+        for c in 0..ch {
+            let idx = i * ch + c;
+            state[c] += alpha * (output[idx] - state[c]);
+            // dry + 2x the low band: audible bass lift without muffling
+            output[idx] += state[c] * 2.0;
+        }
+    }
+    output
+}
+
+/// Chipmunk: pitch up 5 semitones via tape-style speed change.
+fn apply_chipmunk(samples: Vec<f32>, _sample_rate: u32, channels: u16) -> Vec<f32> {
+    let ratio = 2.0f32.powf(5.0 / 12.0);
+    change_speed(samples, ratio, channels)
+}
+
+/// Demon: pitch down 4 semitones, slightly stretched, then darkened with a
+/// ~1.8 kHz low-pass for the classic "possessed" timbre.
+fn apply_demon(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
+    let ratio = 2.0f32.powf(-4.0 / 12.0);
+    let mut output = change_speed(samples, ratio, channels);
+
+    let ch = channels.max(1) as usize;
+    let alpha = lp_alpha(1800.0, sample_rate as f32);
+    let mut state = vec![0.0f32; ch];
+    let frames = output.len() / ch;
+    for i in 0..frames {
+        for c in 0..ch {
+            let idx = i * ch + c;
+            state[c] += alpha * (output[idx] - state[c]);
+            output[idx] = state[c] * 1.25;
+        }
+    }
+    output
+}
+
+/// Telephone: two-stage high-pass + two-stage low-pass (approx. 12 dB/oct
+/// band around 320-3300 Hz) plus tanh gain makeup so the band-limited
+/// result stays clearly audible.
+fn apply_telephone(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
+    let ch = channels.max(1) as usize;
+    let sr = sample_rate as f32;
+    let mut output = samples;
+
+    let hp_alpha = lp_alpha(320.0, sr);
+    let lp_alpha_v = lp_alpha(3300.0, sr);
+
+    let mut hp_state = vec![vec![0.0f32; ch]; 2];
+    let mut lp_state = vec![vec![0.0f32; ch]; 2];
+
+    let frames = output.len() / ch;
+    for i in 0..frames {
+        for c in 0..ch {
+            let idx = i * ch + c;
+            let mut x = output[idx];
+            for stage in hp_state.iter_mut() {
+                stage[c] += hp_alpha * (x - stage[c]);
+                x -= stage[c];
+            }
+            for stage in lp_state.iter_mut() {
+                stage[c] += lp_alpha_v * (x - stage[c]);
+                x = stage[c];
+            }
+            // Drive into soft saturation for the metallic phone-line bite;
+            // the normalize step afterwards tames the level.
+            output[idx] = (x * 2.2).tanh();
+        }
+    }
+    output
+}
+
+/// Underwater: strong low-pass around ~600 Hz with a slow wobble plus mild
+/// tremolo — muffled but very recognizably "submerged".
+fn apply_underwater(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
+    let ch = channels.max(1) as usize;
+    let sr = sample_rate as f32;
+    let mut output = samples;
+    let frames = output.len() / ch;
+
+    let mut lp_state = vec![0.0f32; ch];
+    let mut phase = 0.0f32;
+    let phase_inc = std::f32::consts::TAU * 0.7 / sr;
+
+    for i in 0..frames {
+        phase += phase_inc;
+        // wobble the cutoff between ~350 Hz and ~850 Hz
+        let wobble = (phase.sin() * 0.5 + 0.5) * 500.0 + 350.0;
+        let alpha = lp_alpha(wobble, sr);
+        for c in 0..ch {
+            let idx = i * ch + c;
+            lp_state[c] += alpha * (output[idx] - lp_state[c]);
+            output[idx] = lp_state[c] * 1.5; // gain makeup
         }
     }
     output
@@ -474,5 +547,44 @@ mod tests {
     fn test_available_effects_contains_expected() {
         assert!(AVAILABLE_EFFECTS.contains(&"echo"));
         assert!(AVAILABLE_EFFECTS.contains(&"reverb"));
+    }
+
+    #[test]
+    fn test_change_speed_shifts_pitch() {
+        // A 440 Hz "sine": speed 1.5x should compress length by 1.5x
+        let sample_rate = 24000u32;
+        let n = 2400;
+        let input: Vec<f32> = (0..n)
+            .map(|i| (std::f32::consts::TAU * 440.0 * i as f32 / sample_rate as f32).sin() * 0.5)
+            .collect();
+        let speed = 2.0f32.powf(5.0 / 12.0);
+        let out = change_speed(input.clone(), speed, 1);
+        let expected_len = (n as f32 / speed) as usize;
+        assert!((out.len() as i64 - expected_len as i64).abs() <= 2, "len {} != {}", out.len(), expected_len);
+        // Peak preserved (no massive attenuation or explosion)
+        let peak = out.iter().fold(0.0f32, |p, s| p.max(s.abs()));
+        assert!(peak > 0.4 && peak < 1.1, "peak {}", peak);
+    }
+
+    #[test]
+    fn test_resample_stereo_layout_preserved() {
+        // Interleaved stereo: L and R carry 440 Hz and 880 Hz. After resample
+        // the even entries must still be dominated by the 440 Hz component.
+        let n = 4410;
+        let mut input = Vec::with_capacity(n * 2);
+        for i in 0..n {
+            let t = i as f32 / 44100.0;
+            input.push((std::f32::consts::TAU * 440.0 * t).sin());
+            input.push((std::f32::consts::TAU * 880.0 * t).sin());
+        }
+        let out = resample_audio(input, 44100, 24000, 2);
+        assert_eq!(out.len() % 2, 0, "interleaved layout must stay frame-aligned");
+    }
+
+    #[test]
+    fn test_normalize_caps_peak() {
+        let out = normalize_if_needed(vec![2.0, -2.0, 1.0]);
+        let peak = out.iter().fold(0.0f32, |p, s| p.max(s.abs()));
+        assert!((peak - 0.9).abs() < 1e-6);
     }
 }

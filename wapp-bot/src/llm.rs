@@ -90,6 +90,300 @@ fn get_endpoint_configs() -> Vec<LlmEndpoint> {
         .collect()
 }
 
+// ── Structured JSON protocol for phrase generation ────────────────────────
+//
+// The phrase-generation features (ask / welcome / goodbye / here_i_am /
+// eavesdrop_response) sometimes get a "refusal" from the LLM instead of the
+// requested phrase (e.g. "I'm sorry, I can't do that" / "Mi dispiace, non
+// posso accontentare questa richiesta"). Speaking that boilerplate through
+// TTS sounds broken — and persisting it into the shared sentence database
+// would later be played aloud by other bots via /random. To catch refusals
+// reliably, the system prompts mandate a JSON reply
+// `{"text": ..., "refused": true|false}`; the helpers below parse that
+// protocol, detect refusal boilerplate in models that ignore it, and
+// classify each completion so callers can stay silent on refusals.
+
+/// Marker prefix for refusal errors returned by the phrase-generation
+/// functions. Callers can distinguish "the LLM refused" from infrastructure
+/// failures via [`is_refusal_error`].
+pub const REFUSAL_PREFIX: &str = "REFUSED:";
+
+/// Whether an error string returned by an LLM function is a refusal.
+pub fn is_refusal_error(err: &str) -> bool {
+    err.starts_with(REFUSAL_PREFIX)
+}
+
+/// JSON response-format instruction appended to the system prompts (English).
+const JSON_FORMAT_EN: &str = "RESPONSE FORMAT (mandatory): your ENTIRE reply must be one single JSON object and nothing else — no markdown fences, no explanations: {\"text\": \"<the single sentence to say out loud>\", \"refused\": <true|false>}. If you refuse to fulfil the request for ANY reason (safety, policy, or anything else), set \"refused\": true; in that case \"text\" may be empty. If you comply, set \"refused\": false and put ONLY the single spoken sentence inside \"text\".";
+
+/// JSON response-format instruction appended to the system prompts (Italian).
+const JSON_FORMAT_IT: &str = "FORMATO RISPOSTA (obbligatorio): l'INTERA risposta deve essere un solo oggetto JSON e nient'altro — niente markdown, niente spiegazioni: {\"text\": \"<la singola frase da dire ad alta voce>\", \"refused\": <true|false>}. Se rifiuti di eseguire la richiesta per QUALSIASI motivo (sicurezza, policy o altro), imposta \"refused\": true; in tal caso \"text\" può essere vuoto. Se esegui la richiesta, imposta \"refused\": false e metti SOLO la singola frase da pronunciare dentro \"text\".";
+
+/// Pick the JSON response-format instruction matching the configured language.
+fn json_format_for(lang: &str) -> &'static str {
+    if lang.starts_with("eng") {
+        JSON_FORMAT_EN
+    } else {
+        JSON_FORMAT_IT
+    }
+}
+
+/// A structured LLM phrase response parsed from the JSON protocol.
+struct StructuredPhrase {
+    text: String,
+    refused: bool,
+}
+
+/// Parse the `{"text": ..., "refused": ...}` JSON object out of a raw LLM
+/// completion. Tolerant by design: models often wrap the object in markdown
+/// fences or leading prose, so the first `{` through the last `}` is treated
+/// as the object. Returns `None` when the output is not usable JSON — callers
+/// then fall back to plain-text handling.
+fn parse_structured_phrase(raw: &str) -> Option<StructuredPhrase> {
+    let start = raw.find('{')?;
+    let end = raw.rfind('}')?;
+    if end < start {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(&raw[start..=end]).ok()?;
+
+    // "refused" is a boolean in the protocol, but some models emit "true" as
+    // a string — accept both spellings.
+    let refused = match value.get("refused") {
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::String(s)) => {
+            matches!(s.trim().to_lowercase().as_str(), "true" | "yes" | "1")
+        }
+        _ => false,
+    };
+
+    // Accept a couple of common key aliases so slightly-off models still work.
+    let text = ["text", "content", "response", "phrase"]
+        .iter()
+        .find_map(|k| value.get(*k).and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
+        .to_string();
+
+    if text.is_empty() && !refused {
+        // Neither a usable text nor a refusal flag — not a structured response.
+        return None;
+    }
+
+    Some(StructuredPhrase { text, refused })
+}
+
+/// Detect refusal / policy-dodge boilerplate in an LLM response (e.g.
+/// "I'm sorry, I can't do that" / "Mi dispiace, non posso accontentare questa
+/// richiesta"). Safety net for models that ignore the JSON protocol, and a
+/// second check on the parsed text in case the model claims `refused: false`
+/// but answers with refusal wording anyway.
+///
+/// Generic tokens ("sorry" / "non posso" alone) are deliberately avoided:
+/// the bot's roast personality easily produces legitimate sentences with them.
+pub fn looks_like_refusal(text: &str) -> bool {
+    let lower = text.to_lowercase();
+
+    // Unambiguous refusal phrases — safe as standalone matches.
+    const STRONG: &[&str] = &[
+        // English
+        "cannot comply", "can't comply", "cannot generate", "can't generate",
+        "cannot fulfill", "cannot fulfil", "can't fulfill", "can't fulfil",
+        "cannot do that", "can't do that", "cannot help with", "can't help with",
+        "cannot provide", "can't provide", "cannot assist", "can't assist",
+        "unable to comply", "unable to fulfill", "unable to fulfil",
+        "unable to help", "unable to assist",
+        "must decline", "have to decline", "will not comply", "won't comply",
+        "as an ai", "i'm an ai", "i am an ai", "as a language model",
+        "against my guidelines", "against my policy", "against my policies",
+        "against the guidelines", "against the policy", "content policy",
+        "not appropriate", "inappropriate content",
+        "i'm not comfortable", "i am not comfortable",
+        // Italian
+        "non posso accontentare", "non posso aiutarti", "non posso aiutare",
+        "non posso rispondere", "non posso esaudire", "non posso soddisfare",
+        "non posso complire", "non posso fare questo", "non posso farlo",
+        "non riesco a soddisfare", "non riesco ad aiutarti", "non riesco a complire",
+        "non mi è permesso", "non mi é permesso", "non mi e permesso",
+        "non mi è concesso", "non mi é concesso",
+        "non sono autorizzato", "non sono autorizzata", "non sono in grado",
+        "contro le mie linee guida", "linee guida", "politiche di contenuto",
+        "contenuto inappropriato", "non è appropriato", "non é appropriato",
+        "come modello linguistico", "in quanto modello", "in quanto ia",
+    ];
+    if STRONG.iter().any(|p| lower.contains(p)) {
+        return true;
+    }
+
+    // Apology + first-person inability co-occurring covers remaining wordings
+    // ("Sorry, I really can't say that", "Mi dispiace, ma non è possibile").
+    const APOLOGIES: &[&str] = &[
+        "i'm sorry", "i am sorry", "sorry but", "sorry,",
+        "mi dispiace", "mi spiace", "mi rammarico",
+    ];
+    const INABILITIES: &[&str] = &[
+        "i can't", "i cannot", "i can not", "i won't", "i will not",
+        "i'm unable", "i am unable",
+        "non posso", "non riesco", "non è possibile", "non é possibile",
+    ];
+
+    APOLOGIES.iter().any(|a| lower.contains(a))
+        && INABILITIES.iter().any(|i| lower.contains(i))
+}
+
+/// Classification of a raw LLM completion for the phrase features.
+enum PhraseOutcome {
+    /// A validated, cleaned phrase ready for TTS (already truncated to 200 chars).
+    Ok(String),
+    /// The LLM refused (JSON flag or refusal boilerplate) — do not speak it.
+    Refused,
+    /// Garbage/invalid output — worth retrying.
+    Invalid,
+}
+
+/// Validate that an LLM-generated phrase is actually a spoken sentence and
+/// not a system artifact (e.g. "user safety: safe", metadata, classification
+/// labels, JSON, or empty content after stripping reasoning markers). Also
+/// verifies that the user's name appears in the response when one is expected.
+fn validate_phrase(raw: &str, expected_user: &str, min_len: usize) -> Option<String> {
+    let trimmed = raw.trim().trim_matches('"').trim_matches('\'').trim();
+
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Take only the first line — reasoning models sometimes prepend
+    // multi-line reasoning before the actual answer.
+    let first_line = trimmed.lines().next().unwrap_or(trimmed);
+    let cleaned = first_line.trim().trim_matches('"').trim_matches('\'').trim().to_string();
+
+    if cleaned.is_empty() {
+        return None;
+    }
+
+    let lower = cleaned.to_lowercase();
+
+    // Reject system/metadata patterns that reasoning models leak.
+    const GARBAGE_PATTERNS: &[&str] = &[
+        "user safety",
+        "safe",
+        "unsafe",
+        "safety:",
+        "content policy",
+        "policy:",
+        "flag:",
+        "category:",
+        "rating:",
+        "sentiment:",
+        "label:",
+        "classification:",
+        "moderation:",
+        "toxicity:",
+        "output:",
+        "response:",
+        "result:",
+        "answer:",
+        "greeting:",
+        "welcome:",
+        "goodbye:",
+    ];
+
+    // If the cleaned phrase is EXACTLY one of the garbage patterns (e.g.
+    // the model returned just "safe" or "user safety: safe"), reject it.
+    for pattern in GARBAGE_PATTERNS {
+        if lower == *pattern {
+            log::warn!("llm::validate_phrase: rejected garbage response '{}'", cleaned);
+            return None;
+        }
+        // Also reject "pattern: value" style responses (e.g. "user safety: safe")
+        if lower.starts_with(&format!("{}:", pattern)) || lower.starts_with(&format!("{} :", pattern)) {
+            // But allow if the rest after the colon looks like a real sentence
+            // (longer than 15 chars and doesn't look like a label)
+            let after_colon = lower.split(':').nth(1).unwrap_or("").trim();
+            if after_colon.len() < 15 || GARBAGE_PATTERNS.contains(&after_colon) {
+                log::warn!("llm::validate_phrase: rejected garbage response '{}'", cleaned);
+                return None;
+            }
+        }
+    }
+
+    // Reject responses that are too short (likely just a label)
+    if cleaned.chars().count() < min_len {
+        log::warn!("llm::validate_phrase: rejected too-short response '{}'", cleaned);
+        return None;
+    }
+
+    // Reject responses that look like JSON or key-value pairs
+    if cleaned.starts_with('{') || cleaned.starts_with('[') || cleaned.contains(":\")") {
+        log::warn!("llm::validate_phrase: rejected JSON-like response '{}'", cleaned);
+        return None;
+    }
+
+    // Verify the user's name appears in the response (case-insensitive).
+    // The LLM is explicitly instructed to include it, so a missing name
+    // means the response is off-topic or garbage.
+    let user_lower = expected_user.to_lowercase();
+    if !lower.contains(&user_lower) && !expected_user.is_empty() {
+        log::warn!(
+            "llm::validate_phrase: rejected response '{}' (missing username '{}')",
+            cleaned, expected_user
+        );
+        return None;
+    }
+
+    Some(cleaned)
+}
+
+/// Process a raw LLM completion for the phrase features: prefer the JSON
+/// protocol (`{"text", "refused"}`), fall back to plain-text handling when the
+/// model ignores it, and short-circuit refusals either way. `min_len` is the
+/// minimum accepted phrase length (1 for /ask answers, 5 for personality
+/// phrases).
+fn process_phrase_response(raw: &str, expected_user: &str, min_len: usize) -> PhraseOutcome {
+    // 1) Structured JSON path (the format the system prompts mandate).
+    if let Some(sp) = parse_structured_phrase(raw) {
+        if sp.refused || looks_like_refusal(&sp.text) {
+            log::warn!(
+                "llm::process_phrase_response: refusal signalled (refused flag: {}, preview: {:?})",
+                sp.refused,
+                sp.text.chars().take(120).collect::<String>()
+            );
+            return PhraseOutcome::Refused;
+        }
+        return match validate_phrase(&sp.text, expected_user, min_len) {
+            Some(cleaned) => PhraseOutcome::Ok(truncate_for_tts(cleaned)),
+            None => PhraseOutcome::Invalid,
+        };
+    }
+
+    // 2) Plain-text fallback: the model ignored JSON mode.
+    if looks_like_refusal(raw) {
+        log::warn!(
+            "llm::process_phrase_response: refusal boilerplate in plain response (preview: {:?})",
+            raw.chars().take(120).collect::<String>()
+        );
+        return PhraseOutcome::Refused;
+    }
+    match validate_phrase(raw, expected_user, min_len) {
+        Some(cleaned) => PhraseOutcome::Ok(truncate_for_tts(cleaned)),
+        None => PhraseOutcome::Invalid,
+    }
+}
+
+/// Truncate to 200 characters at a UTF-8 char boundary (Google TTS limit),
+/// matching the /speak command limit.
+fn truncate_for_tts(s: String) -> String {
+    if s.chars().count() > 200 {
+        let truncated: String = s.chars().take(200).collect();
+        format!("{truncated}...")
+    } else {
+        s
+    }
+}
+
 /// Generate a response from the LLM using the user's question and
 /// database sentences as context. Rotates through configured endpoints
 /// on rate-limit (429) or connection errors, trying the next provider.
@@ -144,7 +438,9 @@ pub async fn ask(
         Here are some example phrases that reflect your personality and style:\n\
         {sentences_text}\n\
         Answer the user's question concisely. Do not use markdown, emojis, or multi-line responses. \
-        Just give the spoken answer text."
+        Just give the spoken answer text.\n\
+        {json_format}",
+        json_format = json_format_for(&lang),
     );
 
     // Build the messages array: system prompt, conversation history, then
@@ -174,6 +470,7 @@ pub async fn ask(
             "messages": messages,
             "stream": false,
             "temperature": 0.7,
+            "response_format": {"type": "json_object"},
             // Generous token budget: reasoning models (e.g. gpt-oss:20b-cloud)
             // spend a lot on their internal chain-of-thought before the final
             // answer. A too-low max_tokens makes them exhaust the budget on
@@ -271,36 +568,38 @@ pub async fn ask(
                         break Err(format!("Empty response at {}", endpoint.base_url));
                     }
 
-                    // Like the old Python bot, take only the first line and
-                    // strip surrounding quotes. This keeps TTS short and clean.
-                    let first_line = content.lines().next().unwrap_or(content);
-                    let cleaned = first_line
-                        .trim()
-                        .trim_matches('"')
-                        .trim_matches('\'')
-                        .to_string();
-
-                    if cleaned.is_empty() {
-                        break Err(format!("Empty response after cleanup at {}", endpoint.base_url));
+                    match process_phrase_response(content, "", 1) {
+                        PhraseOutcome::Ok(cleaned) => {
+                            log::info!(
+                                "llm::ask: success from endpoint {} (model: {}, response length: {})",
+                                endpoint.base_url,
+                                endpoint.model,
+                                cleaned.len()
+                            );
+                            break Ok(cleaned);
+                        }
+                        PhraseOutcome::Refused => {
+                            // The LLM refused — terminal, never speak it and
+                            // never persist it (it would poison the shared
+                            // sentence database and resurface via /random).
+                            log::warn!(
+                                "llm::ask: endpoint {} refused the request, skipping ask",
+                                endpoint.base_url
+                            );
+                            break Ok(REFUSAL_PREFIX.to_string() + "ask");
+                        }
+                        PhraseOutcome::Invalid => {
+                            empty_retries += 1;
+                            if empty_retries <= MAX_EMPTY_RETRIES {
+                                log::warn!(
+                                    "llm::ask: endpoint {} returned garbage/invalid response, retrying (attempt {}/{})",
+                                    endpoint.base_url, empty_retries, MAX_EMPTY_RETRIES
+                                );
+                                continue;
+                            }
+                            break Err(format!("Invalid/garbage response at {}", endpoint.base_url));
+                        }
                     }
-
-                    log::info!(
-                        "llm::ask: success from endpoint {} (model: {}, response length: {})",
-                        endpoint.base_url,
-                        endpoint.model,
-                        cleaned.len()
-                    );
-
-                    // Truncate to 200 characters at a UTF-8 char boundary
-                    // (Google TTS limit). This matches the /speak command limit.
-                    let truncated = if cleaned.chars().count() > 200 {
-                        let s: String = cleaned.chars().take(200).collect();
-                        format!("{}...", s)
-                    } else {
-                        cleaned
-                    };
-
-                    break Ok(truncated);
                 }
                 Err(e) => {
                     log::warn!(
