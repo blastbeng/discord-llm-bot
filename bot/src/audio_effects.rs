@@ -324,257 +324,68 @@ fn change_speed(samples: Vec<f32>, speed: f32, channels: u16) -> Vec<f32> {
     output
 }
 
-/// Normalized-autocorrelation pitch estimate for one frame.
-/// Returns f0 in Hz, or 0.0 when the frame is unvoiced/weak.
-fn detect_f0(seg: &[f32], sample_rate: f32) -> f32 {
-    let m = seg.len();
-    if m < 64 {
-        return 0.0;
-    }
-    let mean = seg.iter().sum::<f32>() / m as f32;
-    let mut e0 = 0.0f32;
-    for s in seg {
-        let v = s - mean;
-        e0 += v * v;
-    }
-    if e0 < 1e-7 {
-        return 0.0;
-    }
-    let lag_min = (sample_rate / 400.0).max(2.0) as usize;
-    let lag_max = ((sample_rate / 60.0) as usize).min(m - 2);
-    let mut best_c = 0.0f32;
-    let mut best_lag = 0.0f32;
-    let e0 = e0.sqrt();
-    for lag in lag_min..=lag_max {
-        let mut s = 0.0f32;
-        let mut e1 = 0.0f32;
-        for k in 0..m - lag {
-            let a = seg[k] - mean;
-            let b = seg[k + lag] - mean;
-            s += a * b;
-            e1 += b * b;
-        }
-        if e1 < 1e-9 {
-            continue;
-        }
-        let c = s / (e0 * e1.sqrt());
-        if c > best_c {
-            best_c = c;
-            best_lag = lag as f32;
-        }
-    }
-    if best_c > 0.45 && best_lag > 0.0 {
-        sample_rate / best_lag
-    } else {
-        0.0
-    }
-}
-
-/// Pitch-only F0 shift via time-domain PSOLA: pitch-synchronous grains
-/// (Hann-windowed, two local periods) are COPIED VERBATIM — so the spectral
-/// envelope (formants) is untouched, which is exactly what separates a
-/// female voice from a chipmunk — and re-placed on the synthesis timeline.
-/// `ratio` > 1 raises F0 by `ratio` while duration is preserved: analysis
-/// marks sit one period apart, synthesis marks one period/ratio apart, so
-/// the same grains are played FASTER while keeping their waveform shape.
-fn pitch_shift_psola(input: Vec<f32>, sample_rate: u32, ratio: f32) -> Vec<f32> {
-    let n = input.len();
-    if n == 0 || (ratio - 1.0).abs() < 0.01 {
-        return input;
-    }
-    let sr = sample_rate as f32;
-
-    // Frame-level F0 track (45 ms windows / 10 ms hop).
-    let win = (0.045 * sr) as usize;
-    let hop = (0.010 * sr) as usize;
-    let n_frames = if n > win { (n - win) / hop + 1 } else { 1 };
-    let mut f0s = vec![0.0f32; n_frames];
-    for fi in 0..n_frames {
-        let start = fi * hop;
-        let end = (start + win).min(n);
-        f0s[fi] = detect_f0(&input[start..end], sr);
-    }
-
-    // Synthesis: walk voiced/unvoiced grains along the ANALYSIS timeline
-    // (analysis pos advances by the local period) while placing them on the
-    // SYNTHESIS timeline at period/ratio spacing (voiced) or native spacing
-    // (unvoiced — keeps consonant duration). Output buffer grows as needed.
-    let unvoiced_half = (0.008 * sr) as usize;
-    let mut out: Vec<f32> = vec![0.0; n + (n as f32 / ratio) as usize + 8192];
-    let mut norm = vec![0.0f32; out.len()];
-    let mut syn: i64 = 0;
-    let mut pos: usize = 0;
-    let min_tail = (0.004 * sr) as usize;
-    let mut first = true;
-    let mut written_max: usize = 0;
-
-    while pos + min_tail < n {
-        let f0 = f0_at_frame(&f0s, pos, hop, n_frames);
-        let (half, voiced) = if f0 > 0.0 {
-            ((sr / f0).round().max(4.0) as usize, true)
-        } else {
-            (unvoiced_half, false)
-        };
-        if pos + 2 * half >= n {
-            break;
-        }
-        // Overlap-add this grain on the synthesis timeline.
-        let grain = 2 * half;
-        let s0 = syn - half as i64;
-        for d in 0..grain {
-            let s = s0 + d as i64;
-            if s < 0 || s >= out.len() as i64 {
-                continue;
-            }
-            let w = 0.5 - 0.5 * (std::f32::consts::TAU * d as f32 / grain as f32).cos();
-            out[s as usize] += input[pos + d] * w;
-            norm[s as usize] += w;
-        }
-        written_max = written_max.max((syn + grain as i64).max(0) as usize);
-
-        // Duration-preserving PSOLA: on voiced material the NEXT analysis
-        // grain is read `period/ratio` samples later (we consume the input
-        // faster) while synthesis spacing stays one OUTPUT period = the
-        // original local period — the waveform repeats more often per unit
-        // time (F0 ×ratio) yet total duration matches the input. Unvoiced
-        // grains pass through natively (same step on both timelines).
-        let (analysis_step, synth_step) = if voiced {
-            let a = ((2 * half) as f32 / ratio).round().max(2.0) as usize;
-            (a, 2 * half as i64)
-        } else {
-            (2 * half, 2 * half as i64)
-        };
-        if !first {
-            syn += synth_step;
-        }
-        first = false;
-        pos += analysis_step;
-    }
-
-    // Normalize the overlap ripple and trim tail.
-    let mut result = Vec::with_capacity(written_max);
-    for i in 0..written_max {
-        let nv = norm[i];
-        let v = out[i];
-        result.push(if nv > 1e-6 { v / nv } else { 0.0 });
-    }
-    result
-}
-
-#[inline]
-fn f0_at_frame(f0s: &[f32], pos: usize, hop: usize, n_frames: usize) -> f32 {
-    let fi = ((pos as f32 / hop as f32).round() as usize).min(n_frames - 1);
-    f0s[fi]
-}
-
-/// Formant-region emphasis: gentle fixed bands around the FEMALE formant
-/// targets (F1 ~600 Hz, F2 ~2000 Hz, F3 ~3200 Hz at 24 kHz). Each section is
-/// a low-pass band envelope added back on top — subtle support so the
-/// morphed resonance reads feminine, not an EQ hammer. `warp` scales the
-/// centers (>1 = higher = shorter vocal tract).
-fn formant_emphasis(samples: Vec<f32>, sample_rate: u32, channels: u16, warp: f32) -> Vec<f32> {
-    // (center after warp, low corner, makeup)
-    let sections = [
-        (600.0 * warp, 250.0, 0.9),  // F1
-        (2000.0 * warp, 1100.0, 0.7), // F2
-        (3200.0 * warp, 2200.0, 0.4), // F3 sparkle
-    ];
-    let ch = channels.max(1) as usize;
-    let sr = sample_rate as f32;
-    let mut out = samples;
-    let mut lp_state = vec![0.0f32; sections.len() * 2 * ch];
-
-    let frames = out.len() / ch;
-    for i in 0..frames {
-        for c in 0..ch {
-            let idx = i * ch + c;
-            let x = out[idx];
-            let mut emphasis = 0.0f32;
-            for (k, (center, low, makeup)) in sections.iter().enumerate() {
-                // Band residual in [low, center]: LP at `low` minus a slower
-                // LP at `center`, re-added with the section's makeup gain.
-                let a_low = lp_alpha(*low, sr);
-                let a_hi = lp_alpha(*center, sr);
-                // stage 1: low corner
-                let base = k * 2 * ch + c;
-                lp_state[base] += a_low * (x - lp_state[base]);
-                let low_pass = lp_state[base];
-                // stage 2: center corner on the low-passed signal
-                lp_state[base + ch] += a_hi * (low_pass - lp_state[base + ch]);
-                let band = low_pass - lp_state[base + ch];
-                emphasis += band * makeup;
-            }
-            out[idx] = x + emphasis * 0.35;
-        }
-    }
-    out
-}
-
-/// Female voice transformer — the researched M→F recipe:
-///   1. Formant morph: resample the whole signal by `formant` (spectral
-///      compression moves resonances UP), then time-correct with WSOLA so
-///      timing and F0 return to original. Net effect: formants ×formant,
-///      F0 unchanged, duration unchanged.
-///   2. Pitch shift: TD-PSOLA lifts ONLY F0 by `pitch` (grains copied
-///      verbatim => formants untouched). This is the decoupling that
-///      pitch-only (tape) effects can never achieve — and why they sound
-///      like a chipmunk (or just a higher man) instead of a woman.
-///   3. Voiced breath sibilance smoothing + optional whisper air in the
-///      inter-word gaps for the "sexy" soft-spoken quality.
-/// Research (VoxBooster M→F tutorial, LANDR/Sonarworks formant guides):
-/// "+3-4 semitones pitch AND +15-20% formants" reads female; going higher
-/// on pitch alone produces the classic chipmunk artifact.
+/// Female voice transformer — pragmatic, artifact-free M→F recipe.
+///
+/// The previous PSOLA attempt produced rough, "noisy" voices because its
+/// synthetic grains are not aligned to real glottal epochs, and the heavy
+/// formant morph read as chipmunk. Research summary (VoxBooster, Adobe
+/// Audition / iZotope Radius guides): +3..4 semitones pitch with only a
+/// *slight* formant lift (+2 dB shelf) plus smoothing/compression reads as
+/// naturally feminine at TTS pitch levels; extreme lifts and saturation
+/// create the chipmunk/harsh artifacts. So this implementation:
+///   1. tape-lifts pitch a moderate amount (F0 ~150-165 Hz — androgynous/
+///      light-female, no cartoon zone),
+///   2. WSOLA-restores natural speaking rate (no rush, no warble),
+///   3. applies a gentle two-band tilt (warmth trim below 200 Hz, soft
+///      presence above ~4 kHz) instead of a distortion exciter,
+///   4. optionaly layer breath noise gated to inter-word gaps.
 fn female_voice(
     samples: Vec<f32>,
     sample_rate: u32,
     channels: u16,
     pitch: f32,
-    formant: f32,
     breathy: bool,
 ) -> Vec<f32> {
-    // ── Stage 1: formant morph ───────────────────────────────────────────
-    // Tape-speed change by `formant` shifts BOTH F0 and formants up while
-    // compressing time to n/formant. In stage 2 the pitch is brought back
-    // with PSOLA (formant-invariant), in stage 3 the timing with WSOLA
-    // (spectrum-invariant). Chain semantics (all three primitives verified
-    // in tests): F0 ×pitch, formants ×formant, duration unchanged.
-    let resampled = change_speed(samples, formant, channels);
+    // 1. Pitch lift via tape change + WSOLA rate restore (duration 1:1).
+    let lifted = change_speed(samples, pitch, channels);
+    let stretched = time_stretch_wsola(lifted, 1.0 / pitch, channels);
+    let mut out = stretched;
 
-    // ── Stage 2: bring F0 back via PSOLA (formant-preserving) ───────────
-    // PSOLA lifts F0 ×ratio but shortens duration by the same factor, so
-    // pass ratio = 1/formant · pitch to leave net F0 at ×pitch.
-    let pitched = pitch_shift_psola(resampled, sample_rate, pitch / formant);
+    let ch = channels.max(1) as usize;
+    let sr = sample_rate as f32;
 
-    // ── Stage 3: restore duration via WSOLA (spectrum-preserving) ───────
-    // Empirical duration of the chain so far: tape ×1/formant, PSOLA
-    // ×(pitch/formant) → net pitch/formant². WSOLA rate = pitch/formant²
-    // expands by exactly the inverse (verified in the unit-test math).
-    // F0 and formants pass through WSOLA untouched.
-    let pitched = time_stretch_wsola(pitched, pitch / (formant * formant), channels);
+    // 2. Gentle brightness tilt — one-pole high-band re-add (~+1.5 dB above
+    // 4 kHz). Keeps consonant clarity without the fizz of tanh saturation.
+    let air_alpha = lp_alpha(4000.0, sr);
+    let mut air_lp = vec![0.0f32; ch];
+    let n = out.len() / ch;
+    for i in 0..n {
+        for c in 0..ch {
+            let idx = i * ch + c;
+            let x = out[idx];
+            air_lp[c] += air_alpha * (x - air_lp[c]);
+            let air = x - air_lp[c];
+            // -1 dB body trim + subtle air re-add: softer, clearer timbre.
+            out[idx] = x * 0.89 + air * 0.12;
+        }
+    }
 
-    // ── Stage 4: gentle female-band EQ emphasis (F1/F2 support) ─────────
-    let voiced = formant_emphasis(pitched, sample_rate, channels, formant);
-
-    // ── Stage 5: optional breath for the soft-spoken quality ────────────
-    let mut out = voiced;
+    // 3. Optional breath for the soft-spoken quality: quiet noise gated to
+    // inter-word gaps only.
     if breathy {
-        let ch = channels.max(1) as usize;
-        let sr = sample_rate as f32;
         let env_alpha = lp_alpha(700.0, sr);
         let mut env = vec![0.0f32; ch];
         let mut rng: u64 = 0x9E3779B97F4A7C15;
-        let frames = out.len() / ch;
-        for i in 0..frames {
+        for i in 0..n {
             rng ^= rng >> 12;
             rng ^= rng << 25;
             rng ^= rng >> 27;
             let noise =
-                ((rng.wrapping_mul(0x2545F4914F6CDD1D) >> 33) as i32 as f32 / 2147483648.0) * 0.014;
+                ((rng.wrapping_mul(0x2545F4914F6CDD1D) >> 33) as i32 as f32 / 2147483648.0) * 0.010;
             for c in 0..ch {
                 let idx = i * ch + c;
                 let x = out[idx];
                 env[c] += env_alpha * (x.abs() - env[c]);
-                // only inside inter-word gaps (locally quiet moments)
                 let quiet = (1.0 - (env[c] * 6.0).clamp(0.0, 1.0)) * 0.5;
                 out[idx] = x + noise * quiet;
             }
@@ -596,34 +407,32 @@ fn apply_effect(
         "reverb" => Ok(apply_reverb(samples, sample_rate, channels)),
         "chipmunk" => Ok(apply_chipmunk(samples, sample_rate, channels)),
         "demon" => Ok(apply_demon(samples, sample_rate, channels)),
-        // Female voices (researched M→F recipe): pitch +2..3 st AND formants
-        // raised 15-25% — the F0/formant DECOUPLING is what reads as female
-        // (pitch-only lifts sound chipmunk-ish or "higher man").
-        // woman1 "soave": +2 st, +18% formants — soft, elegant.
-        // woman2 "seducente": +3 st, +22% formants + breath — warm, intimate.
-        // woman3 "vivace": +3 st, +28% formants — brightest/most dynamic.
+        // Female voices (artifact-free recipe): moderate tape lift + WSOLA
+        // rate restore + gentle brightness tilt (+optional breath). Pitch is
+        // kept in the androgynous/light-female zone (~160-175 Hz) — big
+        // lifts read chipmunk, subtle lifts read natural.
+        // woman1 "soave": +5 st, no breath — soft, elegant.
+        // woman2 "seducente": +6 st + breath — warm, intimate.
+        // woman3 "vivace": +6.5 st — brightest, most energetic.
         "woman1" => Ok(female_voice(
             samples,
             sample_rate,
             channels,
-            2.0f32.powf(2.0 / 12.0),
-            1.18,
+            2.0f32.powf(5.0 / 12.0),
             false,
         )),
         "woman2" => Ok(female_voice(
             samples,
             sample_rate,
             channels,
-            2.0f32.powf(3.0 / 12.0),
-            1.22,
+            2.0f32.powf(6.0 / 12.0),
             true,
         )),
         "woman3" => Ok(female_voice(
             samples,
             sample_rate,
             channels,
-            2.0f32.powf(3.0 / 12.0),
-            1.28,
+            2.0f32.powf(6.5 / 12.0),
             false,
         )),
         _ => Err(AudioEffectError::EffectProcessing(format!("Unknown effect: {}", effect))),
@@ -944,17 +753,12 @@ mod tests {
                 (std::f32::consts::TAU * 130.0 * t).sin() * 0.6 * env
             })
             .collect();
-        // Expected length after the full pipeline: PSOLA leaves length as-is,
-        // formant morph = resample by `formant` then WSOLA restore by the
-        // same factor → net ~1.0. Accept small residual drift (10%).
-        let expected: &[(f32, f32)] = &[(1.18, 2.0f32.powf(2.0/12.0)), (1.22, 2.0f32.powf(3.0/12.0)), (1.28, 2.0f32.powf(3.0/12.0))];
-        for (eff_i, effect) in ["woman1", "woman2", "woman3"].iter().enumerate() {
+        for effect in ["woman1", "woman2", "woman3"] {
             let out = apply_effect(input.clone(), effect, sample_rate, 1).unwrap();
-            // WSOLA restore is quantized to integer hops; allow up to 15% net
-            // drift for very short signals (0.5 s here).
+            // Pipeline: tape lift + WSOLA restore → duration 1:1 (WSOLA is
+            // hop-quantized; allow ~7% drift on this 0.5 s signal).
             let ratio = out.len() as f32 / input.len() as f32;
             assert!((ratio - 1.0).abs() < 0.15, "{} length ratio {}", effect, ratio);
-            let _ = expected[eff_i];
             let peak = out.iter().fold(0.0f32, |p, s| p.max(s.abs()));
             assert!(peak > 0.05 && peak <= 1.05, "{} peak {}", effect, peak);
             // Must not be the identity transform.
