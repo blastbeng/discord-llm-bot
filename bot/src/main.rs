@@ -507,8 +507,7 @@ async fn speak(
 
     // Resolve "random" effect to a random choice
     let actual_effect = if effect == "random" {
-        let mut rng = rand::thread_rng();
-        crate::audio_effects::ACTUAL_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::random_effect().to_string()
     } else {
         effect
     };
@@ -644,7 +643,7 @@ async fn random(
     #[autocomplete = "voice_autocomplete"]
     voice: Option<String>,
     #[description = "Il testo da cercare"] text: Option<String>,
-    #[description = "Effetto audio (default: none)"]
+    #[description = "Effetto audio (default: random)"]
     #[autocomplete = "effect_autocomplete"]
     effect: Option<String>,
 ) -> Result<(), Error> {
@@ -653,11 +652,13 @@ async fn random(
     // Track whether the user explicitly specified a voice or effect.
     // The cached-MP3 shortcut below must only trigger when no effect will be
     // applied, because a cached file was generated without any effect filter.
-    // When the user does not pick an effect, /random applies a random one, so
+    // When the user does not pick an effect, /random defaults to "random", so
     // the shortcut only fires when the effect resolves to "none".
     let voice_explicitly_set = voice.is_some();
     let voice = voice.unwrap_or_else(|| "Google".to_string());
-    let effect = effect.unwrap_or_else(|| "none".to_string());
+    // Default to a random effect (which may itself resolve to "none") — the
+    // /random command is about variety, including plain speech.
+    let effect = effect.unwrap_or_else(|| "random".to_string());
     let actual_voice = if voice == "random" {
         let mut rng = rand::thread_rng();
         tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
@@ -672,8 +673,7 @@ async fn random(
 
     // Resolve "random" effect to a random choice
     let actual_effect = if effect == "random" {
-        let mut rng = rand::thread_rng();
-        crate::audio_effects::ACTUAL_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::random_effect().to_string()
     } else {
         effect
     };
@@ -977,8 +977,7 @@ async fn ask(
 
     // Resolve "random" effect to a random choice
     let actual_effect = if effect == "random" {
-        let mut rng = rand::thread_rng();
-        crate::audio_effects::ACTUAL_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::random_effect().to_string()
     } else {
         effect
     };
@@ -1208,8 +1207,7 @@ async fn translate(
     }
 
     let actual_effect = if effect == "random" {
-        let mut rng = rand::thread_rng();
-        crate::audio_effects::ACTUAL_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::random_effect().to_string()
     } else {
         effect
     };
@@ -1383,8 +1381,7 @@ async fn joke(
     }
 
     let actual_effect = if effect == "random" {
-        let mut rng = rand::thread_rng();
-        crate::audio_effects::ACTUAL_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::random_effect().to_string()
     } else {
         effect
     };
@@ -1995,8 +1992,7 @@ async fn soundboard(
 
     let effect = effect.unwrap_or_else(|| "none".to_string());
     let actual_effect = if effect == "random" {
-        let mut rng = rand::thread_rng();
-        crate::audio_effects::ACTUAL_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::random_effect().to_string()
     } else {
         effect
     };

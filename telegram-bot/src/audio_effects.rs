@@ -543,10 +543,11 @@ pub const AVAILABLE_EFFECTS: &[&str] = &[
     "random",
 ];
 
-/// Effects that actually apply DSP processing (excludes the pass-through
-/// "none" and "random"). Used when resolving a "random" effect request so the
-/// user always gets a real effect instead of occasionally no effect at all.
-pub const ACTUAL_EFFECTS: &[&str] = &[
+/// Pool for resolving a "random" effect request: every real effect plus the
+/// pass-through "none". Plain speech is a legitimate random outcome, so a
+/// "random" pick may occasionally come out with no effect applied.
+pub const RANDOM_EFFECT_POOL: &[&str] = &[
+    "none",
     "echo",
     "reverb",
     "bass",
@@ -556,12 +557,15 @@ pub const ACTUAL_EFFECTS: &[&str] = &[
     "underwater",
 ];
 
-/// Pick a uniformly random real effect (never "none"). Central helper so
-/// every feature that speaks "with a random effect" (/random, eavesdrop,
-/// welcome, goodbye, here-i-am) behaves identically.
+/// Pick a uniformly random effect from [`RANDOM_EFFECT_POOL`] (real effects
+/// plus "none"). Central helper so every feature that resolves a "random"
+/// effect (/random, eavesdrop, welcome, goodbye, here-i-am) behaves
+/// identically.
 pub fn random_effect() -> &'static str {
     use rand::seq::SliceRandom;
-    ACTUAL_EFFECTS.choose(&mut rand::thread_rng()).unwrap_or(&"echo")
+    RANDOM_EFFECT_POOL
+        .choose(&mut rand::thread_rng())
+        .unwrap_or(&"none")
 }
 
 #[cfg(test)]

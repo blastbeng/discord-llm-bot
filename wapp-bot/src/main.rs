@@ -286,8 +286,7 @@ async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) {
     }
 
     let actual_effect = if effect == "random" {
-        let mut rng = rand::thread_rng();
-        crate::audio_effects::ACTUAL_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::random_effect().to_string()
     } else {
         effect
     };
@@ -406,8 +405,7 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
     }
 
     let actual_effect = if effect == "random" {
-        let mut rng = rand::thread_rng();
-        crate::audio_effects::ACTUAL_EFFECTS.choose(&mut rng).unwrap().to_string()
+        crate::audio_effects::random_effect().to_string()
     } else {
         effect
     };
