@@ -139,18 +139,16 @@ pub fn get_file_path_with_effect(voice: &str, text: &str, effect: &str) -> Strin
 #[allow(dead_code)]
 pub fn get_effect_filter(effect: &str) -> Option<String> {
     match effect {
-        "echo" => Some("aecho=0.8:0.9:1000:0.3".to_string()),
-        "reverb" => Some("aecho=0.7:0.5:1800:0.3,aecho=0.7:0.5:600:0.2".to_string()),
-        // "bass", "telephone", "underwater" effects were removed entirely.
+        // "bass", "telephone", "underwater", "echo", "reverb" effects were
+        // removed entirely.
         "chipmunk" => Some("asetrate=44100*1.5,aresample=44100,atempo=0.6667".to_string()),
         // Demon voice: drops pitch to ~50% and keeps the audio slow so the
         // speech actually sounds deep and rumbling instead of just sped-up.
         // The previous filter did `asetrate=44100*0.6` (pitch down) then
         // `aresample=44100,atempo=1.6667` which raised the tempo back to
         // normal, so the net result was a bass-boosted speed-up rather than
-        // a demonic voice. We omit the atempo stage here, add light reverb
-        // for a cavernous feel, and boost the low end to thicken the tone.
-        "demon" => Some("asetrate=44100*0.5,aresample=44100,bass=g=18,aecho=0.8:0.7:1000:0.3".to_string()),
+        // a demonic voice.
+        "demon" => Some("asetrate=44100*0.5,aresample=44100,bass=g=18".to_string()),
         _ => None,
     }
 }

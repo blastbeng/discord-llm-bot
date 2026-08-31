@@ -219,7 +219,7 @@ async fn pick_cached_mp3() -> Option<String> {
 }
 
 fn parse_voice_effect(args: &str) -> (String, String, String) {
-    // Format: "text" or "text --voice Google" or "text --voice Google --effect echo".
+    // Format: "text" or "text --voice Google" or "text --voice Google --effect demon".
     // Flags may appear anywhere; each flag consumes its following token as its
     // value. A flag with no value (e.g. "hello --voice") is simply dropped so
     // the flag token is never spoken as part of the text, and the default

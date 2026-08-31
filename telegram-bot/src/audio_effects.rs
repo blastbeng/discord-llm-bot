@@ -236,8 +236,6 @@ fn apply_effect(
 ) -> Result<Vec<f32>, AudioEffectError> {
     match effect {
         "none" | "random" => Ok(samples),
-        "echo" => Ok(apply_echo(samples, sample_rate, channels)),
-        "reverb" => Ok(apply_reverb(samples, sample_rate, channels)),
         "chipmunk" => Ok(apply_chipmunk(samples, sample_rate, channels)),
         "demon" => Ok(apply_demon(samples, sample_rate, channels)),
         // Female voices: PHASE VOCODER pitch shift (formant-preserving —
@@ -248,124 +246,6 @@ fn apply_effect(
         // as a young female TTS voice, not chipmunk.
         _ => Err(AudioEffectError::EffectProcessing(format!("Unknown effect: {}", effect))),
     }
-}
-
-/// Echo: dry signal + decaying, progressively darker repeats.
-/// The tail is padded out so the repeats are not cut at file end.
-fn apply_echo(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
-    let ch = channels.max(1) as usize;
-    let sr = sample_rate as f32;
-    let delay_ms = 250.0;
-    let delay_samples = ((delay_ms / 1000.0 * sr).max(1.0)) as usize;
-    let feedback = 0.35f32;
-    let wet_per_repeat = 0.45f32;
-
-    // 4 repeats are audible before the feedback decays into noise.
-    let tail_frames = (delay_ms / 1000.0 * sr * 4.0) as usize;
-    let mut output = samples;
-    let orig_frames = output.len() / ch;
-    output.resize((orig_frames + tail_frames) * ch, 0.0);
-
-    // Feedback path passes through a one-pole low-pass (analog tape echo):
-    // each repeat is darker than the previous one.
-    let tone_alpha = lp_alpha(3200.0, sr);
-    let mut line = vec![0.0f32; delay_samples * ch];
-    let mut tone_state = vec![0.0f32; ch];
-
-    let frames = output.len() / ch;
-    for i in 0..frames {
-        let line_base = (i % delay_samples) * ch;
-        for c in 0..ch {
-            let idx = i * ch + c;
-            let delayed = line[line_base + c];
-            tone_state[c] += tone_alpha * (delayed - tone_state[c]);
-            line[line_base + c] = output[idx] + tone_state[c] * feedback;
-            output[idx] += delayed * wet_per_repeat;
-        }
-    }
-    output
-}
-
-/// Reverb: classic Freeverb architecture (8 parallel combs into 4 series
-/// all-passes, with damping in the comb feedback path), pure Rust, with a
-/// padded tail so the reverb rings out naturally after speech ends.
-fn apply_reverb(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
-    let ch = channels.max(1) as usize;
-    let sr = sample_rate as f32;
-    const COMB_DELAYS: [f32; 8] = [1116.0, 1188.0, 1277.0, 1356.0, 1422.0, 1491.0, 1557.0, 1617.0];
-    const ALLPASS_DELAYS: [f32; 4] = [556.0, 441.0, 341.0, 225.0];
-    // Freeverb's fixed delay table is defined at 44.1 kHz.
-    let scale = sr / 44100.0;
-    let room_size = 0.7f32;
-    let damping = 0.5f32;
-
-    // Classic Freeverb parameter mappings.
-    let feedback = room_size * 0.28 + 0.7;
-    let damp = damping * 0.4;
-    let fixed_gain = 0.015f32; // input attenuation into the comb network
-    let wet_gain = 0.9f32; // wet slider 0.3 * scalewet(3)
-    let dry_gain = 0.8f32;
-
-    let tail_frames = (0.45 * sr) as usize;
-    let mut output = samples;
-    output.resize(output.len() / ch * ch + tail_frames * ch, 0.0);
-
-    let n_combs = COMB_DELAYS.len();
-    let n_aps = ALLPASS_DELAYS.len();
-
-    let mut comb_buf: Vec<Vec<f32>> = Vec::with_capacity(n_combs * ch);
-    let mut comb_pos = vec![0usize; n_combs * ch];
-    let mut comb_store = vec![0.0f32; n_combs * ch];
-    for d in COMB_DELAYS.iter() {
-        for _ in 0..ch {
-            comb_buf.push(vec![0.0f32; ((d * scale) as usize).max(1)]);
-        }
-    }
-    let mut ap_buf: Vec<Vec<f32>> = Vec::with_capacity(n_aps * ch);
-    let mut ap_pos = vec![0usize; n_aps * ch];
-    for d in ALLPASS_DELAYS.iter() {
-        for _ in 0..ch {
-            ap_buf.push(vec![0.0f32; ((d * scale) as usize).max(1)]);
-        }
-    }
-
-    let frames = output.len() / ch;
-    let mut wet_out = vec![0.0f32; output.len()];
-    for i in 0..frames {
-        for c in 0..ch {
-            let idx = i * ch + c;
-            let input = output[idx] * fixed_gain;
-
-            // Parallel comb filters
-            let mut out = 0.0f32;
-            for k in 0..n_combs {
-                let slot = k * ch + c;
-                let buf_len = comb_buf[slot].len();
-                let pos = comb_pos[slot];
-                let delayed = comb_buf[slot][pos];
-                comb_store[slot] = delayed * (1.0 - damp) + comb_store[slot] * damp;
-                comb_buf[slot][pos] = input + comb_store[slot] * feedback;
-                comb_pos[slot] = (pos + 1) % buf_len;
-                out += delayed;
-            }
-            // Series all-pass filters
-            for k in 0..n_aps {
-                let slot = k * ch + c;
-                let buf_len = ap_buf[slot].len();
-                let pos = ap_pos[slot];
-                let bufout = ap_buf[slot][pos];
-                let ap_out = -out + bufout;
-                ap_buf[slot][pos] = out + bufout * 0.5;
-                ap_pos[slot] = (pos + 1) % buf_len;
-                out = ap_out;
-            }
-            wet_out[idx] = out;
-        }
-    }
-    for i in 0..output.len() {
-        output[i] = output[i] * dry_gain + wet_out[i] * wet_gain;
-    }
-    output
 }
 
 /// Chipmunk: pitch up 5 semitones via tape-style speed change.
@@ -429,15 +309,13 @@ pub async fn compress_and_save_mp3_with_effect(
 pub fn is_valid_effect(effect: &str) -> bool {
     matches!(
         effect,
-        "none" | "echo" | "reverb" | "chipmunk" | "demon" | "random"
+        "none" | "chipmunk" | "demon" | "random"
     )
 }
 
 /// Get available effects
 pub const AVAILABLE_EFFECTS: &[&str] = &[
     "none",
-    "echo",
-    "reverb",
     "chipmunk",
     "demon",
     "random",
@@ -448,8 +326,6 @@ pub const AVAILABLE_EFFECTS: &[&str] = &[
 /// "random" pick may occasionally come out with no effect applied.
 pub const RANDOM_EFFECT_POOL: &[&str] = &[
     "none",
-    "echo",
-    "reverb",
     "chipmunk",
     "demon",
 ];
@@ -472,8 +348,6 @@ mod tests {
     #[test]
     fn test_is_valid_effect() {
         assert!(is_valid_effect("none"));
-        assert!(is_valid_effect("echo"));
-        assert!(is_valid_effect("reverb"));
         assert!(is_valid_effect("chipmunk"));
         assert!(is_valid_effect("demon"));
         assert!(is_valid_effect("random"));
@@ -483,13 +357,15 @@ mod tests {
         assert!(!is_valid_effect("bass"));
         assert!(!is_valid_effect("telephone"));
         assert!(!is_valid_effect("underwater"));
+        assert!(!is_valid_effect("echo"));
+        assert!(!is_valid_effect("reverb"));
         assert!(!is_valid_effect("invalid"));
     }
 
     #[test]
-    fn test_available_effects_contains_expected() {
-        assert!(AVAILABLE_EFFECTS.contains(&"echo"));
-        assert!(AVAILABLE_EFFECTS.contains(&"reverb"));
+    fn test_available_effects_does_not_contain_removed() {
+        assert!(!AVAILABLE_EFFECTS.contains(&"echo"));
+        assert!(!AVAILABLE_EFFECTS.contains(&"reverb"));
     }
 
     #[test]
