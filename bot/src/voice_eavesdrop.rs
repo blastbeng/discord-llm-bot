@@ -13,17 +13,20 @@ pub struct VoiceEavesdropState {
 }
 
 /// Validate an LLM response — reject anything that looks like a safety block,
-/// JSON, or noise. If the response fails validation, we stay silent.
+/// JSON, or noise. Refusal wording is delegated to the shared heuristics in
+/// [`llm::looks_like_refusal`] so eavesdrop, welcome, goodbye, here-i-am and
+/// ask all stay in sync. If the response fails validation, we stay silent.
 fn validate_response(text: &str) -> bool {
     if text.len() < 5 {
+        return false;
+    }
+    if llm::looks_like_refusal(text) {
         return false;
     }
     let lower = text.to_lowercase();
     if lower.contains("user safety") || lower.contains("safe:") || lower.contains("safety:") ||
        lower.contains("policy:") || lower.contains("blocked") || lower.contains("explicit") ||
-       lower.contains("content filter") || lower.contains("i'm sorry") ||
-       lower.contains("cannot comply") || lower.contains("cannot generate") ||
-       lower.contains("not appropriate") || lower.contains("against policy") ||
+       lower.contains("content filter") ||
        lower.contains("{") || lower.contains("```") || lower.contains("label:") ||
        lower.contains("classification:") || lower.contains("category:") ||
        lower.starts_with("safe") || lower.starts_with("blocked") ||

@@ -1040,6 +1040,15 @@ async fn ask(
         }
     };
 
+    // The LLM refused the request (JSON "refused" flag or refusal boilerplate).
+    // Never speak the refusal boilerplate — tell the user in chat instead and
+    // stop before TTS-generation, playback, or persistence.
+    if llm::is_refusal_error(&llm_response) {
+        log::warn!("[GUILDID : {}] ask - LLM refused the request, not speaking it", guild_id);
+        reply.edit(ctx, poise::CreateReply::default().content(&ctx.data().lang.ask_refused).ephemeral(true)).await?;
+        return Ok(());
+    }
+
     log::info!("[GUILDID : {}] ask - LLM response: {:?}", guild_id, llm_response);
 
     // Save the LLM response as a sentence in the database (like /speak does)
