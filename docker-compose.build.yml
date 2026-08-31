@@ -7,6 +7,7 @@
 # replace (tag) the same names that would otherwise be pulled from the registry.
 services:
   discord-llm-bot:
+    image: "blastbeng/discord-llm-bot:1.0.0"
     build:
       context: ./bot
       dockerfile: Dockerfile
@@ -14,16 +15,19 @@ services:
 
   # [TEMP-DISABLED] WhatsApp services are temporarily disabled. Uncomment to re-enable.
   # whatsapp-bridge:
+  #   image: "blastbeng/whatsapp-bridge:1.0.0"
   #   build:
   #     context: ./wapp-bridge
   #     dockerfile: Dockerfile
   #
   # whatsapp-bot:
+  #   image: "blastbeng/whatsapp-llm-bot:1.0.0"
   #   build:
   #     context: ./wapp-bot
   #     dockerfile: Dockerfile
 
   telegram-bot:
+    image: "blastbeng/telegram-llm-bot:1.0.0"
     build:
       context: ./telegram-bot
       dockerfile: Dockerfile
