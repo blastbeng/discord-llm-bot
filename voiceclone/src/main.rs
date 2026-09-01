@@ -414,12 +414,16 @@ async fn synthesize(
     // Decode the reference and synthesize. Engine generation is fully
     // synchronous (onnxruntime) — block_in_place keeps the tokio worker free
     // for other tasks while the Mutex guarantees one generation at a time.
-    let samples_in = audio::decode_to_mono(&sample).ok_or_else(|| {
+    let (samples_in, ref_rate) = audio::decode_audio(&sample).ok_or_else(|| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             "stored sample is corrupt; delete and re-create the voice".to_string(),
         )
     })?;
+    // PocketTTS expects 24kHz reference audio; uploaded samples keep their
+    // original rate (usually 44.1/48kHz) and must be resampled, otherwise
+    // the model hears pitched-down garbage and the output degenerates.
+    let samples_in = audio::resample_linear(&samples_in, ref_rate, 24000);
     let samples = tokio::task::block_in_place(|| {
         audio::generate(engine, text.clone(), samples_in, req.speed)
     })

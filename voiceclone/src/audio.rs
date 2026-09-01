@@ -103,6 +103,27 @@ fn decode_wav(bytes: &[u8]) -> Option<(Vec<f32>, u32, u16)> {
     Some((samples, rate, channels))
 }
 
+/// Linear-interpolation resampler for mono samples. PocketTTS expects its
+/// reference audio at 24kHz (its native rate); uploaded samples are usually
+/// 44.1/48kHz and feeding them unresampled makes the model hear pitched-down
+/// garbage, which degenerates the whole generation.
+pub fn resample_linear(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
+    if from_rate == to_rate || samples.len() < 2 || from_rate == 0 {
+        return samples.to_vec();
+    }
+    let out_len = ((samples.len() as f64) * to_rate as f64 / from_rate as f64).max(1.0) as usize;
+    let mut out = Vec::with_capacity(out_len);
+    let step = f64::from(from_rate) / f64::from(to_rate);
+    for i in 0..out_len {
+        let pos = i as f64 * step;
+        let i0 = (pos as usize).min(samples.len() - 1);
+        let i1 = (i0 + 1).min(samples.len() - 1);
+        let frac = (pos - i0 as f64) as f32;
+        out.push(samples[i0] * (1.0 - frac) + samples[i1] * frac);
+    }
+    out
+}
+
 /// Average the channels of interleaved samples down to mono.
 fn to_mono(samples: Vec<f32>, channels: usize) -> Vec<f32> {
     if channels <= 1 {
