@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use rand::seq::SliceRandom;
 use teloxide::prelude::*;
+use teloxide::net::Download as _;
 use teloxide::types::{ChatId, ChatKind, InputFile, Message};
 
 /// Shared application state, mirroring the WhatsApp bot's `AppState`.
@@ -163,6 +164,9 @@ async fn handle_message(bot: Bot, msg: Message, state: Arc<AppState>) -> Respons
     match command.as_str() {
         "/speak" | "/s" => cmd_speak(&bot, chat_id, &state, &args).await,
         "/random" | "/r" => cmd_random(&bot, chat_id, &state, &args).await,
+        "/createvoice" => cmd_createvoice(&bot, &msg, chat_id, &state, &args).await,
+        "/myvoices" => cmd_myvoices(&bot, chat_id, &state).await,
+        "/deletevoice" => cmd_deletevoice(&bot, chat_id, &state, &args).await,
         "/ask" | "/a" => {
             let r = cmd_ask(&state, &chat_id.to_string(), &args).await;
             let _ = bot.send_message(chat_id, r).await;
@@ -208,7 +212,10 @@ async fn pick_cached_mp3() -> Option<String> {
         let path = entry.path();
         if path.extension().is_some_and(|ext| ext == "mp3") {
             if let Some(s) = path.to_str() {
-                mp3_files.push(s.to_string());
+                // Exclude cloned-voice files so /random never plays a clone.
+                if !s.contains("clone|") {
+                    mp3_files.push(s.to_string());
+                }
             }
         }
     }
@@ -263,6 +270,166 @@ async fn send_audio(bot: &Bot, chat_id: ChatId, file_path: &str) {
 }
 
 // ─── Commands ─────────────────────────────────────────────────────
+
+/// Owner identity for voice cloning, namespaced per Telegram user.
+fn vc_owner(user_id: teloxide::types::UserId) -> String {
+    format!("telegram:{}", user_id.0)
+}
+
+/// Fetch the base64 content of an audio attachment usable as a voice sample.
+/// Accepts: audio, voice (voice note), or document (mp3/wav). Returns None if
+/// the message carries none of these.
+async fn sample_from_message(bot: &Bot, msg: &Message) -> Option<Result<Vec<u8>, String>> {
+    let file_meta = if let Some(a) = &msg.audio() {
+        Some((a.file.clone(), a.file_name.clone()))
+    } else if let Some(v) = &msg.voice() {
+        Some((v.file.clone(), None))
+    } else if let Some(d) = &msg.document() {
+        let ext_ok = d
+            .file_name
+            .as_deref()
+            .map(|n| {
+                let n = n.to_lowercase();
+                n.ends_with(".mp3") || n.ends_with(".wav")
+            })
+            .unwrap_or(false);
+        if ext_ok {
+            Some((d.file.clone(), d.file_name.clone()))
+        } else {
+            None
+        }
+    } else {
+        None
+    }?;
+
+    let (file, _name) = file_meta;
+    match bot.get_file(file.id).await {
+        Ok(f) => {
+            let mut buf = Vec::new();
+            match bot.download_file(&f.path, &mut buf).await {
+                Ok(()) => Some(Ok(buf)),
+                Err(e) => Some(Err(format!("download failed: {e}"))),
+            }
+        }
+        Err(e) => Some(Err(format!("get_file failed: {e}"))),
+    }
+}
+
+/// /createvoice <name> with an attached MP3/WAV sample in the same message.
+/// (For voice-note flows: send the voice note, then /createvoice name as a
+/// REPLY to it — the sample is then taken from the replied-to message.)
+async fn cmd_createvoice(bot: &Bot, msg: &Message, chat_id: ChatId, state: &AppState, args: &str) {
+    let name = args.trim().to_string();
+    let lang = &state.lang;
+    if !tts::voiceclone_configured() {
+        let _ = bot.send_message(chat_id, &lang.vc_not_configured).await;
+        return;
+    }
+    if name.is_empty() {
+        let _ = bot.send_message(chat_id, &lang.vc_usage).await;
+        return;
+    }
+    if !tts::is_valid_voice(&format!("clone:{}", name)) {
+        let _ = bot.send_message(chat_id, &lang.vc_invalid_name).await;
+        return;
+    }
+
+    // Sample can be attached to this message or, when replying, to the
+    // replied-to message.
+    let sample = match sample_from_message(bot, msg).await {
+        Some(r) => Some(r),
+        None => match msg.reply_to_message() {
+            Some(replied) => sample_from_message(bot, replied).await,
+            None => None,
+        },
+    };
+
+    match sample {
+        None => {
+            let _ = bot.send_message(chat_id, &lang.vc_sample_invalid).await;
+        }
+        Some(Err(e)) => {
+            log::error!("telegram-bot createvoice: {}", e);
+            let _ = bot.send_message(chat_id, &lang.vc_sample_invalid).await;
+        }
+        Some(Ok(bytes)) => {
+            use base64::Engine as _;
+            let audio_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            let owner = msg
+                .from
+                .as_ref()
+                .map(|u| vc_owner(u.id))
+                .unwrap_or_default();
+            match tts::create_cloned_voice(&name, &owner, &audio_b64).await {
+                Ok(()) => {
+                    let m = lang.vc_created.replacen("{}", &name, 1).replacen("{}", &name, 1);
+                    let _ = bot.send_message(chat_id, m).await;
+                }
+                Err(e) => {
+                    let m = if e.contains("already exists") {
+                        lang.vc_exists.replacen("{}", &name, 1)
+                    } else if e.contains("could not decode") || e.contains("too short") || e.contains("between 4KB") {
+                        lang.vc_sample_invalid.clone()
+                    } else if e.contains("invalid voice name") {
+                        lang.vc_invalid_name.clone()
+                    } else {
+                        lang.vc_error.replacen("{}", &e, 1)
+                    };
+                    let _ = bot.send_message(chat_id, m).await;
+                }
+            }
+        }
+    }
+}
+
+/// /myvoices — list all cloned voices.
+async fn cmd_myvoices(bot: &Bot, chat_id: ChatId, state: &AppState) {
+    let lang = &state.lang;
+    if !tts::voiceclone_configured() {
+        let _ = bot.send_message(chat_id, &lang.vc_not_configured).await;
+        return;
+    }
+    let voices = tts::list_cloned_voices().await.unwrap_or_default();
+    if voices.is_empty() {
+        let _ = bot.send_message(chat_id, &lang.vc_list_empty).await;
+        return;
+    }
+    let lines: Vec<String> = voices
+        .iter()
+        .map(|v| format!("• **clone:{}** — `/speak testo --voice clone:{}`", v.name, v.name))
+        .collect();
+    let _ = bot.send_message(chat_id, lines.join("\n")).await;
+}
+
+/// /deletevoice <name> — delete a cloned voice.
+async fn cmd_deletevoice(bot: &Bot, chat_id: ChatId, state: &AppState, args: &str) {
+    let name = args.trim().to_string();
+    let lang = &state.lang;
+    if !tts::voiceclone_configured() {
+        let _ = bot.send_message(chat_id, &lang.vc_not_configured).await;
+        return;
+    }
+    if name.is_empty() {
+        let _ = bot.send_message(chat_id, &lang.vc_delete_usage).await;
+        return;
+    }
+    let voices = tts::list_cloned_voices().await.unwrap_or_default();
+    match voices.iter().find(|v| v.name == name) {
+        None => {
+            let _ = bot.send_message(chat_id, lang.vc_not_found.replacen("{}", &name, 1)).await;
+        }
+        Some(v) => {
+            match tts::delete_cloned_voice(&name, &v.owner).await {
+                Ok(()) => {
+                    let _ = bot.send_message(chat_id, lang.vc_deleted.replacen("{}", &name, 1)).await;
+                }
+                Err(e) => {
+                    let _ = bot.send_message(chat_id, lang.vc_error.replacen("{}", &e, 1)).await;
+                }
+            }
+        }
+    }
+}
 
 async fn cmd_speak(bot: &Bot, chat_id: ChatId, state: &AppState, args: &str) {
     let (text, voice, effect) = parse_voice_effect(args);
@@ -620,10 +787,11 @@ async fn cmd_stats(state: &AppState) -> String {
 
 async fn cmd_help(state: &AppState) -> String {
     let voices = tts::AVAILABLE_VOICES.iter().map(|v| format!("`{}`", v)).collect::<Vec<_>>().join(", ");
+    let cloned_hint = if tts::voiceclone_configured() { " (cloned: `clone:<name>`, see /myvoices)" } else { "" };
     let effects = crate::audio_effects::AVAILABLE_EFFECTS.iter().map(|e| format!("`{}`", e)).collect::<Vec<_>>().join(", ");
     format!(
         "{}{}",
         state.lang.help_title,
-        state.lang.help_text.replacen("{}", &voices, 1).replacen("{}", &effects, 1),
+        state.lang.help_text.replacen("{}", &format!("{voices}{cloned_hint}"), 1).replacen("{}", &effects, 1),
     )
 }

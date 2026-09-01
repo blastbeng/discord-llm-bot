@@ -2,6 +2,7 @@ import makeWASocket, {
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion,
+    downloadMediaMessage,
 } from 'baileys';
 import qrcode from 'qrcode-terminal';
 import express from 'express';
@@ -103,6 +104,20 @@ async function connectToWhatsApp() {
                 text = msg.message.extendedTextMessage.text;
             }
 
+            // Media context for /createvoice: when a quoted (replied-to)
+            // message carries a voice note or audio document, include the full
+            // quoted message so the Rust bot can ask the bridge to download
+            // it via POST /fetchMedia.
+            let quotedMedia = null;
+            const q = msg.message?.extendedTextMessage?.contextInfo?.quotedMessage;
+            if (q) {
+                const mtype = Object.keys(q)[0];
+                if (mtype === 'audioMessage' || mtype === 'documentMessage' ||
+                    mtype === 'documentWithCaptionMessage') {
+                    quotedMedia = { type: mtype, message: q };
+                }
+            }
+
             if (!text || !text.startsWith('/')) continue;
 
             // Send webhook to the Rust bot
@@ -112,6 +127,7 @@ async function connectToWhatsApp() {
                 sender: msg.key.participant || msg.key.remoteJid,
                 messageId: msg.key.id,
                 text: text,
+                quotedMedia: quotedMedia,
             };
 
             try {
@@ -210,6 +226,41 @@ app.post('/sendAudio', async (req, res) => {
         for (const f of createdFiles) {
             try { unlinkSync(f); } catch {}
         }
+    }
+});
+
+// POST /fetchMedia — download media from a quoted message and return it as
+// base64. Used by the Rust bot to fetch voice-note samples for /createvoice.
+app.post('/fetchMedia', async (req, res) => {
+    const { message } = req.body;
+    if (!message) {
+        return res.status(400).json({ error: 'message is required' });
+    }
+    try {
+        const mtype = Object.keys(message)[0];
+        const m = message[mtype];
+        if (!m) {
+            return res.status(400).json({ error: 'unsupported message shape' });
+        }
+        // downloadMediaMessage writes decrypted media into the provided stream.
+        const chunks = [];
+        const { Writable } = await import('stream');
+        const sink = new Writable({
+            write(chunk, _enc, cb) { chunks.push(chunk); cb(); },
+        });
+        await downloadMediaMessage(
+            { message },
+            { logger, reuploadRequest: sock.updateMediaMessage },
+            sink,
+        );
+        const buffer = Buffer.concat(chunks);
+        if (buffer.length === 0) {
+            return res.status(500).json({ error: 'empty media download' });
+        }
+        res.json({ base64: buffer.toString('base64'), mimetype: m.mimetype || null });
+    } catch (e) {
+        console.error('[bridge] fetchMedia error:', e.message);
+        res.status(500).json({ error: e.message });
     }
 });
 

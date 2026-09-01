@@ -76,6 +76,18 @@ pub struct Lang {
     pub ai_unavailable: String,
     pub ai_refused: String,
     pub translation_failed: String,
+    // Voice cloning
+    pub vc_not_configured: String,
+    pub vc_usage: String,
+    pub vc_created: String,
+    pub vc_exists: String,
+    pub vc_invalid_name: String,
+    pub vc_sample_invalid: String,
+    pub vc_list_empty: String,
+    pub vc_delete_usage: String,
+    pub vc_deleted: String,
+    pub vc_not_found: String,
+    pub vc_error: String,
 }
 
 impl Lang {
@@ -149,6 +161,9 @@ impl Lang {
                 help_text: "\n\n*Voice & Audio:*\n\
                     /speak <text> [--voice Google] [--effect none] — Speak text via TTS (sends audio)\n\
                     /random [search] [--voice Google] [--effect none] — Random sentence from database (sends audio)\n\
+                    /createvoice <name> — attach or quote an MP3/WAV voice note (10-30s speech) to clone a voice\n\
+                    /myvoices — List cloned voices\n\
+                    /deletevoice <name> — Delete a cloned voice\n\
                     /joke — Fetch a random joke (text response)\n\n\
                     *AI & LLM:*\n\
                     /ask <question> — Ask the AI a question (text response)\n\
@@ -174,6 +189,17 @@ impl Lang {
                 ai_unavailable: "The AI is currently unavailable. Please try again later.".to_string(),
                 ai_refused: "The AI declined to answer that one 🙈. Try asking something else.".to_string(),
                 translation_failed: "Translation failed. Please try again later.".to_string(),
+                vc_not_configured: "Voice cloning is not available on this bot.".to_string(),
+                vc_usage: "Usage: /createvoice <name> — attach or quote an MP3/WAV voice note (10-30s of speech)".to_string(),
+                vc_created: "Voice {} created! Use it with /speak <text> --voice clone:{}".to_string(),
+                vc_exists: "A voice named {} already exists — delete it first with /deletevoice.".to_string(),
+                vc_invalid_name: "Invalid voice name: use 1-64 characters from A-Z, a-z, 0-9, _ and - (reserved names are not allowed).".to_string(),
+                vc_sample_invalid: "Could not read the audio — attach or quote an MP3/WAV voice note with 10-30 seconds of clean speech.".to_string(),
+                vc_list_empty: "No cloned voices yet — create one with /createvoice.".to_string(),
+                vc_delete_usage: "Usage: /deletevoice <voice name>".to_string(),
+                vc_deleted: "Voice {} deleted.".to_string(),
+                vc_not_found: "Voice {} not found.".to_string(),
+                vc_error: "Voice cloning error: {}".to_string(),
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
@@ -242,6 +268,9 @@ impl Lang {
                 help_text: "\n\n*Voce & Audio:*\n\
                     /speak <testo> [--voice Google] [--effect none] — Ripete un testo via TTS (invia audio)\n\
                     /random [ricerca] [--voice Google] [--effect none] — Frase casuale dal database (invia audio)\n\
+                    /createvoice <nome> — allega o cita una nota vocale MP3/WAV (10-30s) per clonare una voce\n\
+                    /myvoices — Mostra le voci clonate\n\
+                    /deletevoice <nome> — Elimina una voce clonata\n\
                     /joke — Recupera una battuta casuale (risposta di testo)\n\n\
                     *IA & LLM:*\n\
                     /ask <domanda> — Fai una domanda all'IA (risposta di testo)\n\
@@ -267,6 +296,17 @@ impl Lang {
                 ai_unavailable: "L'IA non é al momento disponibile. Riprova piú tardi.".to_string(),
                 ai_refused: "L'IA ha declinato di rispondere 🙈. Prova a chiedere qualcos'altro.".to_string(),
                 translation_failed: "Traduzione non riuscita. Riprova piú tardi.".to_string(),
+                vc_not_configured: "La clonazione vocale non è disponibile su questo bot.".to_string(),
+                vc_usage: "Uso: /createvoice <nome> — allega oppure cita una nota vocale MP3/WAV (10-30s di voce)".to_string(),
+                vc_created: "Voce {} creata! Usala con /speak <testo> --voice clone:{}".to_string(),
+                vc_exists: "Esiste già una voce chiamata {} — eliminala prima con /deletevoice.".to_string(),
+                vc_invalid_name: "Nome voce non valido: usa 1-64 caratteri tra A-Z, a-z, 0-9, _ e - (i nomi riservati non sono ammessi).".to_string(),
+                vc_sample_invalid: "Impossibile leggere l'audio — allega oppure cita una nota vocale MP3/WAV con 10-30 secondi di voce pulita.".to_string(),
+                vc_list_empty: "Nessuna voce clonata — creane una con /createvoice.".to_string(),
+                vc_delete_usage: "Uso: /deletevoice <nome voce>".to_string(),
+                vc_deleted: "Voce {} eliminata.".to_string(),
+                vc_not_found: "Voce {} non trovata.".to_string(),
+                vc_error: "Errore di clonazione vocale: {}".to_string(),
             }
         }
     }

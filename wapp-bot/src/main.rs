@@ -9,10 +9,14 @@ mod tts;
 mod lang;
 
 use axum::{extract::State, http::StatusCode, routing::post, Json, Router};
+use base64::Engine as _;
 use rand::seq::SliceRandom;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
+
+/// Shared base64 engine for sample upload/download.
+static BASE64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
 use std::env;
 
 struct AppState {
@@ -35,6 +39,21 @@ struct WebhookPayload {
     #[allow(dead_code)]
     message_id: String,
     text: String,
+    /// Present when the command message QUOTES a voice note / audio document
+    /// (used by /createvoice to fetch the sample to clone from).
+    #[serde(default)]
+    quoted_media: Option<QuotedMedia>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QuotedMedia {
+    #[allow(dead_code)]
+    #[serde(default)]
+    r#type: String,
+    /// The full quoted (replied-to) message — forwarded back to the bridge's
+    /// /fetchMedia endpoint to download the audio bytes.
+    message: serde_json::Value,
 }
 
 #[tokio::main]
@@ -143,6 +162,18 @@ async fn handle_webhook(
         "/ask" | "/a" => cmd_ask(&state, &payload, &args).await,
         "/translate" | "/t" => cmd_translate(&state, &payload, &args).await,
         "/joke" | "/j" => cmd_joke(&state, &payload).await,
+        "/createvoice" => {
+            cmd_createvoice(&state, &payload, &args).await;
+            String::new()
+        }
+        "/myvoices" => {
+            cmd_myvoices(&state, &payload).await;
+            String::new()
+        }
+        "/deletevoice" => {
+            cmd_deletevoice(&state, &payload, &args).await;
+            String::new()
+        }
         "/stats" => cmd_stats(&state, &payload).await,
         "/help" | "/h" => cmd_help(&state, &payload).await,
         _ => return (StatusCode::OK, Json(serde_json::json!({"status": "ignored"}))),
@@ -207,7 +238,10 @@ async fn pick_cached_mp3() -> Option<String> {
         let path = entry.path();
         if path.extension().is_some_and(|ext| ext == "mp3") {
             if let Some(s) = path.to_str() {
-                mp3_files.push(s.to_string());
+                // Exclude cloned-voice files so /random never plays a clone.
+                if !s.contains("clone|") {
+                    mp3_files.push(s.to_string());
+                }
             }
         }
     }
@@ -605,6 +639,127 @@ async fn translate_joke_to_lang(joke: &str) -> String {
     }
 }
 
+/// Owner identity for voice cloning, namespaced per WhatsApp chat.
+fn vc_owner(payload: &WebhookPayload) -> String {
+    format!("whatsapp:{}", payload.from)
+}
+
+/// Download the audio bytes of the quoted media message via the bridge.
+async fn fetch_quoted_media(state: &AppState, payload: &WebhookPayload) -> Option<Result<Vec<u8>, String>> {
+    let media = payload.quoted_media.as_ref()?;
+    let url = format!("{}/fetchMedia", state.bridge_url);
+    let resp = tts::http_client()
+        .post(&url)
+        .json(&serde_json::json!({ "message": media.message }))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return Some(Err(format!("bridge returned {}", resp.status())));
+    }
+    let body: Value = resp.json().await.ok()?;
+    let b64 = body.get("base64").and_then(|b| b.as_str())?;
+    match BASE64.decode(b64) {
+        Ok(bytes) => Some(Ok(bytes)),
+        Err(e) => Some(Err(format!("base64 decode: {e}"))),
+    }
+}
+
+/// /createvoice <name> — quotes a voice note / audio document to clone from.
+async fn cmd_createvoice(state: &AppState, payload: &WebhookPayload, args: &str) {
+    let name = args.trim().to_string();
+    let lang = &state.lang;
+    if !tts::voiceclone_configured() {
+        send_text(state, &payload.from, &lang.vc_not_configured).await;
+        return;
+    }
+    if name.is_empty() {
+        send_text(state, &payload.from, &lang.vc_usage).await;
+        return;
+    }
+    if !tts::is_valid_voice(&format!("clone:{}", name)) {
+        send_text(state, &payload.from, &lang.vc_invalid_name).await;
+        return;
+    }
+    let sample = match fetch_quoted_media(state, payload).await {
+        None => {
+            send_text(state, &payload.from, &lang.vc_sample_invalid).await;
+            return;
+        }
+        Some(Err(e)) => {
+            log::error!("wapp-bot createvoice: fetch media failed: {}", e);
+            send_text(state, &payload.from, &lang.vc_sample_invalid).await;
+            return;
+        }
+        Some(Ok(bytes)) => bytes,
+    };
+    use base64::Engine as _;
+    let audio_b64 = BASE64.encode(&sample);
+    match tts::create_cloned_voice(&name, &vc_owner(payload), &audio_b64).await {
+        Ok(()) => {
+            let m = lang.vc_created.replacen("{}", &name, 1).replacen("{}", &name, 1);
+            send_text(state, &payload.from, &m).await;
+        }
+        Err(e) => {
+            let m = if e.contains("already exists") {
+                lang.vc_exists.replacen("{}", &name, 1)
+            } else if e.contains("could not decode") || e.contains("too short") || e.contains("between 4KB") {
+                lang.vc_sample_invalid.clone()
+            } else if e.contains("invalid voice name") {
+                lang.vc_invalid_name.clone()
+            } else {
+                lang.vc_error.replacen("{}", &e, 1)
+            };
+            send_text(state, &payload.from, &m).await;
+        }
+    }
+}
+
+/// /myvoices — list all cloned voices.
+async fn cmd_myvoices(state: &AppState, payload: &WebhookPayload) {
+    let lang = &state.lang;
+    if !tts::voiceclone_configured() {
+        send_text(state, &payload.from, &lang.vc_not_configured).await;
+        return;
+    }
+    let voices = tts::list_cloned_voices().await.unwrap_or_default();
+    if voices.is_empty() {
+        send_text(state, &payload.from, &lang.vc_list_empty).await;
+        return;
+    }
+    let lines: Vec<String> = voices
+        .iter()
+        .map(|v| format!("• *clone:{}* — `/speak testo --voice clone:{}`", v.name, v.name))
+        .collect();
+    send_text(state, &payload.from, &lines.join("\n")).await;
+}
+
+/// /deletevoice <name> — delete a cloned voice.
+async fn cmd_deletevoice(state: &AppState, payload: &WebhookPayload, args: &str) {
+    let name = args.trim().to_string();
+    let lang = &state.lang;
+    if !tts::voiceclone_configured() {
+        send_text(state, &payload.from, &lang.vc_not_configured).await;
+        return;
+    }
+    if name.is_empty() {
+        send_text(state, &payload.from, &lang.vc_delete_usage).await;
+        return;
+    }
+    let voices = tts::list_cloned_voices().await.unwrap_or_default();
+    match voices.iter().find(|v| v.name == name) {
+        None => {
+            { let m = lang.vc_not_found.replacen("{}", &name, 1); send_text(state, &payload.from, &m).await; }
+        }
+        Some(v) => {
+            match tts::delete_cloned_voice(&name, &v.owner).await {
+                Ok(()) => { let m = lang.vc_deleted.replacen("{}", &name, 1); send_text(state, &payload.from, &m).await; }
+                Err(e) => { let m = lang.vc_error.replacen("{}", &e, 1); send_text(state, &payload.from, &m).await; }
+            }
+        }
+    }
+}
+
 async fn cmd_stats(state: &AppState, _payload: &WebhookPayload) -> String {
     let db_stats = database::get_db_statistics(&state.db_pool).await.unwrap_or_else(|e| format!("Error: {}", e));
 
@@ -645,10 +800,11 @@ async fn cmd_stats(state: &AppState, _payload: &WebhookPayload) -> String {
 
 async fn cmd_help(state: &AppState, _payload: &WebhookPayload) -> String {
     let voices = tts::AVAILABLE_VOICES.iter().map(|v| format!("`{}`", v)).collect::<Vec<_>>().join(", ");
+    let cloned_hint = if tts::voiceclone_configured() { " (cloned: `clone:<name>`, see /myvoices)" } else { "" };
     let effects = crate::audio_effects::AVAILABLE_EFFECTS.iter().map(|e| format!("`{}`", e)).collect::<Vec<_>>().join(", ");
     format!(
         "{}{}",
         state.lang.help_title,
-        state.lang.help_text.replacen("{}", &voices, 1).replacen("{}", &effects, 1),
+        state.lang.help_text.replacen("{}", &format!("{voices}{cloned_hint}"), 1).replacen("{}", &effects, 1),
     )
 }

@@ -52,25 +52,226 @@ pub fn http_client() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(|| build_client(30))
 }
 
-/// All available voices (matches Python's get_available_voices)
+/// All available voices (matches Python's get_available_voices).
+/// Only "Google" is a built-in voice; user-cloned voices are dynamic and
+/// resolved through [`is_cloned_voice`] / [`owner_of_cloned_voice`].
+/// NOTE: /random and every default-voice code path must always resolve to
+/// "Google" — cloned voices are opt-in only (explicit --voice / slash choice).
 pub const AVAILABLE_VOICES: &[&str] = &["Google"];
 
-pub fn get_voice_token(_voice: &str) -> &str {
-    "Google"
+/// Build the cache-path token for a voice. Google voices use the voice name
+/// itself; cloned voices use "clone|<name>" (normalized to '_' in file paths).
+pub fn get_voice_token(voice: &str) -> String {
+    if voice.starts_with("clone|") {
+        return voice.to_string();
+    }
+    if let Some(name) = voice.strip_prefix("clone:") {
+        return format!("clone|{name}");
+    }
+    "Google".to_string()
 }
 
-/// Check if a voice name is valid (excluding "random")
+/// Check if a voice name is valid (excluding "random"). Cloned voices are
+/// always accepted at this level — actual existence is verified against the
+/// voiceclone sidecar right before generating audio.
 pub fn is_valid_voice(voice: &str) -> bool {
-    voice == "random" || AVAILABLE_VOICES.contains(&voice)
+    if voice == "random" {
+        return true;
+    }
+    if voice.starts_with("clone:") || voice.starts_with("clone|") {
+        // Same charset the sidecar enforces on creation.
+        let name = voice
+            .strip_prefix("clone:")
+            .or_else(|| voice.strip_prefix("clone|"))
+            .unwrap_or("");
+        return !name.is_empty()
+            && name.len() <= 64
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    }
+    AVAILABLE_VOICES.contains(&voice)
+}
+
+/// HTTP JSON helpers for the voiceclone sidecar service.
+///
+/// All requests go through these two functions so timeouts, base URL and
+/// error logging stay consistent. The sidecar may be down (e.g. disabled in
+/// compose); in that case calls fail fast and the command reports an error —
+/// they never degrade to a different voice.
+static VC_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn vc_client() -> &'static reqwest::Client {
+    VC_CLIENT.get_or_init(|| build_client(600))
+}
+
+fn voiceclone_base_url() -> Option<String> {
+    match std::env::var("VOICECLONE_URL") {
+        Ok(url) if !url.trim().is_empty() => Some(url.trim().trim_end_matches('/').to_string()),
+        _ => None,
+    }
+}
+
+pub fn voiceclone_configured() -> bool {
+    voiceclone_base_url().is_some()
+}
+
+pub struct ClonedVoice {
+    pub name: String,
+    pub owner: String,
+    pub origin: String,
+}
+
+/// List all cloned voices registered on the sidecar.
+pub async fn list_cloned_voices() -> Result<Vec<ClonedVoice>, String> {
+    let base = voiceclone_base_url().ok_or("voiceclone not configured")?;
+    let resp = vc_client()
+        .get(format!("{base}/voices"))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("voices list failed: {}", resp.status()));
+    }
+    #[derive(serde::Deserialize)]
+    struct Row {
+        name: String,
+        #[serde(default)]
+        owner: String,
+        #[serde(default)]
+        origin: String,
+    }
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let rows: Vec<Row> = serde_json::from_value(body.get("voices").cloned().unwrap_or_default())
+        .map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().map(|r| ClonedVoice { name: r.name, owner: r.owner, origin: r.origin }).collect())
+}
+
+/// Create a cloned voice from a base64-encoded audio sample (MP3/WAV).
+pub async fn create_cloned_voice(name: &str, owner: &str, audio_base64: &str) -> Result<(), String> {
+    let base = voiceclone_base_url().ok_or("voiceclone not configured")?;
+    let resp = vc_client()
+        .post(format!("{base}/voices"))
+        .json(&serde_json::json!({
+            "name": name,
+            "owner": owner,
+            "audioBase64": audio_base64,
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.status().is_success() {
+        return Ok(());
+    }
+    let msg = resp.text().await.unwrap_or_default();
+    Err(extract_sidecar_error(&msg))
+}
+
+/// Delete a previously created cloned voice.
+pub async fn delete_cloned_voice(name: &str, owner: &str) -> Result<(), String> {
+    let base = voiceclone_base_url().ok_or("voiceclone not configured")?;
+    let resp = vc_client()
+        .delete(format!("{base}/voices/{}", urlencoding::encode(name)))
+        .query(&[("owner", owner)])
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.status().is_success() {
+        return Ok(());
+    }
+    let msg = resp.text().await.unwrap_or_default();
+    Err(extract_sidecar_error(&msg))
+}
+
+/// Pull a short human-readable error message out of the sidecar's JSON body.
+fn extract_sidecar_error(body: &str) -> String {
+    // Body is either {"error": "..."} or(axum's rejection) plain text.
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
+        if let Some(e) = v.get("error").and_then(|e| e.as_str()) {
+            return e.to_string();
+        }
+     }
+    body.chars().take(160).collect()
+}
+
+/// True if `voice` is a registered cloned voice name.
+pub async fn is_cloned_voice(voice: &str) -> bool {
+    match list_cloned_voices().await {
+        Ok(voices) => voices.iter().any(|v| v.name == voice),
+        Err(_) => false,
+    }
+}
+
+/// Look up the owner of a cloned voice. Used to scope /speak to voices the
+/// user is allowed to use; empty string means the voice is shared.
+pub async fn owner_of_cloned_voice(voice: &str) -> Option<String> {
+    list_cloned_voices().await.ok()?.into_iter().find(|v| v.name == voice).map(|v| v.owner)
+}
+
+/// Generate (or fetch from cache) the MP3 for a cloned voice by delegating to
+/// the voiceclone sidecar. On success the file is in the shared audios dir.
+pub async fn get_tts_cloned(
+    voice: &str,
+    owner: &str,
+    text: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    let base = voiceclone_base_url()
+        .ok_or("voiceclone not configured")?;
+    let resp = vc_client()
+        .post(format!("{base}/synthesize"))
+        .json(&serde_json::json!({
+            "voice": voice,
+            "owner": owner,
+            "text": text,
+        }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let msg = resp.text().await.unwrap_or_default();
+        return Err(extract_sidecar_error(&msg).into());
+    }
+    let body: serde_json::Value = resp.json().await?;
+    let b64 = body
+        .get("audioBase64")
+        .and_then(|b| b.as_str())
+        .ok_or("voiceclone response missing audioBase64")?;
+    let bytes = base64_decode(b64).ok_or("voiceclone response has invalid base64")?;
+    Ok(bytes)
+}
+
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    // Tiny standard-base64 decoder so we don't add a base64 dependency here.
+    // (decode leniently: ignore whitespace)
+    let table: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let mut buf = 0u32;
+    let mut bits = 0u32;
+    for c in s.bytes() {
+        if c == b'=' || c.is_ascii_whitespace() {
+            continue;
+        }
+        let v = table.iter().position(|&t| t == c)? as u32;
+        buf = (buf << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((buf >> bits) & 0xFF) as u8);
+        }
+    }
+    Some(out)
 }
 
 /// Reverse-lookup a voice name from its token.
 /// Used to display human-readable voice names for cached MP3 files
 /// whose filenames contain the voice token (e.g. "Google_hash.mp3").
-pub fn get_voice_name_from_token(token: &str) -> &'static str {
+/// Cloned voices use "clone:<name>" tokens — the name is recovered verbatim.
+pub fn get_voice_name_from_token(token: &str) -> String {
+    if let Some(name) = token.strip_prefix("clone|") {
+        return format!("clone:{}", name);
+    }
     match token {
-        "Google" => "Google",
-        _ => "Unknown",
+        "Google" => "Google".to_string(),
+        _ => "Unknown".to_string(),
     }
 }
 
@@ -118,7 +319,10 @@ pub fn get_file_path(voice: &str, text: &str) -> String {
 /// is only generated once.
 pub fn get_file_path_with_effect(voice: &str, text: &str, effect: &str) -> String {
     let hash = format!("{:x}", md5_compute(text));
-    let voice_token = get_voice_token(voice);
+    // Cloned-voice tokens contain a pipe separator, which is not filename-safe;
+    // normalize it to '_' for cache file paths (matches the sidecar's file layout
+    // when referenced from /random display logic).
+    let voice_token = get_voice_token(voice).replace('|', "_");
     let file_path = if effect != "none" && effect != "random" {
         format!("audios/{}_{}_{}.mp3", voice_token, effect, hash)
     } else {
@@ -247,7 +451,7 @@ async fn apply_effect_to_temp(
     actual_voice: &str,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let hash = format!("{:x}", md5_compute(text));
-    let voice_token = get_voice_token(actual_voice);
+    let voice_token = get_voice_token(actual_voice).replace('|', "_");
     let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
     tokio::fs::create_dir_all(&temp_dir).await?;
     let temp_path = format!("{}/tts_{}_{}_{}.mp3", temp_dir, voice_token, effect, hash);
@@ -284,7 +488,45 @@ async fn get_or_generate_tts_inner(text: &str, voice: &str, effect: &str) -> Res
         }
     }
 
-    // 2) GENERATE the audio.
+    // 2) GENERATE the audio. Cloned voices are delegated to the voiceclone
+    //    sidecar (all other voices are Google only); the sidecar persists the
+    //    MP3 in the shared audios dir with the same token naming convention.
+    if voice.starts_with("clone|") {
+        log::info!("get_or_generate_tts: generating CLONED TTS for voice {}", voice);
+        let owner = std::env::var("VOICECLONE_SHARED_OWNER").unwrap_or_default();
+        let bytes = get_tts_cloned(voice.strip_prefix("clone|").unwrap_or(voice), &owner, text).await?;
+        let actual_voice = voice.to_string();
+
+        let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
+        let hash = format!("{:x}", md5_compute(text));
+
+        // Effects are applied locally on the sidecar's MP3, same as Google audio.
+        if save_mp3 && !apply_effect {
+            // Sidecar already cached the file; return the shared path directly.
+            let plain_path = get_file_path(&actual_voice, text);
+            if tokio::fs::try_exists(&plain_path).await.unwrap_or(false) {
+                return Ok(TtsResult { file_path: plain_path, actual_voice });
+            }
+        }
+        tokio::fs::create_dir_all(&temp_dir).await?;
+        let temp_path = if apply_effect {
+            format!("{}/tts_{}_{}_{}.mp3", temp_dir, get_voice_token(&actual_voice).replace('|', "_"), effect, hash)
+        } else {
+            format!("{}/tts_{}_{}.mp3", temp_dir, get_voice_token(&actual_voice).replace('|', "_"), hash)
+        };
+        if apply_effect {
+            compress_and_save_mp3_with_effect(bytes, &temp_path, effect).await?;
+        } else {
+            tokio::fs::write(&temp_path, &bytes).await?;
+        }
+        let path_clone = temp_path.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+            let _ = tokio::fs::remove_file(&path_clone).await;
+        });
+        return Ok(TtsResult { file_path: temp_path, actual_voice });
+    }
+
     log::info!("get_or_generate_tts: generating TTS for voice {}", voice);
     let bytes = get_tts_google(text).await?;
     let actual_voice = "Google".to_string();

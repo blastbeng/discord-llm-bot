@@ -340,20 +340,29 @@ async fn voice_autocomplete(
     _ctx: Context<'_>,
     current: &str,
 ) -> Vec<serenity::AutocompleteChoice> {
+    // Built-in voices plus "random". Cloned voices are OFFERED only when the
+    // user types "clone" — they never appear for empty input, so the default
+    // flow (and /random) stays Google-only unless the user explicitly opts in.
+    let mut choices: Vec<serenity::AutocompleteChoice> = Vec::new();
+    let cur = current.to_lowercase();
+    if cur.contains("clone") {
+        if let Ok(voices) = tts::list_cloned_voices().await {
+            for v in voices.iter().take(15) {
+                let name = format!("clone:{}", v.name);
+                if name.to_lowercase().contains(&cur) {
+                    choices.push(serenity::AutocompleteChoice::new(name.clone(), name));
+                }
+            }
+        }
+    }
     let mut voices: Vec<&str> = tts::AVAILABLE_VOICES.to_vec();
     voices.push("random");
-
-    voices.into_iter()
-        .filter(|v| {
-            // Substring match (case-insensitive). When the current input is empty,
-            // every voice matches because every string contains the empty string.
-            v.to_lowercase().contains(&current.to_lowercase())
-        })
-        .map(|v| {
-            let name = v.to_string();
-            serenity::AutocompleteChoice::new(name.clone(), name)
-        })
-        .collect()
+    for v in voices {
+        if v.to_lowercase().contains(&cur) {
+            choices.push(serenity::AutocompleteChoice::new(v.to_string(), v.to_string()));
+        }
+    }
+    choices
 }
 
 /// Centralized playback entry point. Every audio playback path must go
@@ -663,6 +672,9 @@ async fn random(
     // Default to a random effect (which may itself resolve to "none") — the
     // /random command is about variety, including plain speech.
     let effect = effect.unwrap_or_else(|| "random".to_string());
+    // /random resolves to Google only — cloned voices are never chosen here
+    // ("random" always means a Google voice; cloned voices need explicit
+    // --voice clone:<name>).
     let actual_voice = if voice == "random" {
         let mut rng = rand::thread_rng();
         tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
@@ -728,7 +740,12 @@ async fn random(
                 let path = entry.path();
                 if path.extension().is_some_and(|ext| ext == "mp3") {
                     if let Some(s) = path.to_str() {
-                        mp3_files.push(s.to_string());
+                        // Voice cloning must never leak into /random — cached
+                        // cloned-voice files (clone|*_*.mp3) are excluded so
+                        // /random always plays a Google voice.
+                        if !s.contains("clone|") {
+                            mp3_files.push(s.to_string());
+                        }
                     }
                 }
             }
@@ -813,7 +830,7 @@ async fn random(
             .split('_')
             .next()
             .map(tts::get_voice_name_from_token)
-            .unwrap_or("Unknown");
+            .unwrap_or_else(|| "Unknown".to_string());
         // Try to recover the original sentence text from ID3 tags.
         // Falls back to "Cached audio" if the file has no ID3 lyrics
         // (e.g., generated before ID3 tagging was added, or corrupted).
@@ -821,7 +838,7 @@ async fn random(
         // Use match instead of ? so expired interaction tokens don't propagate
         // to on_error — the audio already started playing on the line above.
         match reply.edit(ctx, poise::CreateReply::default()
-            .content(ctx.data().lang.playing.replacen("{}", &sentence_label, 1).replacen("{}", voice_name, 1))
+            .content(ctx.data().lang.playing.replacen("{}", &sentence_label, 1).replacen("{}", &voice_name, 1))
             .components(components)
             .ephemeral(true)
         ).await {
@@ -1677,6 +1694,143 @@ async fn help(ctx: Context<'_>) -> Result<(), Error> {
         .ephemeral(true)
     ).await?;
 
+    Ok(())
+}
+
+/// Owner identity for voice cloning interactions. Discord users are namespaced
+/// so the same voice name can exist per-user without collisions.
+fn vc_owner(user_id: serenity::UserId) -> String {
+    format!("discord:{}", user_id)
+}
+
+/// Create a cloned voice from an audio sample (MP3/WAV, 10-30s of speech).
+#[poise::command(slash_command, user_cooldown = 10)]
+async fn createvoice(
+    ctx: Context<'_>,
+    #[description = "Nome della voce da creare (A-Z, 0-9, _ -)"] name: String,
+    #[description = "File audio con 10-30 secondi di voce pulita (MP3 o WAV)"]
+    sample: serenity::Attachment,
+) -> Result<(), Error> {
+    log::info!("[GUILDID : {}] createvoice invoked by user {} name={}", ctx.guild_id().unwrap(), ctx.author().id, name);
+    let lang = &ctx.data().lang;
+
+    if !tts::voiceclone_configured() {
+        ctx.send(poise::CreateReply::default().content(&lang.vc_not_configured).ephemeral(true)).await?;
+        return Ok(());
+    }
+    if !tts::is_valid_voice(&format!("clone:{}", name.trim())) {
+        ctx.send(poise::CreateReply::default().content(&lang.vc_invalid_name).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    ctx.defer_ephemeral().await?;
+    let size = sample.size;
+    if size < 4_000 || size > 12_000_000 {
+        ctx.send(poise::CreateReply::default().content(&lang.vc_sample_invalid).ephemeral(true)).await?;
+        return Ok(());
+    }
+    match sample.download().await {
+        Ok(bytes) => {
+            use base64::Engine as _;
+            let audio_b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+            match tts::create_cloned_voice(name.trim(), &vc_owner(ctx.author().id), &audio_b64).await {
+                Ok(()) => {
+                    let msg = lang.vc_created.replacen("{}", name.trim(), 1).replacen("{}", name.trim(), 1);
+                    ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await?;
+                }
+                Err(e) => {
+                    let msg = if e.contains("already exists") {
+                        lang.vc_exists.replacen("{}", name.trim(), 1)
+                    } else if e.contains("could not decode") || e.contains("too short") || e.contains("between 4KB") {
+                        lang.vc_sample_invalid.clone()
+                    } else if e.contains("invalid voice name") {
+                        lang.vc_invalid_name.clone()
+                    } else {
+                        lang.vc_error.replacen("{}", &e, 1)
+                    };
+                    ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await?;
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("createvoice: sample download failed: {}", e);
+            ctx.send(poise::CreateReply::default().content(&lang.vc_sample_invalid).ephemeral(true)).await?;
+        }
+    }
+    Ok(())
+}
+
+/// List all cloned voices registered on the voiceclone sidecar.
+#[poise::command(slash_command, user_cooldown = 5)]
+async fn myvoices(ctx: Context<'_>) -> Result<(), Error> {
+    log::info!("[GUILDID : {}] myvoices invoked by user {}", ctx.guild_id().unwrap(), ctx.author().id);
+    let lang = &ctx.data().lang;
+    if !tts::voiceclone_configured() {
+        ctx.send(poise::CreateReply::default().content(&lang.vc_not_configured).ephemeral(true)).await?;
+        return Ok(());
+    }
+    let voices = tts::list_cloned_voices().await.unwrap_or_default();
+    if voices.is_empty() {
+        ctx.send(poise::CreateReply::default().content(&lang.vc_list_empty).ephemeral(true)).await?;
+        return Ok(());
+    }
+    let me = vc_owner(ctx.author().id);
+    let lines: Vec<String> = voices
+        .iter()
+        .map(|v| {
+            let badge = if v.owner == me { "🟢" } else { "⚪" };
+            format!("{} **clone:{}** — `--voice clone:{}`", badge, v.name, v.name)
+        })
+        .collect();
+    let body = format!(
+        "{}\n🟢 = tua (your own) / ⚪ = other users\n{}",
+        lines.join("\n"),
+        if lines.len() > 25 { "" } else { "" }
+    );
+    ctx.send(poise::CreateReply::default().content(body).ephemeral(true)).await?;
+    Ok(())
+}
+
+/// Delete a previously cloned voice.
+#[poise::command(slash_command, user_cooldown = 5)]
+async fn deletevoice(
+    ctx: Context<'_>,
+    #[description = "Nome della voce da eliminare"] name: String,
+) -> Result<(), Error> {
+    log::info!("[GUILDID : {}] deletevoice invoked by user {} name={}", ctx.guild_id().unwrap(), ctx.author().id, name);
+    let lang = &ctx.data().lang;
+    if !tts::voiceclone_configured() {
+        ctx.send(poise::CreateReply::default().content(&lang.vc_not_configured).ephemeral(true)).await?;
+        return Ok(());
+    }
+    let name = name.trim();
+    // Verify the voice exists and belongs to the requester (admins may delete
+    // anything; regular users only their own voices).
+    let admin_id = env::var("ADMIN_ID").unwrap_or_default();
+    let is_admin = ctx.author().id.to_string() == admin_id;
+    let voices = tts::list_cloned_voices().await.unwrap_or_default();
+    match voices.iter().find(|v| v.name == name) {
+        None => {
+            let msg = lang.vc_not_found.replacen("{}", name, 1);
+            ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await?;
+        }
+        Some(v) => {
+            if !is_admin && v.owner != vc_owner(ctx.author().id) {
+                ctx.send(poise::CreateReply::default().content(&lang.vc_owner_mismatch).ephemeral(true)).await?;
+                return Ok(());
+            }
+            match tts::delete_cloned_voice(name, &v.owner).await {
+                Ok(()) => {
+                    let msg = lang.vc_deleted.replacen("{}", name, 1);
+                    ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await?;
+                }
+                Err(e) => {
+                    let msg = lang.vc_error.replacen("{}", &e, 1);
+                    ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await?;
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -2536,7 +2690,7 @@ async fn main() {
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![join(), leave(), stop(), speak(), random(), ask(), translate(), volume(), audio(), soundboard(), restart(), rename(), avatar(), help(), stats(), joke(), disable(), enable()],
+            commands: vec![join(), leave(), stop(), speak(), random(), ask(), translate(), volume(), audio(), soundboard(), restart(), rename(), avatar(), help(), stats(), joke(), disable(), enable(), createvoice(), myvoices(), deletevoice()],
             pre_command: |ctx| {
                 Box::pin(async move {
                     let command_name = ctx.command().name.as_str();
@@ -2659,7 +2813,10 @@ async fn main() {
                                         .field("😂 /joke", &lang.help_joke_desc, false)
                                         .field("🔊 /volume", &lang.help_volume_desc, false)
                                         .field("🎵 /audio", &lang.help_audio_desc, false)
-                                        .field("🎛️ /soundboard", &lang.help_soundboard_desc, false),
+                                        .field("🎛️ /soundboard", &lang.help_soundboard_desc, false)
+                                        .field("🎙️ /createvoice", &lang.help_createvoice_desc, false)
+                                        .field("📋 /myvoices", &lang.help_myvoices_desc, false)
+                                        .field("🗑️ /deletevoice", &lang.help_deletevoice_desc, false),
                                     "ai" => serenity::CreateEmbed::new()
                                         .title(&lang.help_title)
                                         .color(0x99AAB5)
@@ -2686,6 +2843,9 @@ async fn main() {
                                         .field("🔊 /volume", &lang.help_volume_desc, false)
                                         .field("🎵 /audio", &lang.help_audio_desc, false)
                                         .field("🎛️ /soundboard", &lang.help_soundboard_desc, false)
+                                        .field("🎙️ /createvoice", &lang.help_createvoice_desc, false)
+                                        .field("📋 /myvoices", &lang.help_myvoices_desc, false)
+                                        .field("🗑️ /deletevoice", &lang.help_deletevoice_desc, false)
                                         .field("🤔 /ask", &lang.help_ask_desc, false)
                                         .field("🌐 /translate", &lang.help_translate_desc, false)
                                         .field("📊 /stats", &lang.help_stats_desc, false)

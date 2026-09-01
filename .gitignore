@@ -33,3 +33,6 @@ wapp-bridge/auth_state/
 
 # Aider
 .aider*
+
+# PocketTTS voice-cloning model files (194MB, baked into the sidecar image)
+models/
