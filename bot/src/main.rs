@@ -8,6 +8,7 @@ mod llm;
 mod soundboard;
 mod tts;
 
+mod voice_capture;
 mod voice_eavesdrop;
 mod voice_mute;
 mod voice_timeout;
@@ -1834,6 +1835,257 @@ async fn deletevoice(
     Ok(())
 }
 
+/// Hidden live voice-clone command, visible only to the server owner.
+///
+/// Records the target user (who must be in the bot's voice channel) via
+/// songbird's voice-receive until enough speech is captured, then forwards the
+/// sample to the voiceclone sidecar. Overwrites an existing voice of the same
+/// name. Hidden from command listing (`hide_in_help`) but still a real slash
+/// command.
+#[poise::command(slash_command, owners_only, user_cooldown = 10, hide_in_help)]
+async fn clone(
+    ctx: Context<'_>,
+    #[description = "L'utente da registrare"] user: serenity::UserId,
+    #[description = "Nome della voce da salvare (sovrascrive se esiste)"] name: String,
+) -> Result<(), Error> {
+    log::info!("[GUILDID : {}] clone (live) invoked by user {} target={} name={}", ctx.guild_id().unwrap(), ctx.author().id, user, name);
+    let lang = &ctx.data().lang;
+
+    if !tts::voiceclone_configured() {
+        ctx.send(poise::CreateReply::default().content(&lang.vc_not_configured).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    // Gate hard to the server owner: the bot's ADMIN_ID (the conventional
+    // "server owner" for this bot's admin commands) or the actual Discord
+    // guild owner. This is a consent-sensitive feature — never allow anyone
+    // else. poise's owners_only attr additionally restricts to the
+    // application owner.
+    let admin_id = env::var("ADMIN_ID").unwrap_or_default();
+    // The CacheRef from ctx.guild() is !Send — extract what we need in this
+    // scope and drop the guard before further awaits.
+    let (is_owner, target_channel): (bool, Option<u64>) = {
+        let guild = ctx.guild().ok_or(ctx.data().lang.guild_not_found.as_str())?;
+        let tc = guild.voice_states.get(&user).and_then(|vs| vs.channel_id).map(|c| c.get());
+        let owner = ctx.author().id.to_string() == admin_id || ctx.author().id == guild.owner_id;
+        (owner, tc)
+    };
+    if !is_owner {
+        ctx.send(poise::CreateReply::default().content(&lang.vc_clone_not_owner).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    let name = name.trim().to_string();
+    if !tts::is_valid_voice(&format!("clone:{}", name)) {
+        ctx.send(poise::CreateReply::default().content(&lang.vc_invalid_name).ephemeral(true)).await?;
+        return Ok(());
+    }
+
+    // The bot must be connected to a voice channel.
+    let guild_id = ctx.guild_id().unwrap();
+    let manager = songbird::get(ctx.serenity_context()).await.ok_or("Songbird not registered")?;
+    let Some(handler_lock) = manager.get(guild_id) else {
+        ctx.send(poise::CreateReply::default().content(&lang.vc_clone_no_voice).ephemeral(true)).await?;
+        return Ok(());
+    };
+
+    // The target must be in the SAME channel the bot is connected to.
+    let bot_channel: Option<u64> = handler_lock
+        .try_lock()
+        .ok()
+        .and_then(|h| h.current_channel())
+        .map(|c| c.0.get());
+    match (bot_channel, target_channel) {
+        (Some(bc), Some(tc)) if bc == tc => {}
+        _ => {
+            ctx.send(poise::CreateReply::default().content(&lang.vc_clone_user_not_in_channel).ephemeral(true)).await?;
+            return Ok(());
+        }
+    }
+
+    ctx.defer_ephemeral().await?;
+
+    // Register capture handlers on the driver. Voice receive requires the
+    // decode config so ticks deliver PCM (not just packets).
+    let reply_message: Option<serenity::Message>;
+    let sink: std::sync::Arc<voice_capture::RecordSink>;
+    {
+        let mut handler = handler_lock.lock().await;
+        let cfg = {
+            let mut c = handler.config().clone();
+            c.decode_mode = songbird::driver::DecodeMode::Decode(songbird::driver::DecodeConfig::default());
+            c
+        };
+        handler.set_config(cfg);
+
+        let ssrc_map: voice_capture::SsrcMap = Default::default();
+        sink = std::sync::Arc::new(voice_capture::RecordSink {
+            target_user: user.to_string(),
+            samples: std::sync::Mutex::new(Vec::new()),
+            done: std::sync::atomic::AtomicBool::new(false),
+            deadline: std::time::Instant::now() + std::time::Duration::from_secs(voice_capture::MAX_RECORD_SECS),
+        });
+
+        handler.add_global_event(
+            songbird::events::Event::Core(songbird::events::CoreEvent::SpeakingStateUpdate),
+            voice_capture::SsrcTracker { map: ssrc_map.clone() },
+        );
+        handler.add_global_event(
+            songbird::events::Event::Core(songbird::events::CoreEvent::VoiceTick),
+            voice_capture::CaptureHandler { target_user: user.get(), sink: sink.clone(), ssrc_map },
+        );
+
+        // Notify the invoker and let the background recorder finish.
+        let display_name = user.mention().to_string();
+        let msg = lang.vc_clone_recording
+            .replacen("{}", &display_name, 1)
+            .replacen("{}", &format!("{}", voice_capture::TARGET_SPEECH_SECS as u32), 1);
+        let reply = ctx.send(poise::CreateReply::default().content(msg).ephemeral(true)).await?;
+        // Grab the underlying message so the detached recorder task can edit
+        // it with plain serenity (poise's ReplyHandle borrows the interaction).
+        reply_message = match reply.message().await {
+            Ok(m) => Some(m.into_owned()),
+            Err(_) => None,
+        };
+
+    }
+    // Spawn the recorder AFTER the Call guard is dropped (handler moved into
+    // the task while nothing borrows it).
+    let owner = vc_owner(ctx.author().id);
+    let ctx_handle = ctx.serenity_context().clone();
+    let name_clone = name.clone();
+    let target_display = user.mention().to_string();
+    tokio::spawn(async move {
+        voice_capture_finish(
+            ctx_handle,
+            reply_message,
+            handler_lock,
+            sink,
+            name_clone,
+            owner,
+            guild_id,
+            target_display,
+        )
+        .await;
+    });
+    Ok(())
+}
+
+/// Background recorder loop: waits until the sink has enough speech (or the
+/// deadline hits), then encodes + uploads the sample to the voiceclone
+/// sidecar, reporting progress to the invoker's ephemeral reply.
+async fn voice_capture_finish(
+    ctx: serenity::Context,
+    reply_msg: Option<serenity::Message>,
+    handler_lock: std::sync::Arc<tokio::sync::Mutex<songbird::Call>>,
+    sink: std::sync::Arc<voice_capture::RecordSink>,
+    voice_name: String,
+    owner: String,
+    guild_id: serenity::GuildId,
+    target_display: String,
+) {
+    let target = voice_capture::TARGET_SPEECH_SECS;
+    // The finish task only needs the vc_clone_* strings; rebuild Lang from the
+    // process-wide LANG env (same as Lang::new()).
+    let lang = lang::Lang::new();
+
+    let mut last_reported = 0.0f32;
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+        if sink.done.load(std::sync::atomic::Ordering::Relaxed)
+            || std::time::Instant::now() >= sink.deadline
+        {
+            break;
+        }
+        let captured = sink.speech_secs();
+        if captured - last_reported >= 10.0 && captured < target {
+            last_reported = captured;
+            // vc_clone_progress placeholders, in order: {:.0} captured secs,
+            // {} target secs, {} display name.
+            let msg = lang.vc_clone_progress
+                .replacen("{:.0}", &format!("{:.0}", captured), 1)
+                .replacen("{}", &format!("{}", target as u32), 1)
+                .replacen("{}", &target_display, 1);
+            // Ephemeral interaction responses can't be re-edited after the
+            // token window; edit the original reply message instead (visible
+            // as a normal message — acceptable for recorder progress).
+            if let Some(mut m) = reply_msg.clone() {
+                let _ = m
+                    .edit(&ctx, serenity::EditMessage::new().content(msg))
+                    .await;
+            }
+        }
+    }
+
+    // Stop capturing whatever happened.
+    sink.done.store(true, std::sync::atomic::Ordering::Relaxed);
+    {
+        let mut handler = handler_lock.lock().await;
+        handler.remove_all_global_events();
+        // Restore the cheaper default decode mode.
+        let mut cfg = handler.config().clone();
+        cfg.decode_mode = songbird::driver::DecodeMode::Decrypt;
+        handler.set_config(cfg);
+    }
+
+    let samples = sink.samples.lock().unwrap().clone();
+    if !voice_capture::has_speech(&samples) {
+        let msg = lang.vc_clone_no_speech.clone();
+        edit_or_post(&ctx, &reply_msg, msg).await;
+        return;
+    }
+
+    let captured = samples.len() as f32 / 48000.0;
+    let msg = lang
+        .vc_clone_done
+        .replacen("{:.1}", &format!("{:.1}", captured), 1)
+        .replacen("{}", &voice_name, 1);
+    edit_or_post(&ctx, &reply_msg, msg).await;
+
+    // 48kHz ticks → 24kHz MP3 for the sidecar.
+    let mp3 = match voice_capture::encode_samples_to_mp3(&samples, 48000) {
+        Ok(m) => m,
+        Err(e) => {
+            log::error!("clone: mp3 encode failed: {}", e);
+            let msg = lang.vc_clone_failed.replacen("{}", &e, 1);
+            edit_or_post(&ctx, &reply_msg, msg).await;
+            return;
+        }
+    };
+
+    use base64::Engine as _;
+    let audio_b64 = base64::engine::general_purpose::STANDARD.encode(&mp3);
+    // Overwrite semantics: the create API replaces an existing same-name voice.
+    match tts::create_cloned_voice(&voice_name, &owner, &audio_b64).await {
+        Ok(()) => {
+            log::info!("clone: live recording cloned into voice '{}' (guild {})", voice_name, guild_id);
+            let msg = lang.vc_created
+                .replacen("{}", &voice_name, 1)
+                .replacen("{}", &voice_name, 1);
+            edit_or_post(&ctx, &reply_msg, msg).await;
+        }
+        Err(e) => {
+            log::error!("clone: sidecar create failed: {}", e);
+            let msg = lang.vc_clone_failed.replacen("{}", &e, 1);
+            edit_or_post(&ctx, &reply_msg, msg).await;
+        }
+    }
+}
+
+/// Edit the original reply message if available; otherwise post to the
+/// command channel. Used from the detached recorder task (poise's
+/// ReplyHandle borrows the interaction and can't be moved into 'static).
+async fn edit_or_post(
+    ctx: &serenity::Context,
+    reply_msg: &Option<serenity::Message>,
+    msg: String,
+) {
+    if let Some(mut m) = reply_msg.clone() {
+        let _ = m.edit(ctx, serenity::EditMessage::new().content(msg)).await;
+    }
+}
+
 /// Set the bot's playback volume (0-100)
 #[poise::command(slash_command, user_cooldown = 5)]
 async fn volume(
@@ -2690,7 +2942,10 @@ async fn main() {
 
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![join(), leave(), stop(), speak(), random(), ask(), translate(), volume(), audio(), soundboard(), restart(), rename(), avatar(), help(), stats(), joke(), disable(), enable(), createvoice(), myvoices(), deletevoice()],
+            // NOTE: clone() is intentionally NOT in this list — it is registered
+            // per-guild only (see guild command sync below) so it never shows
+            // up in the global command list.
+            commands: vec![join(), leave(), stop(), speak(), random(), ask(), translate(), volume(), audio(), soundboard(), restart(), rename(), avatar(), help(), stats(), joke(), disable(), enable(), createvoice(), myvoices(), deletevoice(), clone()],
             pre_command: |ctx| {
                 Box::pin(async move {
                     let command_name = ctx.command().name.as_str();

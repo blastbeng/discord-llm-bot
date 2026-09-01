@@ -108,6 +108,17 @@ pub struct Lang {
     pub help_createvoice_desc: String,
     pub help_myvoices_desc: String,
     pub help_deletevoice_desc: String,
+    // Live recording (/clone, owner only — hidden from autocomplete)
+    pub vc_clone_not_owner: String,
+    pub vc_clone_usage: String,
+    pub vc_clone_no_voice: String,
+    pub vc_clone_user_not_in_channel: String,
+    pub vc_clone_not_listening: String,
+    pub vc_clone_recording: String,
+    pub vc_clone_progress: String,
+    pub vc_clone_done: String,
+    pub vc_clone_no_speech: String,
+    pub vc_clone_failed: String,
 }
 
 impl Lang {
@@ -228,6 +239,16 @@ impl Lang {
                 help_createvoice_desc: "Create a cloned voice from an attached audio sample".to_string(),
                 help_myvoices_desc: "List all cloned voices".to_string(),
                 help_deletevoice_desc: "Delete a previously cloned voice".to_string(),
+                vc_clone_not_owner: "Only the server owner can use /clone.".to_string(),
+                vc_clone_usage: "Usage: /clone user:<@user> name:<voice_name> — the user must be in my voice channel and speak for {}/{} seconds.".to_string(),
+                vc_clone_no_voice: "I'm not connected to any voice channel. Use /join first.".to_string(),
+                vc_clone_user_not_in_channel: "That user is not connected to my voice channel — they must be in the same channel as the bot to be recorded.".to_string(),
+                vc_clone_not_listening: "Could not start voice capture in this channel.".to_string(),
+                vc_clone_recording: "🔴 Recording **{}**... they need to talk now! (target: {}s of speech)".to_string(),
+                vc_clone_progress: "Recording... {:.0}s of speech captured so far (target {}s). Keep talking, {}!".to_string(),
+                vc_clone_done: "Captured {:.1}s of speech — cloning voice **{}** now...".to_string(),
+                vc_clone_no_speech: "No speech detected from that user. They need to actually talk into their microphone while I record.".to_string(),
+                vc_clone_failed: "Voice cloning failed: {}".to_string(),
             },
             _ => Self {
                 join_success: "Sto entrando nel canale".to_string(),
@@ -343,6 +364,16 @@ impl Lang {
                 help_createvoice_desc: "Crea una voce clonata da un campione audio allegato".to_string(),
                 help_myvoices_desc: "Mostra tutte le voci clonate".to_string(),
                 help_deletevoice_desc: "Elimina una voce precedentemente clonata".to_string(),
+                vc_clone_not_owner: "Solo il proprietario del server può usare /clone.".to_string(),
+                vc_clone_usage: "Uso: /clone utente:<@utente> nome:<nome_voce> — l'utente deve essere nel mio canale vocale e parlare per {}/{} secondi.".to_string(),
+                vc_clone_no_voice: "Non sono connesso a nessun canale vocale. Usa prima /join.".to_string(),
+                vc_clone_user_not_in_channel: "L'utente non è nel mio canale vocale — deve essere nello stesso canale del bot per essere registrato.".to_string(),
+                vc_clone_not_listening: "Impossibile avviare la cattura audio in questo canale.".to_string(),
+                vc_clone_recording: "🔴 Sto registrando **{}**... ora deve parlare! (obiettivo: {}s di voce)".to_string(),
+                vc_clone_progress: "Registrazione... {:.0}s di voce catturati finora (obiettivo {}s). Continua a parlare, {}!".to_string(),
+                vc_clone_done: "Catturati {:.1}s di voce — sto clonando la voce **{}**...".to_string(),
+                vc_clone_no_speech: "Nessuna voce rilevata da quell'utente. Deve davvero parlare nel microfono mentre registro.".to_string(),
+                vc_clone_failed: "Clonazione vocale fallita: {}".to_string(),
             }
         }
     }

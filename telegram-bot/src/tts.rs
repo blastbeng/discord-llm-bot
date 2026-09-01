@@ -120,7 +120,7 @@ pub async fn create_cloned_voice(name: &str, owner: &str, audio_base64: &str) ->
     let base = voiceclone_base_url().ok_or("voiceclone not configured")?;
     let resp = vc_client()
         .post(format!("{base}/voices"))
-        .json(&serde_json::json!({ "name": name, "owner": owner, "audioBase64": audio_base64 }))
+        .json(&serde_json::json!({ "name": name, "owner": owner, "audioBase64": audio_base64, "overwriteCached": true }))
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -284,6 +284,7 @@ pub fn get_file_path_with_effect(voice: &str, text: &str, effect: &str) -> Strin
 
 
 
+#[allow(dead_code)] // kept for API symmetry with the Discord bot
 pub async fn compress_and_save_mp3(input_bytes: Vec<u8>, file_path: &str) -> std::io::Result<()> {
     crate::audio_effects::compress_and_save_mp3_with_effect(input_bytes, file_path, "none")
         .await

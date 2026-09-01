@@ -68,6 +68,11 @@ struct CreateVoiceReq {
     /// Accepts both snake_case and camelCase (bots send camelCase).
     #[serde(alias = "audioBase64")]
     audio_base64: String,
+    /// Voice names are unique per owner: re-creating an existing name
+    /// OVERWRITES the sample (no delete-first required). When overwriting,
+    /// callers set this so cached MP3s for the stale voice are purged.
+    #[serde(default, alias = "overwriteCached")]
+    overwrite_cached: bool,
 }
 
 #[derive(Deserialize)]
@@ -223,29 +228,48 @@ async fn create_voice(
         ));
     }
 
-    let exists: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM voice_clones WHERE name = ? AND owner = ?")
-            .bind(&name)
-            .bind(&owner)
-            .fetch_one(&state.db_pool)
-            .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    if exists > 0 {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("voice '{name}' already exists; delete it first"),
-        ));
+    // Overwrite-if-exists: re-creating a voice with an existing name replaces
+    // the previous sample (all previous cached MP3s stay valid — they are
+    // content-hash keyed, and the same text with the new voice is regenerated
+    // only if the caller passes overwrite_cached; the bots do when overwriting).
+    let result = sqlx::query(
+        "INSERT INTO voice_clones (name, owner, origin, sample) VALUES (?, ?, 'sample', ?)
+         ON CONFLICT(name, owner) DO UPDATE SET sample = excluded.sample, created_at = CURRENT_TIMESTAMP",
+    )
+    .bind(&name)
+    .bind(&owner)
+    .bind(&audio)
+    .execute(&state.db_pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // When overwriting an existing voice, stale cached MP3s for the old voice
+    // would be served forever (they are keyed by text hash only). The caller
+    // marks overwrites by sending `overwriteCached: true`; purge cached files
+    // for this voice token.
+    if req.overwrite_cached {
+        let token = format!("clone|{}", name);
+        let mut removed = 0u32;
+        if let Ok(mut entries) = tokio::fs::read_dir(&state.audios_dir).await {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                let fname = entry.file_name().to_string_lossy().to_string();
+                if fname.starts_with(&format!("{token}_")) {
+                    let _ = tokio::fs::remove_file(entry.path()).await;
+                    removed += 1;
+                }
+            }
+        }
+        if removed > 0 {
+            log::info!("voiceclone: removed {removed} cached files for overwritten voice '{name}'");
+        }
     }
 
-    sqlx::query("INSERT INTO voice_clones (name, owner, origin, sample) VALUES (?, ?, 'sample', ?)")
-        .bind(&name)
-        .bind(&owner)
-        .bind(&audio)
-        .execute(&state.db_pool)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    log::info!("voiceclone: created voice '{}' for owner '{}'", name, owner);
+    log::info!(
+        "voiceclone: created voice '{}' for owner '{}' ({} rows affected)",
+        name,
+        owner,
+        result.rows_affected()
+    );
     Ok(Json(serde_json::json!({ "status": "created", "name": name })))
 }
 

@@ -119,6 +119,7 @@ pub fn voiceclone_configured() -> bool {
 pub struct ClonedVoice {
     pub name: String,
     pub owner: String,
+    #[allow(dead_code)] // returned by the sidecar; reserved for future use
     pub origin: String,
 }
 
@@ -148,7 +149,14 @@ pub async fn list_cloned_voices() -> Result<Vec<ClonedVoice>, String> {
 }
 
 /// Create a cloned voice from a base64-encoded audio sample (MP3/WAV).
+/// Voice names are unique per owner — an existing same-name voice is
+/// OVERWRITTEN by the new sample (the sidecar also purges stale cached MP3s).
 pub async fn create_cloned_voice(name: &str, owner: &str, audio_base64: &str) -> Result<(), String> {
+    create_cloned_voice_full(name, owner, audio_base64, true).await
+}
+
+#[allow(dead_code)]
+async fn create_cloned_voice_full(name: &str, owner: &str, audio_base64: &str, overwrite_cached: bool) -> Result<(), String> {
     let base = voiceclone_base_url().ok_or("voiceclone not configured")?;
     let resp = vc_client()
         .post(format!("{base}/voices"))
@@ -156,6 +164,7 @@ pub async fn create_cloned_voice(name: &str, owner: &str, audio_base64: &str) ->
             "name": name,
             "owner": owner,
             "audioBase64": audio_base64,
+            "overwriteCached": overwrite_cached,
         }))
         .send()
         .await
@@ -192,20 +201,6 @@ fn extract_sidecar_error(body: &str) -> String {
         }
      }
     body.chars().take(160).collect()
-}
-
-/// True if `voice` is a registered cloned voice name.
-pub async fn is_cloned_voice(voice: &str) -> bool {
-    match list_cloned_voices().await {
-        Ok(voices) => voices.iter().any(|v| v.name == voice),
-        Err(_) => false,
-    }
-}
-
-/// Look up the owner of a cloned voice. Used to scope /speak to voices the
-/// user is allowed to use; empty string means the voice is shared.
-pub async fn owner_of_cloned_voice(voice: &str) -> Option<String> {
-    list_cloned_voices().await.ok()?.into_iter().find(|v| v.name == voice).map(|v| v.owner)
 }
 
 /// Generate (or fetch from cache) the MP3 for a cloned voice by delegating to
