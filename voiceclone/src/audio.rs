@@ -19,15 +19,19 @@ pub fn decode_to_mono(bytes: &[u8]) -> Option<Vec<f32>> {
 /// Decode to mono AND return the sample rate (needed for duration checks —
 /// sample counts alone are ambiguous across 8k/44.1k/48k inputs).
 pub fn decode_audio(bytes: &[u8]) -> Option<(Vec<f32>, u32)> {
-    // Try MP3 first (most common when users forward voice notes / audio files).
-    if let Ok((samples, rate, channels)) = decode_mp3(bytes) {
+    // Dispatch on the container signature, NOT on decoder success: minimp3
+    // will happily "decode" a handful of garbage frames out of a WAV file
+    // (RIFF bytes happen to contain frame-sync-looking patterns), which made
+    // 12s WAV samples appear as 0s and even poisoned transcription. For a
+    // RIFF/WAVE file the WAV parser is authoritative; anything else is MP3.
+    if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WAVE" {
+        let (samples, rate, channels) = decode_wav(bytes)?;
         if samples.is_empty() {
             return None;
         }
         return Some((to_mono(samples, channels as usize), rate));
     }
-    // Fall back to a plain 16-bit PCM WAV.
-    if let Some((samples, rate, channels)) = decode_wav(bytes) {
+    if let Ok((samples, rate, channels)) = decode_mp3(bytes) {
         if samples.is_empty() {
             return None;
         }
