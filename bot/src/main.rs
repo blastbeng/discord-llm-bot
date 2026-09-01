@@ -2121,7 +2121,7 @@ async fn edit_or_post(
         log::warn!("clone: failed to edit the original reply message; falling back to a channel message");
     }
     if let Some(channels) = ctx.cache.guild_channels(guild_id) {
-        if let Some(text_ch) = channels.iter().find(|c| matches!(c.kind, serenity::ChannelType::Text)) {
+        if let Some((_, text_ch)) = channels.iter().find(|(_, c)| matches!(c.kind, serenity::ChannelType::Text)) {
             let _ = text_ch.id.say(ctx, &msg).await;
             return;
         }
