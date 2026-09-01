@@ -1997,6 +1997,7 @@ async fn voice_capture_finish(
     // The finish task only needs the vc_clone_* strings; rebuild Lang from the
     // process-wide LANG env (same as Lang::new()).
     let lang = lang::Lang::new();
+    log::info!("clone: recorder started for '{}' (target {:.0}s speech, max {}s wall)", voice_name, target, voice_capture::MAX_RECORD_SECS);
 
     let mut last_reported = 0.0f32;
     loop {
@@ -2008,8 +2009,19 @@ async fn voice_capture_finish(
             break;
         }
         let captured = sink.speech_secs();
-        if captured - last_reported >= 10.0 && captured < target {
+        // Log the first sign of capture so "nothing happens" failures are
+        // diagnosable: if this never fires, no decoded PCM is reaching the
+        // sink (SSRC mapping or decode-mode problem).
+        if captured > 0.0 && last_reported == 0.0 {
+            log::info!("clone: first audio captured for '{}' ({:.1}s so far)", voice_name, captured);
+        }
+        if captured >= target {
+            log::info!("clone: speech target reached for '{}' ({:.1}s), stopping capture", voice_name, captured);
+            break;
+        }
+        if captured - last_reported >= 10.0 {
             last_reported = captured;
+            log::info!("clone: progress for '{}': {:.0}s / {:.0}s", voice_name, captured, target);
             // vc_clone_progress placeholders, in order: {:.0} captured secs,
             // {} target secs, {} display name.
             let msg = lang.vc_clone_progress
@@ -2039,9 +2051,16 @@ async fn voice_capture_finish(
     }
 
     let samples = sink.samples.lock().unwrap().clone();
+    log::info!(
+        "clone: capture finished for '{}': {:.1}s of audio ({} samples)",
+        voice_name,
+        samples.len() as f32 / 48000.0,
+        samples.len()
+    );
     if !voice_capture::has_speech(&samples) {
+        log::warn!("clone: has_speech gate REJECTED the sample for '{}' (<5s loud audio captured — was the target actually speaking?)", voice_name);
         let msg = lang.vc_clone_no_speech.clone();
-        edit_or_post(&ctx, &reply_msg, msg).await;
+        edit_or_post(&ctx, &reply_msg, guild_id, msg).await;
         return;
     }
 
@@ -2050,7 +2069,7 @@ async fn voice_capture_finish(
         .vc_clone_done
         .replacen("{:.1}", &format!("{:.1}", captured), 1)
         .replacen("{}", &voice_name, 1);
-    edit_or_post(&ctx, &reply_msg, msg).await;
+    edit_or_post(&ctx, &reply_msg, guild_id, msg).await;
 
     // 48kHz ticks → 24kHz MP3 for the sidecar.
     let mp3 = match voice_capture::encode_samples_to_mp3(&samples, 48000) {
@@ -2058,10 +2077,11 @@ async fn voice_capture_finish(
         Err(e) => {
             log::error!("clone: mp3 encode failed: {}", e);
             let msg = lang.vc_clone_failed.replacen("{}", &e, 1);
-            edit_or_post(&ctx, &reply_msg, msg).await;
+            edit_or_post(&ctx, &reply_msg, guild_id, msg).await;
             return;
         }
     };
+    log::info!("clone: sample encoded for '{}' ({} bytes mp3), uploading to voiceclone sidecar", voice_name, mp3.len());
 
     use base64::Engine as _;
     let audio_b64 = base64::engine::general_purpose::STANDARD.encode(&mp3);
@@ -2072,12 +2092,12 @@ async fn voice_capture_finish(
             let msg = lang.vc_created
                 .replacen("{}", &voice_name, 1)
                 .replacen("{}", &voice_name, 1);
-            edit_or_post(&ctx, &reply_msg, msg).await;
+            edit_or_post(&ctx, &reply_msg, guild_id, msg).await;
         }
         Err(e) => {
             log::error!("clone: sidecar create failed: {}", e);
             let msg = lang.vc_clone_failed.replacen("{}", &e, 1);
-            edit_or_post(&ctx, &reply_msg, msg).await;
+            edit_or_post(&ctx, &reply_msg, guild_id, msg).await;
         }
     }
 }
@@ -2085,14 +2105,28 @@ async fn voice_capture_finish(
 /// Edit the original reply message if available; otherwise post to the
 /// command channel. Used from the detached recorder task (poise's
 /// ReplyHandle borrows the interaction and can't be moved into 'static).
+/// The channel fallback matters: the ephemeral reply's message fetch can fail
+/// (interaction token expiry), and silently dropping progress/results made
+/// /clone look like it "did nothing".
 async fn edit_or_post(
     ctx: &serenity::Context,
     reply_msg: &Option<serenity::Message>,
+    guild_id: serenity::GuildId,
     msg: String,
 ) {
     if let Some(mut m) = reply_msg.clone() {
-        let _ = m.edit(ctx, serenity::EditMessage::new().content(msg)).await;
+        if m.edit(ctx, serenity::EditMessage::new().content(&msg)).await.is_ok() {
+            return;
+        }
+        log::warn!("clone: failed to edit the original reply message; falling back to a channel message");
     }
+    if let Some(channels) = ctx.cache.guild_channels(guild_id) {
+        if let Some(text_ch) = channels.iter().find(|c| matches!(c.kind, serenity::ChannelType::Text)) {
+            let _ = text_ch.id.say(ctx, &msg).await;
+            return;
+        }
+    }
+    log::error!("clone: could not deliver message anywhere (no reply message and no text channel found): {}", msg);
 }
 
 /// Set the bot's playback volume (0-100)

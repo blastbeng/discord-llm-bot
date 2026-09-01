@@ -419,10 +419,17 @@ pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &s
 
     // 2) GENERATE the audio. Cloned voices are delegated to the voiceclone
     //    sidecar (all other voices are Google only).
-    if voice.starts_with("clone|") {
+    // Accept both "clone:<name>" (user-facing token) and "clone|<name>" (cache
+    // token). Callers may pass either; previously only the pipe form matched,
+    // which made cloned voices silently fall through to Google TTS.
+    if voice.starts_with("clone:") || voice.starts_with("clone|") {
         log::info!("get_or_generate_tts: generating CLONED TTS for voice {}", voice);
         let owner = std::env::var("VOICECLONE_SHARED_OWNER").unwrap_or_default();
-        let bytes = get_tts_cloned(voice.strip_prefix("clone|").unwrap_or(voice), &owner, text).await?;
+        let clone_name = voice
+            .strip_prefix("clone:")
+            .or_else(|| voice.strip_prefix("clone|"))
+            .unwrap_or(voice);
+        let bytes = get_tts_cloned(clone_name, &owner, text).await?;
         let actual_voice = voice.to_string();
 
         let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
