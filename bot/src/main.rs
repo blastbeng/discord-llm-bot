@@ -2120,11 +2120,18 @@ async fn edit_or_post(
         }
         log::warn!("clone: failed to edit the original reply message; falling back to a channel message");
     }
-    if let Some(channels) = ctx.cache.guild_channels(guild_id) {
-        if let Some((_, text_ch)) = channels.iter().find(|(_, c)| matches!(c.kind, serenity::ChannelType::Text)) {
-            let _ = text_ch.id.say(ctx, &msg).await;
-            return;
-        }
+    // Resolve the channel id synchronously and drop the cache guard before
+    // any await: CacheRef borrows cache internals and is !Send, which would
+    // poison the whole recorder future for tokio::spawn.
+    let text_channel_id = ctx
+        .cache
+        .guild_channels(guild_id)
+        .iter()
+        .find(|(_, c)| matches!(c.kind, serenity::ChannelType::Text))
+        .map(|(id, _)| *id);
+    if let Some(id) = text_channel_id {
+        let _ = id.say(ctx, &msg).await;
+        return;
     }
     log::error!("clone: could not deliver message anywhere (no reply message and no text channel found): {}", msg);
 }
