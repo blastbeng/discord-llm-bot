@@ -13,19 +13,25 @@ use sherpa_onnx::{
 
 /// Decode recorded bytes (MP3 or 16-bit PCM WAV) to mono f32 samples.
 pub fn decode_to_mono(bytes: &[u8]) -> Option<Vec<f32>> {
+    decode_audio(bytes).map(|(samples, _rate)| samples)
+}
+
+/// Decode to mono AND return the sample rate (needed for duration checks —
+/// sample counts alone are ambiguous across 8k/44.1k/48k inputs).
+pub fn decode_audio(bytes: &[u8]) -> Option<(Vec<f32>, u32)> {
     // Try MP3 first (most common when users forward voice notes / audio files).
-    if let Ok((samples, _rate, channels)) = decode_mp3(bytes) {
+    if let Ok((samples, rate, channels)) = decode_mp3(bytes) {
         if samples.is_empty() {
             return None;
         }
-        return Some(to_mono(samples, channels as usize));
+        return Some((to_mono(samples, channels as usize), rate));
     }
     // Fall back to a plain 16-bit PCM WAV.
-    if let Some((samples, _rate, channels)) = decode_wav(bytes) {
+    if let Some((samples, rate, channels)) = decode_wav(bytes) {
         if samples.is_empty() {
             return None;
         }
-        return Some(to_mono(samples, channels as usize));
+        return Some((to_mono(samples, channels as usize), rate));
     }
     None
 }

@@ -234,18 +234,22 @@ async fn create_voice(
         ));
     }
 
-    // Validate the sample can be decoded and has some actual speech content.
-    let samples = audio::decode_to_mono(&audio)
-        .ok_or_else(|| {
-            (
-                StatusCode::BAD_REQUEST,
-                "could not decode audio (send MP3 or WAV, 10-30 seconds of speech)".to_string(),
-            )
-        })?;
-    if samples.len() < 16_000 {
+    // Validate the sample can be decoded and is long enough to characterize
+    // a voice. PocketTTS produces degenerate output (endless rambling) from
+    // very short references, so enforce a real duration, not a byte count.
+    let (samples, rate) = audio::decode_audio(&audio).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "could not decode audio (send MP3 or WAV, 10-30 seconds of speech)".to_string(),
+        )
+    })?;
+    let duration_secs = samples.len() as f32 / rate.max(1) as f32;
+    if duration_secs < 5.0 {
         return Err((
             StatusCode::BAD_REQUEST,
-            "audio too short: record at least a few seconds of speech".into(),
+            format!(
+                "audio sample too short ({duration_secs:.1}s) — need at least 5 seconds of speech, ideally 10-30s"
+            ),
         ));
     }
 
