@@ -173,8 +173,25 @@ The Telegram bot mirrors the WhatsApp bot's commands (long polling, no webhook n
 
 ## Voices & Effects
 
-- **Voices**: Google. Use `--voice random`.
+- **Voices**: Google by default. Optional per-user **voice cloning** (voiceclone sidecar + `clone:<name>` voices — see below).
 - **Effects**: `none`, `echo`, `reverb`, `bass`, `chipmunk`, `demon`, `telephone`, `underwater`. Use `--effect random`.
+
+## Voice Cloning (voiceclone sidecar)
+
+All three bots support zero-shot voice cloning through the `voiceclone` sidecar service (sherpa-onnx PocketTTS int8 on CPU):
+
+- Create a voice from an uploaded sample with `/createvoice` (Discord can also live-record with the hidden owner-only `/clone @user <name>`).
+- List with `/myvoices`, delete with `/deletevoice`. Use a cloned voice explicitly with `--voice clone:<name>` (or the slash command voice picker).
+- `/random` and every default/automatic audio path always use Google — cloned voices are strictly opt-in.
+- With STT enabled, the Discord bot's eavesdrop feature records a short snippet of live voice, transcribes it (whisper-tiny), and roasts users based on what they actually said.
+
+The sidecar needs its models on the host (they are **not** baked into the image). Download them once (~440MB total), then restart the stack:
+
+```bash
+./setup-models.sh
+```
+
+Set `VOICECLONE_URL=http://voiceclone:3010` in the bot env files to enable the feature (see `.env.sample`).
 
 ## Running without Docker (Discord only)
 
