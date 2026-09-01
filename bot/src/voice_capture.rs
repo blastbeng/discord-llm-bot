@@ -131,25 +131,44 @@ impl SongbirdEventHandler for SsrcTracker {
 /// audio into a shared map keyed by user id. Used by the eavesdrop feature,
 /// which does not know in advance who will speak (unlike /clone's
 /// CaptureHandler, which routes one fixed target).
+///
+/// Sinks are created on demand: the first voice tick from an SSRC-mapped user
+/// allocates their buffer. The deadline stops collection once the recording
+/// window is over (handlers are removed right after anyway).
 pub struct ListenerHandler {
     /// Per-user mono sample buffers, one entry per speaking user.
     pub sinks: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<DiscordUserId, Arc<RecordSink>>>>,
     /// Shared SSRC -> UserId registry (maintained by SsrcTracker).
     pub ssrc_map: SsrcMap,
+    /// Wall-clock end of the capture session.
+    pub deadline: std::time::Instant,
 }
 
 #[async_trait]
 impl SongbirdEventHandler for ListenerHandler {
     async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
+        if std::time::Instant::now() >= self.deadline {
+            return None;
+        }
         if let EventContext::VoiceTick(tick) = ctx {
             let map = self.ssrc_map.lock().unwrap();
-            let sinks = self.sinks.lock().unwrap();
+            let mut sinks = self.sinks.lock().unwrap();
             for (ssrc, data) in tick.speaking.iter() {
                 let Some(user_id) = map.get(ssrc) else { continue };
                 if let Some(pcm) = &data.decoded_voice {
-                    if let Some(sink) = sinks.get(user_id) {
-                        sink.push_tick(pcm);
-                    }
+                    // Create the sink on the user's first audible tick — the
+                    // set of speakers is unknown until someone talks.
+                    let sink = sinks
+                        .entry(*user_id)
+                        .or_insert_with(|| {
+                            Arc::new(RecordSink {
+                                target_user: user_id.to_string(),
+                                samples: std::sync::Mutex::new(Vec::new()),
+                                done: AtomicBool::new(false),
+                                deadline: self.deadline,
+                            })
+                        });
+                    sink.push_tick(pcm);
                 }
             }
         }
@@ -238,16 +257,16 @@ pub async fn record_user_speech(
             songbird::events::Event::Core(songbird::events::CoreEvent::SpeakingStateUpdate),
             SsrcTracker { map: ssrc_map.clone() },
         );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(max_secs);
         handler.add_global_event(
             songbird::events::Event::Core(songbird::events::CoreEvent::VoiceTick),
-            ListenerHandler { sinks: sinks.clone(), ssrc_map },
+            ListenerHandler { sinks: sinks.clone(), ssrc_map, deadline },
         );
 
         // Release the Call guard while waiting — holding it for the whole
         // recording would deadlock playback.
         drop(handler);
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(max_secs);
         loop {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             let done = {
