@@ -213,7 +213,10 @@ async fn pick_cached_mp3() -> Option<String> {
         if path.extension().is_some_and(|ext| ext == "mp3") {
             if let Some(s) = path.to_str() {
                 // Exclude cloned-voice files so /random never plays a clone.
-                if !s.contains("clone|") {
+                // Clone cache files are "clone|Name_hash.mp3" (sidecar-written)
+                        // or "clone_Name_hash.mp3" (bot-written with plain
+                        // names); exclude both forms.
+                        if !s.contains("clone|") && !s.contains("clone_") {
                     mp3_files.push(s.to_string());
                 }
             }

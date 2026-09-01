@@ -757,7 +757,10 @@ async fn random(
                         // Voice cloning must never leak into /random — cached
                         // cloned-voice files (clone|*_*.mp3) are excluded so
                         // /random always plays a Google voice.
-                        if !s.contains("clone|") {
+                        // Clone cache files are "clone|Name_hash.mp3" (sidecar-written)
+                        // or "clone_Name_hash.mp3" (bot-written with plain
+                        // names); exclude both forms.
+                        if !s.contains("clone|") && !s.contains("clone_") {
                             mp3_files.push(s.to_string());
                         }
                     }
