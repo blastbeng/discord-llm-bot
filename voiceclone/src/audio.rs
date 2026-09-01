@@ -7,7 +7,8 @@
 
 use mp3lame_encoder::Builder;
 use sherpa_onnx::{
-    GenerationConfig, OfflineTts, OfflineTtsConfig, OfflineTtsPocketModelConfig,
+    GenerationConfig, OfflineRecognizer, OfflineRecognizerConfig, OfflineTts, OfflineTtsConfig,
+    OfflineTtsPocketModelConfig, OfflineWhisperModelConfig,
 };
 
 /// Decode recorded bytes (MP3 or 16-bit PCM WAV) to mono f32 samples.
@@ -154,6 +155,70 @@ pub fn generate(
         .generate_with_config(&text, &gen_config, Some(|_: &[f32], _: f32| true))
         .ok_or("generation failed")?;
     Ok(audio.samples().to_vec())
+}
+
+// ─── Speech-to-text (whisper-tiny int8, for the eavesdrop feature) ────
+
+/// Whisper model dir + language override, e.g. VOICECLONE_STT_MODEL_DIR.
+fn stt_model_dir() -> Option<String> {
+    match std::env::var("VOICECLONE_STT_MODEL_DIR") {
+        Ok(dir) if !dir.trim().is_empty() => Some(dir.trim().trim_end_matches('/').to_string()),
+        _ => None,
+    }
+}
+
+/// Create the OfflineRecognizer for STT (whisper-tiny, int8, multilingual).
+/// `lang` is a whisper language hint ("it", "en", ...) — empty means let
+/// whisper auto-detect. Returns None when VOICECLONE_STT_MODEL_DIR is unset —
+/// STT is an optional feature and stays disabled instead of failing the
+/// whole sidecar.
+pub fn create_stt_engine(lang: &str) -> Option<OfflineRecognizer> {
+    let dir = stt_model_dir()?;
+    let num_threads: i32 = std::env::var("VOICECLONE_STT_THREADS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3);
+
+    let mut config = OfflineRecognizerConfig::default();
+    config.model_config.whisper = OfflineWhisperModelConfig {
+        encoder: Some(format!("{dir}/tiny-encoder.int8.onnx")),
+        decoder: Some(format!("{dir}/tiny-decoder.int8.onnx")),
+        language: if lang.is_empty() || lang.eq_ignore_ascii_case("auto") {
+            None
+        } else {
+            Some(lang.to_string())
+        },
+        task: Some("transcribe".into()),
+        ..Default::default()
+    };
+    config.model_config.tokens = Some(format!("{dir}/tiny-tokens.txt"));
+    config.model_config.num_threads = num_threads;
+
+    match OfflineRecognizer::create(&config) {
+        Some(r) => Some(r),
+        None => {
+            log::error!("voiceclone: STT engine create failed (lang={lang})");
+            None
+        }
+    }
+}
+
+/// Transcribe mono f32 samples to text. Sample rate is passed through —
+/// sherpa-onnx resamples internally, so 24kHz MP3-decoded input works as-is.
+/// Returns None when the audio contains no recognizable speech.
+pub fn transcribe(engine: &OfflineRecognizer, samples: &[f32], sample_rate: u32) -> Option<String> {
+    if samples.is_empty() {
+        return None;
+    }
+    let stream = engine.create_stream();
+    stream.accept_waveform(sample_rate as i32, samples);
+    engine.decode(&stream);
+    let text = stream.get_result()?.text.trim().to_string();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
 }
 
 /// Encode mono f32 samples to MP3 bytes (64 kbps mono — plenty for voice).

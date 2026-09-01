@@ -1310,9 +1310,12 @@ pub async fn fetch_random_sentences(pool: &SqlitePool, count: i64) -> Result<Vec
 }
 
 /// Generate a funny, idiotic, insulting response for the voice eavesdrop feature.
-/// The bot "overhears" a random user and roasts them.
+/// The bot "overhears" a random user and roasts them. `transcript` is what
+/// the user was actually heard saying (empty when nothing intelligible was
+/// captured — the roast then falls back to name/voice mockery only).
 pub async fn eavesdrop_response(
     user: &str,
+    transcript: &str,
     db_sentences: &[String],
     lang: &str,
 ) -> Result<String, String> {
@@ -1327,10 +1330,22 @@ pub async fn eavesdrop_response(
         .collect::<Vec<_>>()
         .join("\n");
 
+    // The transcript comes from whisper STT of the user's actual voice — it
+    // can contain mis-hearings. Quote a snippet in the prompt and instruct the
+    // model to lean on it when present.
+    let transcript_line = if transcript.trim().is_empty() {
+        String::new()
+    } else {
+        let snippet: String = transcript.trim().chars().take(300).collect();
+        format!(
+            "\\nYou heard them say: \"{snippet}\" — mock what they said (or how badly/quietly they said it).\\n"
+        )
+    };
+
     let system_prompt = match &*lang {
         "eng" => format!(
             "You are a Discord voice bot with a chaotic, insulting, and idiotic sense of humor.\\n\
-             You just 'overheard' a user named \"{user}\" and you are about to roast them.\\n\
+             You just 'overheard' a user named \"{user}\" speaking in a voice channel and you are about to roast them.{transcript_line}\\n\
              Generate a SINGLE short sentence (max 200 characters) that is funny, sarcastic, \
              idiota, and a bit insulting. Mock their personality, their voice, or whatever \
              you think they're doing. Be creative and vulgar if appropriate.\\n\
@@ -1342,7 +1357,7 @@ pub async fn eavesdrop_response(
         ),
         _ => format!(
             "Sei un bot vocale Discord con un senso dell'umorismo caotico, offensivo, idiota e un po' stronzo.\\n\
-             Hai appena 'nascosto' un utente di nome \"{user}\" e stai per prenderlo in giro.\\n\
+             Hai appena 'origliato' l'utente \"{user}\" in un canale vocale e stai per prenderlo in giro.{transcript_line}\\n\
              Crea UNA singola frase breve (massimo 200 caratteri) che sia divertente, sarcastica, \
              idiota, e un po' offensiva. Prendi in giro la loro personalità, la loro voce, o \
              quello che pensi stiano facendo. Sii creativo e volgare se appropriato.\\n\

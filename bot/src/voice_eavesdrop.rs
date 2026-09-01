@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use rand::Rng;
 use sqlx::SqlitePool;
-use serenity::all::{ChannelId, ChannelType, Context, GuildId};
+use serenity::all::{ChannelId, ChannelType, Context, GuildId, UserId};
 use crate::{auto_join, llm, tts, lang};
 use crate::error::BotError;
 
@@ -209,6 +209,85 @@ pub async fn start_eavesdrop_loop(ctx: Context, db_pool: SqlitePool, volume: Arc
         if let Some((guild_id, channel_id, username)) = target {
             log::info!("voice_eavesdrop: eavesdropping on user {} in guild {}", username, guild_id);
 
+            // ── Voice receive: record what people are saying ──
+            // The bot must be in the target channel BEFORE recording — being
+            // in the channel is what makes Discord deliver that channel's
+            // audio to us. Move first if needed (same logic as playback).
+            if let Some(current) = auto_join::current_bot_channel(&ctx, guild_id).await {
+                if current != channel_id {
+                    log::info!("voice_eavesdrop: moving bot from channel {} to {} for recording", current, channel_id);
+                    if let Err(e) = auto_join::switch_to(&ctx, guild_id, current, channel_id).await {
+                        log::warn!("voice_eavesdrop: failed to move to channel {}: {}", channel_id, e);
+                    }
+                }
+            }
+
+            // Record a snippet of speech from everyone in the channel (the
+            // most-talkative user is picked below). Songbird only delivers
+            // remote voice, so the bot's own playback never leaks in.
+            let recording = if let Some(manager) = songbird::get(&ctx).await {
+                if let Some(handler_lock) = manager.get(guild_id) {
+                    let sinks = crate::voice_capture::record_user_speech(
+                        &handler_lock,
+                        crate::voice_capture::EAVESDROP_SPEECH_SECS,
+                        crate::voice_capture::EAVESDROP_MAX_SECS,
+                    )
+                    .await;
+                    if sinks.is_empty() {
+                        log::info!("voice_eavesdrop: nobody spoke during the recording window");
+                    }
+                    Some(sinks)
+                } else {
+                    log::info!("voice_eavesdrop: bot not connected in guild {}, skipping audio capture", guild_id);
+                    None
+                }
+            } else {
+                None
+            };
+
+            // Pick the most-talkative captured user; fall back to the channel
+            // scan username if SSRC mapping couldn't resolve anyone.
+            let (recorded_user_id, samples) = recording
+                .unwrap_or_default()
+                .into_iter()
+                .max_by_key(|(_, s)| s.len())
+                .map(|(id, s)| (Some(id), s))
+                .unwrap_or((None, Vec::new()));
+
+            // Resolve the recorded user's display name when we have their id.
+            let recorded_username = recorded_user_id
+                .map(UserId::new)
+                .and_then(|id| ctx.cache.user(id))
+                .map(|u| u.name.clone())
+                .unwrap_or_else(|| username.clone());
+
+            // ── STT: transcribe the snippet via the voiceclone sidecar ──
+            let mut transcript = String::new();
+            if crate::voice_capture::has_speech(&samples) {
+                match crate::voice_capture::encode_samples_to_mp3(&samples, 48000) {
+                    Ok(mp3) => {
+                        use base64::Engine as _;
+                        let audio_b64 = base64::engine::general_purpose::STANDARD.encode(&mp3);
+                        match tts::transcribe_audio(&audio_b64).await {
+                            Ok(t) if !t.trim().is_empty() => {
+                                let preview: String = t.chars().take(120).collect();
+                                log::info!("voice_eavesdrop: transcript from {}: {:?}", recorded_username, preview);
+                                transcript = t;
+                            }
+                            Ok(_) => {
+                                log::info!("voice_eavesdrop: STT returned no intelligible speech for {}", recorded_username);
+                            }
+                            Err(e) => {
+                                log::warn!("voice_eavesdrop: STT failed (continuing without transcript): {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("voice_eavesdrop: mp3 encode failed (continuing without transcript): {}", e);
+                    }
+                }
+            }
+
             let pool = db_pool.clone();
             let lang_code = std::env::var("LANG").unwrap_or_else(|_| "ita".to_string());
 
@@ -221,8 +300,10 @@ pub async fn start_eavesdrop_loop(ctx: Context, db_pool: SqlitePool, volume: Arc
                 }
             };
 
-            // Generate eavesdrop response via LLM
-            let response = match llm::eavesdrop_response(&username, &db_sentences, &lang_code).await {
+            // Generate eavesdrop response via LLM — the transcript (when we
+            // got one) is quoted in the prompt so the roast reacts to what
+            // the user actually said.
+            let response = match llm::eavesdrop_response(&recorded_username, &transcript, &db_sentences, &lang_code).await {
                 Ok(c) => c,
                 Err(e) => {
                     log::warn!("voice_eavesdrop: LLM error: {}", e);
@@ -252,18 +333,8 @@ pub async fn start_eavesdrop_loop(ctx: Context, db_pool: SqlitePool, volume: Arc
                 }
             };
 
-            // Make sure the bot is actually in the target channel — it may be
-            // stuck in an empty one after a failed idle-leave, and audio only
-            // reaches listeners in the channel the bot is connected to.
-            if let Some(current) = auto_join::current_bot_channel(&ctx, guild_id).await {
-                if current != channel_id {
-                    log::info!("voice_eavesdrop: moving bot from channel {} to {}", current, channel_id);
-                    if let Err(e) = auto_join::switch_to(&ctx, guild_id, current, channel_id).await {
-                        log::warn!("voice_eavesdrop: failed to move to channel {}: {}", channel_id, e);
-                    }
-                }
-            }
-
+            // The bot was already moved to the target channel before the
+            // recording phase above — playback goes to the same channel.
             // Play audio using songbird's get() pattern like auto_join does
             if let Err(e) = play_eavesdrop_audio(&ctx, &volume, guild_id, tts_result.file_path).await {
                 log::warn!("voice_eavesdrop: playback failed: {}", e);

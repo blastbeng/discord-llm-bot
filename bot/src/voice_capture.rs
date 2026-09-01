@@ -24,6 +24,11 @@ pub type DiscordUserId = u64;
 pub const TARGET_SPEECH_SECS: f32 = 25.0;
 /// Wall-clock cap: stop recording after this long even without speech.
 pub const MAX_RECORD_SECS: u64 = 180;
+/// Eavesdrop recording: much shorter — we only need a snippet of what the
+/// user said, and playback must stay timely on the Pi.
+pub const EAVESDROP_SPEECH_SECS: f32 = 12.0;
+/// Eavesdrop wall-clock cap (shorter than the clone recording cap).
+pub const EAVESDROP_MAX_SECS: u64 = 90;
 /// Sample rate of songbird's decoded voice ticks.
 const TICK_SAMPLE_RATE: u32 = 48000;
 
@@ -121,6 +126,37 @@ impl SongbirdEventHandler for SsrcTracker {
 // SSRC -> UserId mapping captured from SpeakingStateUpdate ticks. Voice ticks
 // don't carry user ids, so /clone registers a SsrcTracker alongside the
 // CaptureHandler for the whole session.
+
+/// Songbird global event handler that copies EVERY active speaker's decoded
+/// audio into a shared map keyed by user id. Used by the eavesdrop feature,
+/// which does not know in advance who will speak (unlike /clone's
+/// CaptureHandler, which routes one fixed target).
+pub struct ListenerHandler {
+    /// Per-user mono sample buffers, one entry per speaking user.
+    pub sinks: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<DiscordUserId, Arc<RecordSink>>>>,
+    /// Shared SSRC -> UserId registry (maintained by SsrcTracker).
+    pub ssrc_map: SsrcMap,
+}
+
+#[async_trait]
+impl SongbirdEventHandler for ListenerHandler {
+    async fn act(&self, ctx: &EventContext<'_>) -> Option<Event> {
+        if let EventContext::VoiceTick(tick) = ctx {
+            let map = self.ssrc_map.lock().unwrap();
+            let sinks = self.sinks.lock().unwrap();
+            for (ssrc, data) in tick.speaking.iter() {
+                let Some(user_id) = map.get(ssrc) else { continue };
+                if let Some(pcm) = &data.decoded_voice {
+                    if let Some(sink) = sinks.get(user_id) {
+                        sink.push_tick(pcm);
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
 /// Encode accumulated mono samples to MP3 bytes. Source ticks are 48kHz;
 /// decimate to 24kHz (PocketTTS's native rate) by averaging pairs.
 pub fn encode_samples_to_mp3(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>, String> {
@@ -163,6 +199,83 @@ fn encode_mono(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("{e:?}"))?;
     unsafe { out.set_len(out.len() + n) };
     Ok(out)
+}
+
+/// Record `target_secs` of speech from ANY user in the bot's current voice
+/// channel and return the collected samples per user (48kHz mono).
+///
+/// Used by the eavesdrop feature: attaches a ListenerHandler + SsrcTracker to
+/// the driver, polls until the user has spoken enough (or the wall-clock cap
+/// hits), then detaches and restores the cheaper Decrypt decode mode. The
+/// bot's own audio (playback) is not captured — songbird only delivers
+/// received remote voice.
+///
+/// Returns an empty map when nothing could be captured (nobody spoke, bot not
+/// in a channel, ...). Never fails hard — eavesdrop treats "no audio" as "say
+/// nothing this round".
+pub async fn record_user_speech(
+    handler_lock: &std::sync::Arc<tokio::sync::Mutex<songbird::Call>>,
+    target_secs: f32,
+    max_secs: u64,
+) -> std::collections::HashMap<DiscordUserId, Vec<f32>> {
+    // Enable PCM decoding for the session and register the handlers.
+    {
+        let mut handler = handler_lock.lock().await;
+        let cfg = {
+            let mut c = handler.config().clone();
+            c.decode_mode =
+                songbird::driver::DecodeMode::Decode(songbird::driver::DecodeConfig::default());
+            c
+        };
+        handler.set_config(cfg);
+
+        let ssrc_map: SsrcMap = Default::default();
+        let sinks: std::sync::Arc<
+            std::sync::Mutex<std::collections::HashMap<DiscordUserId, Arc<RecordSink>>>,
+        > = Default::default();
+
+        handler.add_global_event(
+            songbird::events::Event::Core(songbird::events::CoreEvent::SpeakingStateUpdate),
+            SsrcTracker { map: ssrc_map.clone() },
+        );
+        handler.add_global_event(
+            songbird::events::Event::Core(songbird::events::CoreEvent::VoiceTick),
+            ListenerHandler { sinks: sinks.clone(), ssrc_map },
+        );
+
+        // Release the Call guard while waiting — holding it for the whole
+        // recording would deadlock playback.
+        drop(handler);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(max_secs);
+        loop {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let done = {
+                let sinks = sinks.lock().unwrap();
+                sinks.values().any(|s| s.speech_secs() >= target_secs)
+                    || std::time::Instant::now() >= deadline
+            };
+            if done {
+                break;
+            }
+        }
+
+        // Stop capturing and restore the cheaper decode mode.
+        let mut handler = handler_lock.lock().await;
+        handler.remove_all_global_events();
+        let mut cfg = handler.config().clone();
+        cfg.decode_mode = songbird::driver::DecodeMode::Decrypt;
+        handler.set_config(cfg);
+
+        let mut out = std::collections::HashMap::new();
+        for (user_id, sink) in sinks.lock().unwrap().drain() {
+            let samples = sink.samples.lock().unwrap().clone();
+            if !samples.is_empty() {
+                out.insert(user_id, samples);
+            }
+        }
+        out
+    }
 }
 
 /// True if the samples look like actual speech (simple RMS gate) — guards

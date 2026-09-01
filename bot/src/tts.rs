@@ -192,6 +192,36 @@ pub async fn delete_cloned_voice(name: &str, owner: &str) -> Result<(), String> 
     Err(extract_sidecar_error(&msg))
 }
 
+/// Transcribe recorded speech (base64 MP3/WAV) via the voiceclone sidecar's
+/// whisper-tiny STT endpoint. Returns an empty string when the sidecar has
+/// STT disabled or nothing intelligible was said — callers treat that as
+/// "no transcript" and fall back to the name-only prompt.
+pub async fn transcribe_audio(audio_base64: &str) -> Result<String, String> {
+    let base = voiceclone_base_url().ok_or("voiceclone not configured")?;
+    // Bot LANG codes ("ita"/"eng") → whisper ISO codes ("it"/"en").
+    let whisper_lang = match std::env::var("LANG").unwrap_or_else(|_| "ita".to_string()).as_str() {
+        "eng" => "en",
+        _ => "it",
+    };
+    let resp = vc_client()
+        .post(format!("{base}/transcribe"))
+        .query(&[("lang", whisper_lang)])
+        .json(&serde_json::json!({ "audioBase64": audio_base64 }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let msg = resp.text().await.unwrap_or_default();
+        return Err(extract_sidecar_error(&msg));
+    }
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok(body
+        .get("text")
+        .and_then(|t| t.as_str())
+        .unwrap_or_default()
+        .to_string())
+}
+
 /// Pull a short human-readable error message out of the sidecar's JSON body.
 fn extract_sidecar_error(body: &str) -> String {
     // Body is either {"error": "..."} or(axum's rejection) plain text.

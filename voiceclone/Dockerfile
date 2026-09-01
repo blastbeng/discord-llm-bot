@@ -48,7 +48,18 @@ RUN tar -xjf /tmp/pocket.tar.bz2 -C /tmp && \
     rm /tmp/pocket.tar.bz2 && \
     mkdir -p /app/audios /app/config
 
+# Whisper-tiny int8 STT model (~245MB, multilingual): powers the /transcribe
+# endpoint used by the eavesdrop feature. Same self-contained approach —
+# downloaded and extracted at image build time, never at runtime.
+ADD https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-tiny.tar.bz2 /tmp/whisper.tar.bz2
+RUN tar -xjf /tmp/whisper.tar.bz2 -C /tmp && \
+    mv /tmp/sherpa-onnx-whisper-tiny /app/models/whisper-tiny && \
+    rm /tmp/whisper.tar.bz2
+
 ENV VOICECLONE_MODEL_DIR=/app/models/pocket-tts
+ENV VOICECLONE_STT_MODEL_DIR=/app/models/whisper-tiny
+ENV VOICECLONE_STT_LANG=it
+ENV VOICECLONE_STT_THREADS=3
 ENV AUDIOS_DIR=/app/audios
 ENV DOTENV_PATH=/app/.env
 

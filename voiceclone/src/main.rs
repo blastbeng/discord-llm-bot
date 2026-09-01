@@ -16,6 +16,7 @@
 //   POST /voices                → create: {name, owner, audioBase64} (MP3 or WAV)
 //   DELETE /voices/:name        → delete: ?owner=<user id>
 //   POST /synthesize            → {voice, owner, text, speed} → {audioBase64, cached, path}
+//   POST /transcribe            → {audioBase64} → {text} (whisper-tiny STT; optional)
 //
 // Synthesized audio is returned as base64 AND written to the shared audios
 // directory using the same "{token}_{md5(text)}.mp3" naming the bots use for
@@ -49,6 +50,11 @@ struct AppState {
     /// Mutex so only one generation runs at a time — generation is CPU-bound
     /// and RTF is ~2.3 on a Pi 5, so a queue is the correct backpressure.
     engine: tokio::sync::Mutex<Option<sherpa_onnx::OfflineTts>>,
+    /// STT engines (whisper-tiny int8) for the eavesdrop transcribe endpoint,
+    /// one per language hint ("it", "en", "" = auto-detect). Created lazily
+    /// and always serialized like the TTS engine — the Pi has 4 CPUs, so
+    /// running clone generation and STT concurrently would just slow both.
+    stt_engines: tokio::sync::Mutex<std::collections::HashMap<String, sherpa_onnx::OfflineRecognizer>>,
     /// Directory shared with the bots where cached MP3s live.
     audios_dir: String,
 }
@@ -93,6 +99,21 @@ fn default_speed() -> f32 {
 struct DeleteQuery {
     #[serde(default)]
     owner: String,
+}
+
+#[derive(Deserialize)]
+struct TranscribeReq {
+    /// Base64-encoded audio (MP3 or 16-bit PCM WAV).
+    #[serde(alias = "audioBase64")]
+    audio_base64: String,
+}
+
+#[derive(Deserialize)]
+struct SttQuery {
+    /// Optional language hint override (e.g. "it", "en"); defaults to the
+    /// VOICECLONE_STT_LANG env (or auto-detect when unset/"auto").
+    #[serde(default)]
+    lang: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -432,6 +453,97 @@ async fn synthesize(
     ))
 }
 
+/// Transcribe recorded speech to text (used by the Discord eavesdrop feature
+/// to learn what a user actually said before roasting them).
+///
+/// The whisper-tiny int8 model runs at RTF ≈ 0.26 on the Pi 5 (a 12s clip
+/// transcribes in ~3s), so this is fast enough to run inline in the
+/// eavesdrop flow. One engine per language hint is cached in the shared
+/// state (whisper bakes the language into its decoder, so switching
+/// languages means creating a new engine around the same ONNX files — cheap,
+/// the model bytes are shared by the runtime).
+async fn transcribe(
+    State(state): State<SharedState>,
+    Query(q): Query<SttQuery>,
+    Json(req): Json<TranscribeReq>,
+) -> Result<Json<Value>, (StatusCode, String)> {
+    let audio = base64::engine::general_purpose::STANDARD
+        .decode(&req.audio_base64)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid base64: {e}")))?;
+    if audio.len() > 12_000_000 {
+        return Err((StatusCode::BAD_REQUEST, "audio too large".into()));
+    }
+    let samples = audio::decode_to_mono(&audio).ok_or_else(|| {
+        (
+            StatusCode::BAD_REQUEST,
+            "could not decode audio (send MP3 or WAV)".to_string(),
+        )
+    })?;
+    // Cap input at 60s — eavesdrop clips are ~12s, anything longer is a bug.
+    let rate = decode_sample_rate(&audio).unwrap_or(24000);
+    if samples.len() as u64 > rate as u64 * 60 {
+        return Err((StatusCode::BAD_REQUEST, "audio longer than 60s".into()));
+    }
+
+    // Resolve the language hint: query param wins, then the env default.
+    let lang = q
+        .lang
+        .as_deref()
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("auto"))
+        .or_else(|| {
+            std::env::var("VOICECLONE_STT_LANG")
+                .ok()
+                .map(|v| v.trim().to_lowercase())
+                .filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("auto"))
+        })
+        .unwrap_or_default();
+
+    // Engine created lazily per language (first call loads the model, ~2-3s).
+    {
+        let mut engines = state.stt_engines.lock().await;
+        if !engines.contains_key(&lang) {
+            log::info!("voiceclone: loading whisper-tiny STT model (lang='{lang}', first use)...");
+            match audio::create_stt_engine(&lang) {
+                Some(e) => {
+                    log::info!("voiceclone: STT model ready (lang='{lang}')");
+                    engines.insert(lang.clone(), e);
+                }
+                None => {
+                    return Err((
+                        StatusCode::NOT_IMPLEMENTED,
+                        "STT not configured, set VOICECLONE_STT_MODEL_DIR".into(),
+                    ));
+                }
+            }
+        }
+    }
+    let engines = state.stt_engines.lock().await;
+    let engine = engines.get(&lang).unwrap();
+
+    let text = tokio::task::block_in_place(|| audio::transcribe(engine, &samples, rate));
+
+    match text {
+        Some(t) => {
+            log::info!("voiceclone: transcribed {} samples → {:?} ({} chars)",
+                samples.len(), t.chars().take(80).collect::<String>(), t.len());
+            Ok(Json(serde_json::json!({ "text": t })))
+        }
+        None => Ok(Json(serde_json::json!({ "text": "" }))),
+    }
+}
+
+/// Sample rate of the decoded audio, used only for the 60s duration cap.
+/// Cheap header peek: reuses decode via a rate probe on the raw bytes.
+fn decode_sample_rate(bytes: &[u8]) -> Option<u32> {
+    // 16-bit PCM WAV: rate is at offset 24 in a canonical header.
+    if bytes.len() > 28 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WAVE" {
+        return Some(u32::from_le_bytes(bytes[24..28].try_into().ok()?));
+    }
+    // MP3: the bots always send 24kHz mono, so that is the sane default.
+    Some(24000)
+}
+
 /// Write the MP3 file with ID3 tags in one pass (temp + rename for safety).
 fn write_id3_tags_bytes(path: &str, mp3: &[u8], artist: &str, title: &str) -> Result<(), String> {
     use id3::TagLike;
@@ -512,6 +624,7 @@ async fn main() {
     let state = Arc::new(AppState {
         db_pool,
         engine: tokio::sync::Mutex::new(engine),
+        stt_engines: tokio::sync::Mutex::new(Default::default()),
         audios_dir,
     });
 
@@ -520,6 +633,7 @@ async fn main() {
         .route("/voices", get(list_voices).post(create_voice))
         .route("/voices/:name", axum::routing::delete(delete_voice))
         .route("/synthesize", post(synthesize))
+        .route("/transcribe", post(transcribe))
         .with_state(state);
 
     let port: u16 = std::env::var("VOICECLONE_PORT")
