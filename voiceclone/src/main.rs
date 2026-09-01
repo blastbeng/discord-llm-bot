@@ -441,7 +441,7 @@ async fn synthesize(
         // tag writing is synchronous file IO; tiny, so just block briefly.
         let mp3 = mp3.clone();
         let path = path.clone();
-        let voice_display = format!("clone:{}", voice_name);
+        let voice_display = voice_name.clone();
         let text_tag = text.clone();
         tokio::task::block_in_place(|| {
             write_id3_tags_bytes(&path, &mp3, &voice_display, &text_tag)

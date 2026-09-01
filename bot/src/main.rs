@@ -342,9 +342,9 @@ async fn voice_autocomplete(
     current: &str,
 ) -> Vec<serenity::AutocompleteChoice> {
     // Built-ins first, then cloned voices. Clones are ALWAYS offered in the
-    // picker (filtered by what the user typed — typing "Salvini" matches
-    // "clone:Salvini"): selecting one is an explicit opt-in, so /random and
-    // every default/automatic path still stay Google-only.
+    // picker under their PLAIN name (filtered by what the user typed):
+    // selecting one is an explicit opt-in, so /random and every
+    // default/automatic path still stay Google-only.
     // Discord hard limit: 25 autocomplete choices.
     const MAX_CHOICES: usize = 25;
     let mut choices: Vec<serenity::AutocompleteChoice> = Vec::new();
@@ -365,9 +365,8 @@ async fn voice_autocomplete(
             if choices.len() >= MAX_CHOICES {
                 break;
             }
-            let name = format!("clone:{}", v.name);
-            if cur.is_empty() || name.to_lowercase().contains(&cur) {
-                choices.push(serenity::AutocompleteChoice::new(name.clone(), name));
+            if cur.is_empty() || v.name.to_lowercase().contains(&cur) {
+                choices.push(serenity::AutocompleteChoice::new(v.name.clone(), v.name.clone()));
             }
         }
     }
@@ -602,6 +601,11 @@ async fn speak(
             return Ok(());
         }
     };
+    // Surface a Google-fallback (cloned voice unavailable) instead of
+    // silently playing a different voice than the user picked.
+    if let Some(warn) = &tts_result.fallback_used {
+        let _ = reply.edit(ctx, poise::CreateReply::default().content(warn.clone()).ephemeral(true)).await;
+    }
 
     if let Err(e) = database::insert_sentence(&ctx.data().db_pool, &text).await {
         log::error!("Failed to insert sentence into database: {}", e);
@@ -922,6 +926,11 @@ async fn random(
             return Ok(());
         }
     };
+    // Surface a Google-fallback (cloned voice unavailable) instead of
+    // silently playing a different voice than the user picked.
+    if let Some(warn) = &tts_result.fallback_used {
+        let _ = reply.edit(ctx, poise::CreateReply::default().content(warn.clone()).ephemeral(true)).await;
+    }
 
     let mut handler = handler_lock.lock().await;
     if handler.current_channel().is_none() {
@@ -1152,6 +1161,11 @@ async fn ask(
             return Ok(());
         }
     };
+    // Surface a Google-fallback (cloned voice unavailable) instead of
+    // silently playing a different voice than the user picked.
+    if let Some(warn) = &tts_result.fallback_used {
+        let _ = reply.edit(ctx, poise::CreateReply::default().content(warn.clone()).ephemeral(true)).await;
+    }
 
     let mut handler = handler_lock.lock().await;
     if handler.current_channel().is_none() {
@@ -1338,6 +1352,11 @@ async fn translate(
             return Ok(());
         }
     };
+    // Surface a Google-fallback (cloned voice unavailable) instead of
+    // silently playing a different voice than the user picked.
+    if let Some(warn) = &tts_result.fallback_used {
+        let _ = reply.edit(ctx, poise::CreateReply::default().content(warn.clone()).ephemeral(true)).await;
+    }
 
     let mut handler = handler_lock.lock().await;
     if handler.current_channel().is_none() {
@@ -1559,6 +1578,11 @@ async fn joke(
             return Ok(());
         }
     };
+    // Surface a Google-fallback (cloned voice unavailable) instead of
+    // silently playing a different voice than the user picked.
+    if let Some(warn) = &tts_result.fallback_used {
+        let _ = reply.edit(ctx, poise::CreateReply::default().content(warn.clone()).ephemeral(true)).await;
+    }
 
     let mut handler = handler_lock.lock().await;
     if handler.current_channel().is_none() {
@@ -1728,7 +1752,7 @@ async fn createvoice(
         ctx.send(poise::CreateReply::default().content(&lang.vc_not_configured).ephemeral(true)).await?;
         return Ok(());
     }
-    if !tts::is_valid_voice(&format!("clone:{}", name.trim())) {
+    if !tts::is_valid_clone_name(name.trim()) {
         ctx.send(poise::CreateReply::default().content(&lang.vc_invalid_name).ephemeral(true)).await?;
         return Ok(());
     }
@@ -1789,7 +1813,7 @@ async fn myvoices(ctx: Context<'_>) -> Result<(), Error> {
         .iter()
         .map(|v| {
             let badge = if v.owner == me { "🟢" } else { "⚪" };
-            format!("{} **clone:{}** — `--voice clone:{}`", badge, v.name, v.name)
+            format!("{} **{}** — `--voice {}`", badge, v.name, v.name)
         })
         .collect();
     let body = format!(
@@ -1885,7 +1909,7 @@ async fn clone(
     }
 
     let name = name.trim().to_string();
-    if !tts::is_valid_voice(&format!("clone:{}", name)) {
+    if !tts::is_valid_clone_name(&name) {
         ctx.send(poise::CreateReply::default().content(&lang.vc_invalid_name).ephemeral(true)).await?;
         return Ok(());
     }

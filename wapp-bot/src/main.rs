@@ -333,6 +333,10 @@ async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) {
     // Generate TTS
     match tts::get_or_generate_tts_with_effect(&text, &actual_voice, &actual_effect).await {
         Ok(tts_result) => {
+            // Surface a Google-fallback (cloned voice unavailable) to the user.
+            if let Some(warn) = &tts_result.fallback_used {
+                send_text(state, &payload.from, warn).await;
+            }
             // Save sentence to database
             if let Err(e) = database::insert_sentence(&state.db_pool, &text).await {
                 log::error!("Failed to insert sentence: {}", e);
@@ -451,6 +455,10 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
 
     match tts::get_or_generate_tts_with_effect(&tts_text, &actual_voice, &actual_effect).await {
         Ok(tts_result) => {
+            // Surface a Google-fallback (cloned voice unavailable) to the user.
+            if let Some(warn) = &tts_result.fallback_used {
+                send_text(state, &payload.from, warn).await;
+            }
             send_audio(state, &payload.from, &tts_result.file_path).await;
         }
         Err(e) => {
@@ -677,7 +685,7 @@ async fn cmd_createvoice(state: &AppState, payload: &WebhookPayload, args: &str)
         send_text(state, &payload.from, &lang.vc_usage).await;
         return;
     }
-    if !tts::is_valid_voice(&format!("clone:{}", name)) {
+    if !tts::is_valid_clone_name(&name) {
         send_text(state, &payload.from, &lang.vc_invalid_name).await;
         return;
     }
@@ -729,7 +737,7 @@ async fn cmd_myvoices(state: &AppState, payload: &WebhookPayload) {
     }
     let lines: Vec<String> = voices
         .iter()
-        .map(|v| format!("• *clone:{}* — `/speak testo --voice clone:{}`", v.name, v.name))
+        .map(|v| format!("• *{}* — `/speak testo --voice {}`", v.name, v.name))
         .collect();
     send_text(state, &payload.from, &lines.join("\n")).await;
 }
@@ -800,7 +808,7 @@ async fn cmd_stats(state: &AppState, _payload: &WebhookPayload) -> String {
 
 async fn cmd_help(state: &AppState, _payload: &WebhookPayload) -> String {
     let voices = tts::AVAILABLE_VOICES.iter().map(|v| format!("`{}`", v)).collect::<Vec<_>>().join(", ");
-    let cloned_hint = if tts::voiceclone_configured() { " (cloned: `clone:<name>`, see /myvoices)" } else { "" };
+    let cloned_hint = if tts::voiceclone_configured() { " (cloned voices by name, see /myvoices)" } else { "" };
     let effects = crate::audio_effects::AVAILABLE_EFFECTS.iter().map(|e| format!("`{}`", e)).collect::<Vec<_>>().join(", ");
     format!(
         "{}{}",

@@ -61,6 +61,8 @@ pub const AVAILABLE_VOICES: &[&str] = &["Google"];
 
 /// Build the cache-path token for a voice. Google voices use the voice name
 /// itself; cloned voices use "clone|<name>" (normalized to '_' in file paths).
+/// Accepts both the legacy "clone:<name>" syntax and plain clone names so old
+/// cached files stay reachable.
 pub fn get_voice_token(voice: &str) -> String {
     if voice.starts_with("clone|") {
         return voice.to_string();
@@ -69,6 +71,33 @@ pub fn get_voice_token(voice: &str) -> String {
         return format!("clone|{name}");
     }
     "Google".to_string()
+}
+
+/// True when the name has the charset of a cloned-voice name and does not
+/// collide with a built-in/reserved voice. Names are case-insensitively
+/// reserved so nobody can shadow the main Google voice.
+pub fn is_valid_clone_name(name: &str) -> bool {
+    let reserved = ["google", "random", "none"];
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && !reserved.iter().any(|r| name.eq_ignore_ascii_case(r))
+}
+
+/// Resolve any accepted voice syntax to the plain cloned-voice name, or None
+/// when the voice is not a clone request. Accepted forms: "Name" (plain,
+/// current UX), legacy "clone:Name" / "clone|Name" (still honored), while
+/// built-ins ("Google") and "random" never resolve to a clone.
+pub fn clone_voice_name(voice: &str) -> Option<String> {
+    if let Some(name) = voice.strip_prefix("clone:").or_else(|| voice.strip_prefix("clone|")) {
+        return Some(name.to_string());
+    }
+    if is_valid_clone_name(voice) && !AVAILABLE_VOICES.contains(&voice) {
+        return Some(voice.to_string());
+    }
+    None
 }
 
 /// Check if a voice name is valid (excluding "random"). Cloned voices are
@@ -84,13 +113,11 @@ pub fn is_valid_voice(voice: &str) -> bool {
             .strip_prefix("clone:")
             .or_else(|| voice.strip_prefix("clone|"))
             .unwrap_or("");
-        return !name.is_empty()
-            && name.len() <= 64
-            && name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        return is_valid_clone_name(name);
     }
-    AVAILABLE_VOICES.contains(&voice)
+    // Plain names: built-ins, plus any well-formed clone name (existence is
+    // checked against the sidecar at generation time).
+    AVAILABLE_VOICES.contains(&voice) || is_valid_clone_name(voice)
 }
 
 /// HTTP JSON helpers for the voiceclone sidecar service.
@@ -289,10 +316,10 @@ fn base64_decode(s: &str) -> Option<Vec<u8>> {
 /// Reverse-lookup a voice name from its token.
 /// Used to display human-readable voice names for cached MP3 files
 /// whose filenames contain the voice token (e.g. "Google_hash.mp3").
-/// Cloned voices use "clone:<name>" tokens — the name is recovered verbatim.
+/// Cloned voices display as their plain name.
 pub fn get_voice_name_from_token(token: &str) -> String {
     if let Some(name) = token.strip_prefix("clone|") {
-        return format!("clone:{}", name);
+        return name.to_string();
     }
     match token {
         "Google" => "Google".to_string(),
@@ -346,8 +373,15 @@ pub fn get_file_path_with_effect(voice: &str, text: &str, effect: &str) -> Strin
     let hash = format!("{:x}", md5_compute(text));
     // Cloned-voice tokens contain a pipe separator, which is not filename-safe;
     // normalize it to '_' for cache file paths (matches the sidecar's file layout
-    // when referenced from /random display logic).
-    let voice_token = get_voice_token(voice).replace('|', "_");
+    // when referenced from /random display logic). Plain clone names get the
+    // clone| token here so "Salvini" and the legacy "clone:Salvini" resolve to
+    // the same cache file — and can never collide with the Google token.
+    let voice_token = if clone_voice_name(voice).is_some() {
+        get_voice_token(&format!("clone|{}", clone_voice_name(voice).unwrap()))
+            .replace('|', "_")
+    } else {
+        get_voice_token(voice).replace('|', "_")
+    };
     let file_path = if effect != "none" && effect != "random" {
         format!("audios/{}_{}_{}.mp3", voice_token, effect, hash)
     } else {
@@ -460,6 +494,10 @@ pub async fn get_tts_google(text: &str) -> Result<Vec<u8>, Box<dyn std::error::E
 pub struct TtsResult {
     pub file_path: String,
     pub actual_voice: String,
+    /// Set when a cloned-voice request ended up synthesized with another
+    /// engine (e.g. the clone was missing on the sidecar and we fell back to
+    /// Google). Commands surface this to the user instead of staying silent.
+    pub fallback_used: Option<String>,
 }
 
 pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &str) -> Result<TtsResult, Box<dyn std::error::Error + Send + Sync>> {
@@ -507,37 +545,58 @@ async fn get_or_generate_tts_inner(text: &str, voice: &str, effect: &str) -> Res
             log::info!("get_or_generate_tts: plain cache hit for {}", plain_path);
             if apply_effect {
                 let temp_path = apply_effect_to_temp(&plain_path, text, effect, voice).await?;
-                return Ok(TtsResult { file_path: temp_path, actual_voice: voice.to_string() });
+                return Ok(TtsResult { file_path: temp_path, actual_voice: voice.to_string(), fallback_used: None });
             }
-            return Ok(TtsResult { file_path: plain_path, actual_voice: voice.to_string() });
+            return Ok(TtsResult { file_path: plain_path, actual_voice: voice.to_string(), fallback_used: None });
         }
     }
 
     // 2) GENERATE the audio. Cloned voices are delegated to the voiceclone
     //    sidecar (all other voices are Google only); the sidecar persists the
     //    MP3 in the shared audios dir with the same token naming convention.
-    // Accept both "clone:<name>" (user-facing token) and "clone|<name>" (cache
-    // token). Callers may pass either; previously only the pipe form matched,
-    // which made cloned voices silently fall through to Google TTS.
-    if voice.starts_with("clone:") || voice.starts_with("clone|") {
+    // Cloned voices: plain names (current UX), legacy "clone:<name>" /
+    // "clone|<name>" tokens still honored. If the sidecar can't produce the
+    // voice (missing, down, failed), fall back to Google but REPORT it via
+    // fallback_used so the command can warn the user instead of silently
+    // playing a different voice.
+    let clone_request = clone_voice_name(voice);
+    if let Some(clone_name) = clone_request {
         log::info!("get_or_generate_tts: generating CLONED TTS for voice {}", voice);
         let owner = std::env::var("VOICECLONE_SHARED_OWNER").unwrap_or_default();
-        let clone_name = voice
-            .strip_prefix("clone:")
-            .or_else(|| voice.strip_prefix("clone|"))
-            .unwrap_or(voice);
-        let bytes = get_tts_cloned(clone_name, &owner, text).await?;
-        let actual_voice = voice.to_string();
+        let bytes_result = get_tts_cloned(&clone_name, &owner, text).await;
+        let (bytes, fallback_used) = match bytes_result {
+            Ok(b) => (b, None),
+            Err(e) => {
+                log::warn!(
+                    "get_or_generate_tts: clone '{}' unavailable ({}); falling back to Google TTS",
+                    clone_name, e
+                );
+                (
+                    get_tts_google(text).await.map_err(|ge| {
+                        format!("clone '{clone_name}' failed ({e}) and Google TTS also failed ({ge})")
+                    })?,
+                    Some(format!(
+                        "⚠️ Voce clonata '{}' non disponibile ({}), sto usando Google",
+                        clone_name, e
+                    )),
+                )
+            }
+        };
+        let actual_voice = if fallback_used.is_some() {
+            "Google".to_string()
+        } else {
+            format!("clone|{clone_name}")
+        };
 
         let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
         let hash = format!("{:x}", md5_compute(text));
 
         // Effects are applied locally on the sidecar's MP3, same as Google audio.
-        if save_mp3 && !apply_effect {
+        if save_mp3 && !apply_effect && fallback_used.is_none() {
             // Sidecar already cached the file; return the shared path directly.
             let plain_path = get_file_path(&actual_voice, text);
             if tokio::fs::try_exists(&plain_path).await.unwrap_or(false) {
-                return Ok(TtsResult { file_path: plain_path, actual_voice });
+                return Ok(TtsResult { file_path: plain_path, actual_voice: voice.to_string(), fallback_used: None });
             }
         }
         tokio::fs::create_dir_all(&temp_dir).await?;
@@ -556,7 +615,7 @@ async fn get_or_generate_tts_inner(text: &str, voice: &str, effect: &str) -> Res
             tokio::time::sleep(std::time::Duration::from_secs(300)).await;
             let _ = tokio::fs::remove_file(&path_clone).await;
         });
-        return Ok(TtsResult { file_path: temp_path, actual_voice });
+        return Ok(TtsResult { file_path: temp_path, actual_voice, fallback_used });
     }
 
     log::info!("get_or_generate_tts: generating TTS for voice {}", voice);
@@ -587,7 +646,7 @@ async fn get_or_generate_tts_inner(text: &str, voice: &str, effect: &str) -> Res
                     tokio::time::sleep(std::time::Duration::from_secs(300)).await;
                     let _ = tokio::fs::remove_file(&path_clone).await;
                 });
-                return Ok(TtsResult { file_path: temp_path, actual_voice });
+                return Ok(TtsResult { file_path: temp_path, actual_voice, fallback_used: None });
             } else {
                 // No effect - write raw Google TTS bytes directly to cache
                 tokio::fs::write(&plain_path, &bytes).await?;
@@ -596,7 +655,7 @@ async fn get_or_generate_tts_inner(text: &str, voice: &str, effect: &str) -> Res
             }
         }
         // Plain audio now cached — return it (no effect path).
-        return Ok(TtsResult { file_path: plain_path, actual_voice });
+        return Ok(TtsResult { file_path: plain_path, actual_voice, fallback_used: None });
     }
 
     // 4) Disk saving disabled — write plain or effected audio to a temp file.
@@ -619,5 +678,5 @@ async fn get_or_generate_tts_inner(text: &str, voice: &str, effect: &str) -> Res
         tokio::time::sleep(std::time::Duration::from_secs(300)).await;
         let _ = tokio::fs::remove_file(&path_clone).await;
     });
-    Ok(TtsResult { file_path: temp_path, actual_voice })
+    Ok(TtsResult { file_path: temp_path, actual_voice, fallback_used: None })
 }
