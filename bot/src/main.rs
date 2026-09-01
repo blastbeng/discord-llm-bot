@@ -2969,6 +2969,15 @@ async fn main() {
     builder.filter_module("tracing", log::LevelFilter::Warn);
     builder.filter_module("serenity", log::LevelFilter::Warn);
     builder.filter_module("songbird", log::LevelFilter::Warn);
+    // Discord's voice server periodically sends RTCP control feedback
+    // (receiver reports / transport-wide congestion data) that songbird
+    // cannot decrypt with the media key: whenever voice receive is enabled
+    // (Decode or Decrypt mode, used by /clone and eavesdrop) it logs
+    // "RTCP decryption failed: Crypto(Error)". It is control-plane noise —
+    // audio travels over RTP and decrypts fine — and unfixed upstream as of
+    // songbird 0.6.0. Silence just this noisy target; real errors from it
+    // (illegal RTP, DAVE failures) still log at error level.
+    builder.filter_module("songbird::driver::tasks::udp_rx", log::LevelFilter::Error);
     builder.filter_module("reqwest", log::LevelFilter::Warn);
     builder.filter_module("sqlx", log::LevelFilter::Warn);
     builder.init();
