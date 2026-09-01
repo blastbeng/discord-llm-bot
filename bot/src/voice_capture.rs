@@ -4,7 +4,7 @@
 //! every 20ms with decoded PCM for each active speaker. We capture the ticks
 //! belonging to the target user into an MP3 buffer in memory until enough
 //! SPEECH time (not wall time — silence doesn't count) is collected, then the
-//! base64 result is handed to the voiceclone sidecar exactly like an uploaded
+//! base64 result is handed to fish.audio exactly like an uploaded
 //! sample.
 //!
 //! Decoded voice ticks are 2ch/48kHz s16le PCM (interleaved L/R). We downmix

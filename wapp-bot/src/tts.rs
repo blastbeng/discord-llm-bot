@@ -53,8 +53,8 @@ pub fn http_client() -> &'static reqwest::Client {
 }
 
 /// All available voices (matches Python's get_available_voices).
-/// Only "Google" is built-in; cloned voices are dynamic via the voiceclone
-/// sidecar. NOTE: /random and every default-voice path must stay "Google" —
+/// Only "Google" is built-in; cloned voices are dynamic via the fish.audio
+/// fish.audio registry. NOTE: /random and every default-voice path must stay "Google" —
 /// cloned voices are opt-in only (--voice clone:name).
 pub const AVAILABLE_VOICES: &[&str] = &["Google"];
 
@@ -75,22 +75,109 @@ pub fn get_voice_token(voice: &str) -> String {
     "Google".to_string()
 }
 
-/// HTTP helpers for the voiceclone sidecar (create/list/delete/use voices).
-static VC_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+// ─── fish.audio cloud voice cloning ─────────────────────────────────────
+//
+// Voice cloning runs on https://fish.audio (hosted voice-cloning + TTS
+// service) instead of a local model — the RPi5 is far too slow for local
+// inference. Locally we only keep the name → fish model-id mapping (plus the
+// reference sample for re-registration) in the `voice_clones` table of the
+// shared SQLite database.
+//
+// Endpoints used (Bearer auth via FISH_AUDIO_API_KEY):
+//   • POST   /model       — clone: multipart (type=tts, title, train_mode=fast
+//                           → model usable immediately, visibility=private,
+//                           voices=<audio bytes>). 201 → {"_id": "..."}.
+//   • DELETE /model/{id}  — remove a cloned model.
+//   • POST   /v1/tts      — synthesize: JSON {text, reference_id}, header
+//                           `model: <backend>`, response = raw MP3 bytes.
 
-fn vc_client() -> &'static reqwest::Client {
-    VC_CLIENT.get_or_init(|| build_client(600))
+static FISH_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn fish_client() -> &'static reqwest::Client {
+    // Generous timeout: clone creation uploads a full sample, fast training
+    // happens server-side, and synthesizing long sentences can be slow.
+    FISH_CLIENT.get_or_init(|| build_client(600))
 }
 
-fn voiceclone_base_url() -> Option<String> {
-    match std::env::var("VOICECLONE_URL") {
-        Ok(url) if !url.trim().is_empty() => Some(url.trim().trim_end_matches('/').to_string()),
+fn fish_api_key() -> Option<String> {
+    match std::env::var("FISH_AUDIO_API_KEY") {
+        Ok(k) if !k.trim().is_empty() => Some(k.trim().to_string()),
         _ => None,
     }
 }
 
+/// TTS backend sent as the `model` header with /v1/tts.
+/// "s2.1-pro-free" is the free tier of the current flagship model.
+fn fish_tts_model() -> String {
+    std::env::var("FISH_AUDIO_TTS_MODEL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "s2.1-pro-free".to_string())
+}
+
+fn fish_base_url() -> String {
+    std::env::var("FISH_AUDIO_BASE_URL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "https://api.fish.audio".to_string())
+}
+
+/// The voice-clone feature is available when a fish.audio API key is set.
 pub fn voiceclone_configured() -> bool {
-    voiceclone_base_url().is_some()
+    fish_api_key().is_some()
+}
+
+/// Lazily-opened connection to the shared SQLite DB that stores the
+/// voice-clone registry (name, owner, fish model id, reference sample).
+static VC_DB: tokio::sync::OnceCell<sqlx::SqlitePool> = tokio::sync::OnceCell::const_new();
+
+async fn vc_db() -> Result<&'static sqlx::SqlitePool, String> {
+    if let Some(pool) = VC_DB.get() {
+        return Ok(pool);
+    }
+    let db_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "sqlite:config/discord-bot.sqlite3".to_string());
+    let opts = db_url
+        .parse::<sqlx::sqlite::SqliteConnectOptions>()
+        .map_err(|e| e.to_string())?
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .create_if_missing(true);
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(opts)
+        .await
+        .map_err(|e| e.to_string())?;
+    // Same layout the old voiceclone sidecar used; `fish_model_id` is new.
+    // Legacy rows (created before the fish.audio migration) carry a stored
+    // `sample` but an empty `fish_model_id` and are re-registered on first
+    // use (lazy migration, see get_tts_cloned).
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS voice_clones (
+            name TEXT NOT NULL,
+            owner TEXT NOT NULL DEFAULT '',
+            origin TEXT NOT NULL DEFAULT 'sample',
+            sample BLOB,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (name, owner)
+        )",
+    )
+    .execute(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let has_col: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('voice_clones') WHERE name = 'fish_model_id'",
+    )
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    if has_col == 0 {
+        sqlx::query("ALTER TABLE voice_clones ADD COLUMN fish_model_id TEXT NOT NULL DEFAULT ''")
+            .execute(&pool)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    let _ = VC_DB.set(pool);
+    Ok(VC_DB.get().expect("voice-clone pool just set"))
 }
 
 pub struct ClonedVoice {
@@ -98,82 +185,293 @@ pub struct ClonedVoice {
     pub owner: String,
 }
 
-/// List all cloned voices registered on the sidecar.
+/// List all cloned voices registered locally. fish.audio is the source of
+/// truth for the actual models; this reads the local name → fish-id registry.
 pub async fn list_cloned_voices() -> Result<Vec<ClonedVoice>, String> {
-    let base = voiceclone_base_url().ok_or("voiceclone not configured")?;
-    let resp = vc_client().get(format!("{base}/voices")).send().await.map_err(|e| e.to_string())?;
+    let pool = vc_db().await?;
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT name, owner FROM voice_clones ORDER BY created_at",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().map(|(name, owner)| ClonedVoice { name, owner }).collect())
+}
+
+/// Upload `audio` to fish.audio as a new private TTS model titled `name`
+/// (train_mode=fast → usable immediately). Returns the fish model id.
+async fn fish_create_model(key: &str, name: &str, audio: Vec<u8>) -> Result<String, String> {
+    let form = reqwest::multipart::Form::new()
+        .text("type", "tts")
+        .text("title", name.to_string())
+        .text("train_mode", "fast")
+        .text("visibility", "private")
+        .part(
+            "voices",
+            reqwest::multipart::Part::bytes(audio)
+                .file_name("sample.mp3")
+                .mime_str("audio/mpeg")
+                .map_err(|e| e.to_string())?,
+        );
+    let resp = fish_client()
+        .post(format!("{}/model", fish_base_url()))
+        .bearer_auth(key)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(format!(
+            "fish.audio model creation failed ({}): {}",
+            status,
+            extract_api_error(&body)
+        ));
+    }
+    let model_id = serde_json::from_str::<serde_json::Value>(&body)
+        .ok()
+        .and_then(|v| v.get("_id").and_then(|i| i.as_str()).map(|s| s.to_string()))
+        .ok_or_else(|| {
+            format!("fish.audio did not return a model id: {}", extract_api_error(&body))
+        })?;
+    Ok(model_id)
+}
+
+/// Delete a model on fish.audio by id.
+async fn fish_delete_model(key: &str, model_id: &str) -> Result<(), String> {
+    let resp = fish_client()
+        .delete(format!(
+            "{}/model/{}",
+            fish_base_url(),
+            urlencoding::encode(model_id)
+        ))
+        .bearer_auth(key)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
-        return Err(format!("voices list failed: {}", resp.status()));
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("{}: {}", status, extract_api_error(&body)));
     }
-    #[derive(serde::Deserialize)]
-    struct Row {
-        name: String,
-        #[serde(default)]
-        owner: String,
-    }
-    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    let rows: Vec<Row> = serde_json::from_value(body.get("voices").cloned().unwrap_or_default())
-        .map_err(|e| e.to_string())?;
-    Ok(rows.into_iter().map(|r| ClonedVoice { name: r.name, owner: r.owner }).collect())
+    Ok(())
 }
 
-/// Create a cloned voice from a base64-encoded audio sample (MP3/WAV).
+/// Remove cached MP3s for a voice so overwritten/deleted voices don't keep
+/// playing stale audio. Files are keyed by text hash only, with the voice
+/// token prefix ("clone|<name>_" historically, "clone_<name>_" in paths).
+async fn purge_voice_cache(name: &str) {
+    let prefixes = [format!("clone|{name}_"), format!("clone_{name}_")];
+    let mut removed = 0u32;
+    if let Ok(mut entries) = tokio::fs::read_dir("audios").await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let fname = entry.file_name().to_string_lossy().to_string();
+            if prefixes.iter().any(|p| fname.starts_with(p.as_str())) {
+                if tokio::fs::remove_file(entry.path()).await.is_ok() {
+                    removed += 1;
+                }
+            }
+        }
+    }
+    if removed > 0 {
+        log::info!("purge_voice_cache: removed {removed} cached files for voice '{name}'");
+    }
+}
+
+/// Create (or overwrite) a cloned voice from a base64-encoded audio sample.
+/// The sample is uploaded to fish.audio for cloning; the resulting fish model
+/// id is stored in the local registry. Voice names are unique per owner — an
+/// existing same-name voice is replaced (its old fish model is deleted and
+/// stale cached MP3s are purged).
 pub async fn create_cloned_voice(name: &str, owner: &str, audio_base64: &str) -> Result<(), String> {
-    let base = voiceclone_base_url().ok_or("voiceclone not configured")?;
-    let resp = vc_client()
-        .post(format!("{base}/voices"))
-        .json(&serde_json::json!({ "name": name, "owner": owner, "audioBase64": audio_base64, "overwriteCached": true }))
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if resp.status().is_success() {
-        return Ok(());
+    let key = fish_api_key().ok_or("fish.audio not configured")?;
+    let name = name.trim();
+    let audio = base64_decode(audio_base64).ok_or("could not decode audio sample")?;
+
+    let pool = vc_db().await?;
+    // Remember the previous fish model (if any) so the superseded cloud model
+    // can be deleted after the new one is registered.
+    let previous: Option<String> = sqlx::query_scalar::<_, String>(
+        "SELECT fish_model_id FROM voice_clones WHERE name = ? AND owner = ?",
+    )
+    .bind(name)
+    .bind(owner.trim())
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?
+    .filter(|s| !s.is_empty());
+
+    let model_id = fish_create_model(&key, name, audio.clone()).await?;
+
+    // The sample is kept so the voice can be re-registered later if the fish
+    // model disappears (e.g. deleted from the fish.audio dashboard).
+    sqlx::query(
+        "INSERT INTO voice_clones (name, owner, origin, sample, fish_model_id)
+         VALUES (?, ?, 'sample', ?, ?)
+         ON CONFLICT(name, owner) DO UPDATE SET
+            sample = excluded.sample,
+            fish_model_id = excluded.fish_model_id,
+            created_at = CURRENT_TIMESTAMP",
+    )
+    .bind(name)
+    .bind(owner.trim())
+    .bind(&audio)
+    .bind(&model_id)
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    if let Some(prev) = previous.filter(|p| p != &model_id) {
+        if let Err(e) = fish_delete_model(&key, &prev).await {
+            log::warn!("create_cloned_voice: could not delete superseded fish model {prev}: {e}");
+        }
     }
-    Err(extract_sidecar_error(&resp.text().await.unwrap_or_default()))
+
+    purge_voice_cache(name).await;
+    log::info!("create_cloned_voice: voice '{name}' cloned on fish.audio (model {model_id})");
+    Ok(())
 }
 
-/// Delete a previously created cloned voice.
+/// Delete a previously created cloned voice (cloud model + local registry row
+/// + cached MP3s).
 pub async fn delete_cloned_voice(name: &str, owner: &str) -> Result<(), String> {
-    let base = voiceclone_base_url().ok_or("voiceclone not configured")?;
-    let resp = vc_client()
-        .delete(format!("{base}/voices/{}", urlencoding::encode(name)))
-        .query(&[("owner", owner)])
-        .send()
+    let key = fish_api_key().ok_or("fish.audio not configured")?;
+    let name = name.trim();
+    let pool = vc_db().await?;
+
+    // Owner-scoped first, then any owner (admins may delete shared voices —
+    // the callers resolve permissions before reaching here).
+    let row: Option<(Option<String>, String)> = sqlx::query_as(
+        "SELECT fish_model_id, owner FROM voice_clones WHERE name = ? AND owner = ?",
+    )
+    .bind(name)
+    .bind(owner.trim())
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let (fish_id, row_owner) = match row {
+        Some(r) => r,
+        None => sqlx::query_as(
+            "SELECT fish_model_id, owner FROM voice_clones WHERE name = ? ORDER BY created_at LIMIT 1",
+        )
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("voice '{name}' not found"))?,
+    };
+
+    if let Some(id) = fish_id.filter(|s| !s.is_empty()) {
+        fish_delete_model(&key, &id).await?;
+    }
+    sqlx::query("DELETE FROM voice_clones WHERE name = ? AND owner = ?")
+        .bind(name)
+        .bind(&row_owner)
+        .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
-    if resp.status().is_success() {
-        return Ok(());
-    }
-    Err(extract_sidecar_error(&resp.text().await.unwrap_or_default()))
+    purge_voice_cache(name).await;
+    log::info!("delete_cloned_voice: voice '{name}' deleted (owner '{row_owner}')");
+    Ok(())
 }
 
-fn extract_sidecar_error(body: &str) -> String {
+/// Generate the MP3 for a cloned voice via fish.audio TTS. Returns raw MP3
+/// bytes (the caller handles caching and effects).
+pub async fn get_tts_cloned(voice: &str, owner: &str, text: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    let key = fish_api_key().ok_or("fish.audio not configured")?;
+    let pool = vc_db().await?;
+    let voice = voice.trim();
+
+    // Resolve the fish model: owner-scoped first, then any owner (lets
+    // shared voices work for everyone unless a same-name voice exists —
+    // same precedence the old sidecar used).
+    let row: Option<(Option<String>, Option<Vec<u8>>)> = sqlx::query_as(
+        "SELECT fish_model_id, sample FROM voice_clones WHERE name = ? AND owner = ?",
+    )
+    .bind(voice)
+    .bind(owner.trim())
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let (fish_id, sample) = match row {
+        Some(r) => r,
+        None => sqlx::query_as(
+            "SELECT fish_model_id, sample FROM voice_clones WHERE name = ? ORDER BY created_at LIMIT 1",
+        )
+        .bind(voice)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or(format!("voice '{voice}' not found"))?,
+    };
+
+    // Legacy rows created before the fish.audio migration carry a stored
+    // sample but no model id — re-register them on first use (fast training
+    // makes the model immediately usable).
+    let model_id = match fish_id.filter(|s| !s.is_empty()) {
+        Some(id) => id,
+        None => {
+            let sample = sample
+                .filter(|s| !s.is_empty())
+                .ok_or(format!("voice '{voice}' has no fish model and no stored sample"))?;
+            log::info!("get_tts_cloned: re-registering legacy voice '{voice}' on fish.audio");
+            let id = fish_create_model(&key, voice, sample).await?;
+            sqlx::query("UPDATE voice_clones SET fish_model_id = ? WHERE name = ?")
+                .bind(&id)
+                .bind(voice)
+                .execute(pool)
+                .await
+                .map_err(|e| e.to_string())?;
+            id
+        }
+    };
+
+    let resp = fish_client()
+        .post(format!("{}/v1/tts", fish_base_url()))
+        .bearer_auth(key)
+        .header("model", fish_tts_model())
+        .json(&serde_json::json!({
+            "text": text,
+            "reference_id": model_id,
+            "format": "mp3",
+            "mp3_bitrate": 128,
+        }))
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!(
+            "fish.audio tts failed ({}): {}",
+            status,
+            extract_api_error(&body)
+        )
+        .into());
+    }
+    let bytes = resp.bytes().await?;
+    if bytes.is_empty() {
+        return Err("fish.audio returned empty audio".into());
+    }
+    Ok(bytes.to_vec())
+}
+
+/// Pull a short human-readable error message out of a fish.audio JSON body
+/// ({"status": ..., "message": "..."}) or fall back to a truncated raw body.
+fn extract_api_error(body: &str) -> String {
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
-        if let Some(e) = v.get("error").and_then(|e| e.as_str()) {
-            return e.to_string();
+        for field in ["message", "error", "detail", "reason"] {
+            if let Some(e) = v.get(field).and_then(|e| e.as_str()) {
+                return e.to_string();
+            }
         }
     }
     body.chars().take(160).collect()
 }
 
-/// Generate (or fetch from cache) the MP3 for a cloned voice via the sidecar.
-pub async fn get_tts_cloned(voice: &str, owner: &str, text: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-    let base = voiceclone_base_url().ok_or("voiceclone not configured")?;
-    let resp = vc_client()
-        .post(format!("{base}/synthesize"))
-        .json(&serde_json::json!({ "voice": voice, "owner": owner, "text": text }))
-        .send()
-        .await?;
-    if !resp.status().is_success() {
-        let msg = resp.text().await.unwrap_or_default();
-        return Err(extract_sidecar_error(&msg).into());
-    }
-    let body: serde_json::Value = resp.json().await?;
-    let b64 = body.get("audioBase64").and_then(|b| b.as_str()).ok_or("voiceclone response missing audioBase64")?;
-    base64_decode(b64).ok_or_else(|| "voiceclone response has invalid base64".into())
-}
-
 fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    // Tiny standard-base64 decoder so we don't add a base64 dependency here.
+    // (decode leniently: ignore whitespace)
     let table: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = Vec::with_capacity(s.len() / 4 * 3);
     let mut buf = 0u32;
@@ -233,7 +531,7 @@ pub fn is_valid_voice(voice: &str) -> bool {
         return is_valid_clone_name(name);
     }
     // Plain names: built-ins, plus any well-formed clone name (existence is
-    // checked against the sidecar at generation time).
+    // checked against the fish.audio registry at generation time).
     AVAILABLE_VOICES.contains(&voice) || is_valid_clone_name(voice)
 }
 
@@ -397,7 +695,7 @@ pub struct TtsResult {
     #[allow(dead_code)] // Part of the shared TTS API; not read by the wapp-bot
     pub actual_voice: String,
     /// Set when a cloned-voice request ended up synthesized with Google
-    /// (clone missing on the sidecar / sidecar down / generation failed).
+    /// (clone missing / fish.audio unreachable / generation failed).
     pub fallback_used: Option<String>,
 }
 
@@ -453,12 +751,12 @@ pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &s
         }
     }
 
-    // 2) GENERATE the audio. Cloned voices are delegated to the voiceclone
-    //    sidecar (all other voices are Google only).
+    // 2) GENERATE the audio. Cloned voices are synthesized by the fish.audio
+    //    cloud API (all other voices are Google only).
     // Cloned voices: plain names (current UX), legacy "clone:<name>" /
-    // "clone|<name>" tokens still honored. If the sidecar can't produce the
-    // voice (missing, down, failed), fall back to Google but REPORT it via
-    // fallback_used so the command can warn the user instead of silently
+    // "clone|<name>" tokens still honored. If fish.audio can't produce the
+    // voice (missing, unreachable, failed), fall back to Google but REPORT it
+    // via fallback_used so the command can warn the user instead of silently
     // playing a different voice.
     if let Some(clone_name) = clone_voice_name(voice) {
         log::info!("get_or_generate_tts: generating CLONED TTS for voice {}", voice);
@@ -487,6 +785,19 @@ pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &s
         } else {
             clone_name
         };
+
+        if save_mp3 && !apply_effect && fallback_used.is_none() {
+            // Cache the fish.audio MP3 in the shared audios dir — the API is
+            // metered, so never re-synthesize text we already have on disk.
+            let plain_path = get_file_path(&actual_voice, text);
+            if !tokio::fs::try_exists(&plain_path).await.unwrap_or(false) {
+                tokio::fs::write(&plain_path, &bytes).await?;
+                // Artist "clone:<name>" + lyrics = text, same as the historical
+                // sidecar tags (lets /random recover the original sentence).
+                write_id3_tags(&plain_path, &format!("clone:{actual_voice}"), text, text);
+            }
+            return Ok(TtsResult { file_path: plain_path, actual_voice: voice.to_string(), fallback_used: None });
+        }
 
         let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
         let hash = format!("{:x}", md5_compute(text));

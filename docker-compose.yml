@@ -65,9 +65,6 @@ services:
     image: "blastbeng/telegram-llm-bot:1.0.0"
     container_name: telegram-bot
     env_file: .env.telegram
-    depends_on:
-      voiceclone:
-        condition: service_healthy
     volumes:
       - "./config:/app/config"
       - "./audios:/app/audios"
@@ -79,38 +76,3 @@ services:
       timeout: 10s
       retries: 5
       start_period: 20s
-
-  # Voice cloning sidecar — zero-shot voice cloning via sherpa-onnx PocketTTS
-  # (CPU, int8). Shares the audios cache and SQLite DB with the bots.
-  # Enable per-bot with VOICECLONE_URL=http://voiceclone:3010 in each env file.
-  # Models are NOT baked into the image — they live in ./models on the host
-  # (bind-mounted, writable so the entrypoint can fetch them) and are
-  # downloaded automatically at container start if missing (self-healing;
-  # ./setup-models.sh remains as an offline/pre-fetch alternative). This keeps
-  # the image small (~230MB vs ~950MB) and model updates independent of image
-  # builds.
-  voiceclone:
-    pull_policy: always
-    image: "blastbeng/voiceclone:1.0.0"
-    container_name: voiceclone
-    env_file: .env
-    environment:
-      - DATABASE_URL=sqlite:/app/config/discord-bot.sqlite3
-      - AUDIOS_DIR=/app/audios
-    # The discord-bot runs with network_mode: host, where compose DNS
-    # (http://voiceclone:3010) does not exist — publish the sidecar on the
-    # host loopback so the discord bot reaches it at http://localhost:3010.
-    # Bound to 127.0.0.1 only: never exposed to the LAN.
-    ports:
-      - "127.0.0.1:3010:3010"
-    volumes:
-      - "./config:/app/config"
-      - "./audios:/app/audios"
-      - "./models:/app/models"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fs http://localhost:3010/health || exit 1"]
-      interval: 60s
-      timeout: 15s
-      retries: 5
-      start_period: 30s

@@ -261,7 +261,7 @@ pub async fn start_eavesdrop_loop(ctx: Context, db_pool: SqlitePool, volume: Arc
                 .map(|u| u.name.clone())
                 .unwrap_or_else(|| username.clone());
 
-            // ── STT: transcribe the snippet via the voiceclone sidecar ──
+            // ── STT: transcribe the snippet via fish.audio ASR ──
             let mut transcript = String::new();
             if crate::voice_capture::has_speech(&samples) {
                 match crate::voice_capture::encode_samples_to_mp3(&samples, 48000) {

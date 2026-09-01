@@ -8,9 +8,9 @@ edition = "2021"
 # (via `repl`) which needs no public webhook endpoint, and rustls for a leaner
 # TLS stack. `macros` gives us command/dispatch macros if needed.
 teloxide = { version = "0.17", default-features = false, features = ["macros", "rustls", "ctrlc_handler"] }
-tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "fs", "process", "net"] }
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "fs", "process", "net", "sync"] }
 sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-rustls", "macros", "chrono"] }
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "cookies"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "cookies", "multipart"] }
 dotenv = "0.15"
 log = "0.4"
 env_logger = "0.11"

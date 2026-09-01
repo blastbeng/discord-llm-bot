@@ -173,25 +173,19 @@ The Telegram bot mirrors the WhatsApp bot's commands (long polling, no webhook n
 
 ## Voices & Effects
 
-- **Voices**: Google by default. Optional per-user **voice cloning** (voiceclone sidecar + `clone:<name>` voices — see below).
+- **Voices**: Google by default. Optional per-user **voice cloning** (fish.audio cloud cloning + `clone:<name>` voices — see below).
 - **Effects**: `none`, `echo`, `reverb`, `bass`, `chipmunk`, `demon`, `telephone`, `underwater`. Use `--effect random`.
 
-## Voice Cloning (voiceclone sidecar)
+## Voice Cloning (fish.audio)
 
-All three bots support zero-shot voice cloning through the `voiceclone` sidecar service (sherpa-onnx PocketTTS int8 on CPU):
+All three bots support zero-shot voice cloning through the [fish.audio](https://fish.audio) cloud API (no local models — the Pi 5 is far too slow for decent local cloning). Cloned voices are private models on the shared fish.audio account; the bots only keep a name → model-id registry in the shared SQLite DB:
 
 - Create a voice from an uploaded sample with `/createvoice` (Discord can also live-record with the hidden owner-only `/clone @user <name>`).
-- List with `/myvoices`, delete with `/deletevoice`. Use a cloned voice explicitly with `--voice clone:<name>` (or the slash command voice picker).
+- List with `/myvoices`, delete with `/deletevoice` (removes both the cloud model and the local registry entry). Use a cloned voice explicitly with `--voice <name>` (or the slash command voice picker).
 - `/random` and every default/automatic audio path always use Google — cloned voices are strictly opt-in.
-- With STT enabled, the Discord bot's eavesdrop feature records a short snippet of live voice, transcribes it (whisper-tiny), and roasts users based on what they actually said.
+- With an API key set, the Discord bot's eavesdrop feature records a short snippet of live voice, transcribes it via the fish.audio ASR endpoint, and roasts users based on what they actually said.
 
-The sidecar needs its models on the host (they are **not** baked into the image). Download them once (~440MB total), then restart the stack:
-
-```bash
-./setup-models.sh
-```
-
-Set `VOICECLONE_URL=http://voiceclone:3010` in the bot env files to enable the feature (see `.env.sample`).
+Set `FISH_AUDIO_API_KEY` in the bot env files to enable the feature (see `.env.sample`).
 
 ## Running without Docker (Discord only)
 

@@ -31,10 +31,3 @@ services:
     build:
       context: ./telegram-bot
       dockerfile: Dockerfile
-
-  voiceclone:
-    image: "blastbeng/voiceclone:1.0.0"
-    build:
-      context: ./voiceclone
-      dockerfile: Dockerfile
-      network: host

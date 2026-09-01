@@ -760,7 +760,7 @@ async fn random(
                         // Voice cloning must never leak into /random — cached
                         // cloned-voice files (clone|*_*.mp3) are excluded so
                         // /random always plays a Google voice.
-                        // Clone cache files are "clone|Name_hash.mp3" (sidecar-written)
+                        // Clone cache files are "clone|Name_hash.mp3" (legacy sidecar-written)
                         // or "clone_Name_hash.mp3" (bot-written with plain
                         // names); exclude both forms.
                         if !s.contains("clone|") && !s.contains("clone_") {
@@ -1812,7 +1812,7 @@ async fn createvoice(
     Ok(())
 }
 
-/// List all cloned voices registered on the voiceclone sidecar.
+/// List all cloned voices registered on fish.audio.
 #[poise::command(slash_command, user_cooldown = 5)]
 async fn myvoices(ctx: Context<'_>) -> Result<(), Error> {
     log::info!("[GUILDID : {}] myvoices invoked by user {}", ctx.guild_id().unwrap(), ctx.author().id);
@@ -1890,7 +1890,7 @@ async fn deletevoice(
 ///
 /// Records the target user (who must be in the bot's voice channel) via
 /// songbird's voice-receive until enough speech is captured, then forwards the
-/// sample to the voiceclone sidecar. Overwrites an existing voice of the same
+/// sample to fish.audio. Overwrites an existing voice of the same
 /// name. Hidden from command listing (`hide_in_help`) but still a real slash
 /// command.
 #[poise::command(slash_command, owners_only, user_cooldown = 10, hide_in_help)]
@@ -2023,8 +2023,8 @@ async fn clone(
 }
 
 /// Background recorder loop: waits until the sink has enough speech (or the
-/// deadline hits), then encodes + uploads the sample to the voiceclone
-/// sidecar, reporting progress to the invoker's ephemeral reply.
+/// deadline hits), then encodes + uploads the sample to fish.audio
+/// fish.audio, reporting progress to the invoker's ephemeral reply.
 async fn voice_capture_finish(
     ctx: serenity::Context,
     reply_msg: Option<serenity::Message>,
@@ -2113,7 +2113,7 @@ async fn voice_capture_finish(
         .replacen("{}", &voice_name, 1);
     edit_or_post(&ctx, &reply_msg, guild_id, msg).await;
 
-    // 48kHz ticks → 24kHz MP3 for the sidecar.
+    // 48kHz ticks → 24kHz MP3 for fish.audio.
     let mp3 = match voice_capture::encode_samples_to_mp3(&samples, 48000) {
         Ok(m) => m,
         Err(e) => {
@@ -2123,7 +2123,7 @@ async fn voice_capture_finish(
             return;
         }
     };
-    log::info!("clone: sample encoded for '{}' ({} bytes mp3), uploading to voiceclone sidecar", voice_name, mp3.len());
+    log::info!("clone: sample encoded for '{}' ({} bytes mp3), uploading to fish.audio", voice_name, mp3.len());
 
     use base64::Engine as _;
     let audio_b64 = base64::engine::general_purpose::STANDARD.encode(&mp3);
@@ -2137,7 +2137,7 @@ async fn voice_capture_finish(
             edit_or_post(&ctx, &reply_msg, guild_id, msg).await;
         }
         Err(e) => {
-            log::error!("clone: sidecar create failed: {}", e);
+            log::error!("clone: fish.audio create failed: {}", e);
             let msg = lang.vc_clone_failed.replacen("{}", &e, 1);
             edit_or_post(&ctx, &reply_msg, guild_id, msg).await;
         }
