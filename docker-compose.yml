@@ -65,6 +65,9 @@ services:
     image: "blastbeng/telegram-llm-bot:1.0.0"
     container_name: telegram-bot
     env_file: .env.telegram
+    depends_on:
+      voiceclone:
+        condition: service_healthy
     volumes:
       - "./config:/app/config"
       - "./audios:/app/audios"
@@ -81,9 +84,11 @@ services:
   # (CPU, int8). Shares the audios cache and SQLite DB with the bots.
   # Enable per-bot with VOICECLONE_URL=http://voiceclone:3010 in each env file.
   # Models are NOT baked into the image — they live in ./models on the host
-  # (bind-mounted) and are downloaded once by ./setup-models.sh. This keeps
-  # the image small (~100MB vs ~950MB) and model updates independent of
-  # image builds.
+  # (bind-mounted, writable so the entrypoint can fetch them) and are
+  # downloaded automatically at container start if missing (self-healing;
+  # ./setup-models.sh remains as an offline/pre-fetch alternative). This keeps
+  # the image small (~230MB vs ~950MB) and model updates independent of image
+  # builds.
   voiceclone:
     pull_policy: always
     image: "blastbeng/voiceclone:1.0.0"
@@ -95,7 +100,7 @@ services:
     volumes:
       - "./config:/app/config"
       - "./audios:/app/audios"
-      - "./models:/app/models:ro"
+      - "./models:/app/models"
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "curl -fs http://localhost:3010/health || exit 1"]

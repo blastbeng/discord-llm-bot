@@ -36,15 +36,20 @@ RUN apt-get update && \
     ca-certificates \
     procps \
     curl \
+    bzip2 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=builder /app/target/release/voiceclone .
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
 
 # Models are NOT baked into the image: they live on the host in ./models and
-# are bind-mounted to /app/models (read-only) by docker-compose.yml. Download
-# them once with ./setup-models.sh. This keeps the image small and makes model
-# updates independent of image builds.
+# are bind-mounted to /app/models by docker-compose.yml. The entrypoint
+# auto-downloads any missing model on container start (self-healing), so
+# there is no manual setup step; ./setup-models.sh on the host remains
+# available as an offline alternative. This keeps the image small and makes
+# model updates independent of image builds.
 RUN mkdir -p /app/audios /app/config
 
 ENV VOICECLONE_MODEL_DIR=/app/models/pocket-tts
@@ -54,4 +59,4 @@ ENV VOICECLONE_STT_THREADS=3
 ENV AUDIOS_DIR=/app/audios
 ENV DOTENV_PATH=/app/.env
 
-CMD ["./voiceclone"]
+ENTRYPOINT ["./entrypoint.sh"]
