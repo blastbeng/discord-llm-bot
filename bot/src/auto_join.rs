@@ -47,11 +47,12 @@ pub fn config_goodbye() -> bool {
 
 /// Whether to announce the bot's arrival with an arrogant/insulting phrase
 /// when the bot joins a channel by itself (scanner or manual /join).
-/// Defaults to true.
+/// Defaults to false — when disabled the bot still joins the channel, it
+/// just stays silent.
 pub fn config_here_i_am() -> bool {
     std::env::var("AUTO_JOIN_HERE_I_AM")
         .map(|v| v.to_lowercase() == "true")
-        .unwrap_or(true)
+        .unwrap_or(false)
 }
 
 /// Shared auto-join state that must be reachable from both the poise command
