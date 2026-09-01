@@ -30,10 +30,10 @@ export COMPOSE_DOCKER_CLI_BUILD=1
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Processing order: discord -> telegram.
+# Processing order: discord -> telegram -> voiceclone.
 # Temporarily disabled (uncomment to re-enable, matching the compose files):
 #   whatsapp-bridge whatsapp-bot
-SERVICES=(discord-llm-bot telegram-bot)
+SERVICES=(discord-llm-bot telegram-bot voiceclone)
 
 BUILD_ARGS=()
 FORCE_LOCAL=0

@@ -14,6 +14,8 @@ RUN apt-get update && \
     git \
     binutils \
     curl \
+    g++ \
+    libstdc++-13-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -34,6 +36,7 @@ RUN apt-get update && \
     ca-certificates \
     procps \
     curl \
+    bzip2 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -42,19 +45,26 @@ COPY --from=builder /app/target/release/voiceclone .
 # PocketTTS int8 model (~194MB): downloaded at image build time so the runtime
 # image is self-contained and the Pi never downloads from GitHub at runtime.
 # To rebuild with a newer model, bump the version and rebuild the service.
-ADD https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2 /tmp/pocket.tar.bz2
-RUN tar -xjf /tmp/pocket.tar.bz2 -C /tmp && \
-    mv /tmp/sherpa-onnx-pocket-tts-int8-2026-01-26 /app/models/pocket-tts && \
-    rm /tmp/pocket.tar.bz2 && \
-    mkdir -p /app/audios /app/config
+# (curl in RUN instead of ADD: deterministic download + validation, immune to
+# BuildKit's remote-ADD layer cache keeping a truncated file.)
+RUN curl -fsSL --retry 3 -o /tmp/pocket.tar.bz2 \
+      https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-pocket-tts-int8-2026-01-26.tar.bz2 \
+    && tar -tjf /tmp/pocket.tar.bz2 > /dev/null \
+    && tar -xjf /tmp/pocket.tar.bz2 -C /tmp \
+    && mkdir -p /app/models \
+    && mv /tmp/sherpa-onnx-pocket-tts-int8-2026-01-26 /app/models/pocket-tts \
+    && rm /tmp/pocket.tar.bz2 \
+    && mkdir -p /app/audios /app/config
 
 # Whisper-tiny int8 STT model (~245MB, multilingual): powers the /transcribe
 # endpoint used by the eavesdrop feature. Same self-contained approach —
 # downloaded and extracted at image build time, never at runtime.
-ADD https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-tiny.tar.bz2 /tmp/whisper.tar.bz2
-RUN tar -xjf /tmp/whisper.tar.bz2 -C /tmp && \
-    mv /tmp/sherpa-onnx-whisper-tiny /app/models/whisper-tiny && \
-    rm /tmp/whisper.tar.bz2
+RUN curl -fsSL --retry 3 -o /tmp/whisper.tar.bz2 \
+      https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-whisper-tiny.tar.bz2 \
+    && tar -tjf /tmp/whisper.tar.bz2 > /dev/null \
+    && tar -xjf /tmp/whisper.tar.bz2 -C /tmp \
+    && mv /tmp/sherpa-onnx-whisper-tiny /app/models/whisper-tiny \
+    && rm /tmp/whisper.tar.bz2
 
 ENV VOICECLONE_MODEL_DIR=/app/models/pocket-tts
 ENV VOICECLONE_STT_MODEL_DIR=/app/models/whisper-tiny
