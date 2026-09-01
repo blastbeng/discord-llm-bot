@@ -2123,8 +2123,9 @@ async fn edit_or_post(
     // Resolve the channel id synchronously and drop the cache guard before
     // any await: CacheRef borrows cache internals and is !Send, which would
     // poison the whole recorder future for tokio::spawn.
-    let text_channel_id = ctx.cache.guild_channels(guild_id).and_then(|channels| {
-        channels
+    let text_channel_id = ctx.cache.guild(guild_id).and_then(|guild| {
+        guild
+            .channels
             .iter()
             .find(|(_, c)| matches!(c.kind, serenity::ChannelType::Text))
             .map(|(id, _)| *id)
