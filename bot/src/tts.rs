@@ -105,6 +105,21 @@ pub fn clone_voice_name(voice: &str) -> Option<String> {
     None
 }
 
+/// Pick a random voice for the /random command: a random entry from the
+/// built-in Google voices plus every registered cloned voice. Returns
+/// "Google" when the registry is unavailable (degrades gracefully instead of
+/// failing the command). Only /random resolves "random" through this — every
+/// other command defaults to Google.
+pub async fn pick_random_voice() -> String {
+    use rand::seq::SliceRandom;
+    let mut pool: Vec<String> = AVAILABLE_VOICES.iter().map(|v| v.to_string()).collect();
+    if let Ok(voices) = list_cloned_voices().await {
+        pool.extend(voices.into_iter().map(|v| v.name));
+    }
+    let mut rng = rand::thread_rng();
+    pool.choose(&mut rng).cloned().unwrap_or_else(|| "Google".to_string())
+}
+
 /// Check if a voice name is valid (excluding "random"). Cloned voices are
 /// always accepted at this level — actual existence is verified against the
 /// fish.audio registry right before generating audio.

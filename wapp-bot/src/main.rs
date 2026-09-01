@@ -310,9 +310,11 @@ async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) {
         return;
     }
 
+    // "random" resolves against Google + registered cloned voices (clones
+    // still fall back to Google if fish.audio fails). Non-random values are
+    // used as-is.
     let actual_voice = if voice == "random" {
-        let mut rng = rand::thread_rng();
-        tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
+        tts::pick_random_voice().await
     } else {
         voice
     };
@@ -373,7 +375,23 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
         .unwrap_or_else(|_| "false".to_string())
         .to_lowercase() == "true";
 
-    if !voice_explicitly_set && effect == "none" && search_text.is_empty() && save_mp3 {
+    // /random picks a RANDOM voice when the user does not select one: a mix of
+    // the built-in Google voice and every registered cloned voice (clones
+    // still fall back to Google if fish.audio fails). Every other command
+    // keeps Google as its default.
+    let voice = if voice_explicitly_set {
+        voice
+    } else {
+        tts::pick_random_voice().await
+    };
+    let voice_is_builtin = tts::AVAILABLE_VOICES.contains(&voice.as_str());
+
+    // Fast path: pick a random cached MP3 when no voice was selected (and the
+    // default random pick resolved to the built-in Google voice), no effect to
+    // apply (explicitly "none"), no search text, and disk caching is enabled.
+    // The cache only stores Google-voice files, so a cloned pick must fall
+    // through to real TTS generation.
+    if !voice_explicitly_set && voice_is_builtin && effect == "none" && search_text.is_empty() && save_mp3 {
         if let Some(chosen) = pick_cached_mp3().await {
             log::info!("wapp-bot random: picked cached MP3: {}", chosen);
             send_audio(state, &payload.from, &chosen).await;
@@ -433,9 +451,11 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
         random_sentence.clone()
     };
 
+    // "random" resolves against Google + registered cloned voices (clones
+    // still fall back to Google if fish.audio fails). Non-random values are
+    // used as-is.
     let actual_voice = if voice == "random" {
-        let mut rng = rand::thread_rng();
-        tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
+        tts::pick_random_voice().await
     } else {
         voice
     };
@@ -811,7 +831,7 @@ async fn cmd_stats(state: &AppState, _payload: &WebhookPayload) -> String {
 
 async fn cmd_help(state: &AppState, _payload: &WebhookPayload) -> String {
     let voices = tts::AVAILABLE_VOICES.iter().map(|v| format!("`{}`", v)).collect::<Vec<_>>().join(", ");
-    let cloned_hint = if tts::voiceclone_configured() { " (cloned voices by name, see /myvoices)" } else { "" };
+    let cloned_hint = if tts::voiceclone_configured() { " (cloned voices by name, see /myvoices; /random picks a random voice when none is given)" } else { "" };
     let effects = crate::audio_effects::AVAILABLE_EFFECTS.iter().map(|e| format!("`{}`", e)).collect::<Vec<_>>().join(", ");
     format!(
         "{}{}",

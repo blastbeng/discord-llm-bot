@@ -505,7 +505,7 @@ async fn stop(ctx: Context<'_>) -> Result<(), Error> {
 async fn speak(
     ctx: Context<'_>,
     #[description = "La frase da ripetere"] text: String,
-    #[description = "La voce da usare (default: Google)"]
+    #[description = "La voce da usare (default: Google, oppure random)"]
     #[autocomplete = "voice_autocomplete"]
     voice: Option<String>,
     #[description = "Effetto audio (default: none)"]
@@ -515,9 +515,11 @@ async fn speak(
     log::info!("[GUILDID : {}] speak command invoked by user {} with text: {:?}, voice: {:?}, effect: {:?}", ctx.guild_id().unwrap(), ctx.author().id, text, voice, effect);
     let voice = voice.unwrap_or_else(|| "Google".to_string());
     let effect = effect.unwrap_or_else(|| "none".to_string());
+    // "random" resolves against Google + registered cloned voices (clones
+    // still fall back to Google if fish.audio fails). Non-random values are
+    // used as-is.
     let actual_voice = if voice == "random" {
-        let mut rng = rand::thread_rng();
-        tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
+        tts::pick_random_voice().await
     } else {
         voice
     };
@@ -669,7 +671,7 @@ async fn speak(
 #[poise::command(slash_command, user_cooldown = 1)]
 async fn random(
     ctx: Context<'_>,
-    #[description = "La voce da usare (default: Google)"]
+    #[description = "La voce da usare (default: casuale tra Google e voci clonate)"]
     #[autocomplete = "voice_autocomplete"]
     voice: Option<String>,
     #[description = "Il testo da cercare"] text: Option<String>,
@@ -685,16 +687,17 @@ async fn random(
     // When the user does not pick an effect, /random defaults to "random", so
     // the shortcut only fires when the effect resolves to "none".
     let voice_explicitly_set = voice.is_some();
-    let voice = voice.unwrap_or_else(|| "Google".to_string());
+    // /random picks a RANDOM voice when the user does not select one: a mix of
+    // the built-in Google voice and every registered cloned voice (clones
+    // still fall back to Google if fish.audio fails). Every other command
+    // keeps Google as its default.
+    let voice = voice.unwrap_or_else(|| "random".to_string());
     // Default to a random effect (which may itself resolve to "none") — the
     // /random command is about variety, including plain speech.
     let effect = effect.unwrap_or_else(|| "random".to_string());
-    // /random resolves to Google only — cloned voices are never chosen here
-    // ("random" always means a Google voice; cloned voices need explicit
-    // --voice clone:<name>).
+    // "random" (user-chosen or the default) resolves against Google + clones.
     let actual_voice = if voice == "random" {
-        let mut rng = rand::thread_rng();
-        tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
+        tts::pick_random_voice().await
     } else {
         voice
     };
@@ -749,7 +752,10 @@ async fn random(
     // from the database — picking an unrelated random cached file would be
     // logically wrong (the audio wouldn't match their query).
     let has_search = text.as_ref().map_or(false, |t| !t.trim().is_empty());
-    if !voice_explicitly_set && actual_effect == "none" && save_mp3 && !has_search {
+    // The shortcut serves Google-voice files only (clone files are excluded
+    // below), so it must not fire when /random picked a cloned voice.
+    let voice_is_builtin = tts::AVAILABLE_VOICES.contains(&actual_voice.as_str());
+    if !voice_explicitly_set && voice_is_builtin && actual_effect == "none" && save_mp3 && !has_search {
         log::info!("random: no voice/effect/search and SAVE_MP3_ON_DISK=true, scanning audios/ folder");
         if let Ok(mut entries) = tokio::fs::read_dir("audios").await {
             let mut mp3_files = Vec::new();
@@ -757,12 +763,12 @@ async fn random(
                 let path = entry.path();
                 if path.extension().is_some_and(|ext| ext == "mp3") {
                     if let Some(s) = path.to_str() {
-                        // Voice cloning must never leak into /random — cached
-                        // cloned-voice files (clone|*_*.mp3) are excluded so
-                        // /random always plays a Google voice.
-                        // Clone cache files are "clone|Name_hash.mp3" (legacy sidecar-written)
-                        // or "clone_Name_hash.mp3" (bot-written with plain
-                        // names); exclude both forms.
+                        // This shortcut only serves Google-voice cache files —
+                        // the voice here was already resolved to a built-in
+                        // (see voice_is_builtin above), but exclude clone cache
+                        // files anyway for safety: they are
+                        // "clone|Name_hash.mp3" (legacy sidecar-written) or
+                        // "clone_Name_hash.mp3" (bot-written plain names).
                         if !s.contains("clone|") && !s.contains("clone_") {
                             mp3_files.push(s.to_string());
                         }
@@ -995,7 +1001,7 @@ async fn random(
 async fn ask(
     ctx: Context<'_>,
     #[description = "La domanda da fare"] text: String,
-    #[description = "La voce da usare (default: Google)"]
+    #[description = "La voce da usare (default: Google, oppure random)"]
     #[autocomplete = "voice_autocomplete"]
     voice: Option<String>,
     #[description = "Effetto audio (default: none)"]
@@ -1012,9 +1018,11 @@ async fn ask(
 
     let voice = voice.unwrap_or_else(|| "Google".to_string());
     let effect = effect.unwrap_or_else(|| "none".to_string());
+    // "random" resolves against Google + registered cloned voices (clones
+    // still fall back to Google if fish.audio fails). Non-random values are
+    // used as-is.
     let actual_voice = if voice == "random" {
-        let mut rng = rand::thread_rng();
-        tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
+        tts::pick_random_voice().await
     } else {
         voice
     };
@@ -1234,7 +1242,7 @@ async fn translate(
     ctx: Context<'_>,
     #[description = "Il testo da tradurre"] text: String,
     #[description = "La lingua di destinazione (e.g. en, it, fr, de, es)"] target_lang: String,
-    #[description = "La voce da usare (default: Google)"]
+    #[description = "La voce da usare (default: Google, oppure random)"]
     #[autocomplete = "voice_autocomplete"]
     voice: Option<String>,
     #[description = "Effetto audio (default: none)"]
@@ -1251,9 +1259,11 @@ async fn translate(
 
     let voice = voice.unwrap_or_else(|| "Google".to_string());
     let effect = effect.unwrap_or_else(|| "none".to_string());
+    // "random" resolves against Google + registered cloned voices (clones
+    // still fall back to Google if fish.audio fails). Non-random values are
+    // used as-is.
     let actual_voice = if voice == "random" {
-        let mut rng = rand::thread_rng();
-        tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
+        tts::pick_random_voice().await
     } else {
         voice
     };
@@ -1422,7 +1432,7 @@ async fn translate(
 #[poise::command(slash_command, user_cooldown = 10)]
 async fn joke(
     ctx: Context<'_>,
-    #[description = "La voce da usare (default: Google)"]
+    #[description = "La voce da usare (default: Google, oppure random)"]
     #[autocomplete = "voice_autocomplete"]
     voice: Option<String>,
     #[description = "Effetto audio (default: none)"]
@@ -1433,9 +1443,11 @@ async fn joke(
 
     let voice = voice.unwrap_or_else(|| "Google".to_string());
     let effect = effect.unwrap_or_else(|| "none".to_string());
+    // "random" resolves against Google + registered cloned voices (clones
+    // still fall back to Google if fish.audio fails). Non-random values are
+    // used as-is.
     let actual_voice = if voice == "random" {
-        let mut rng = rand::thread_rng();
-        tts::AVAILABLE_VOICES.choose(&mut rng).unwrap().to_string()
+        tts::pick_random_voice().await
     } else {
         voice
     };
