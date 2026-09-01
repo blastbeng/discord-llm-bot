@@ -601,11 +601,14 @@ async fn speak(
             return Ok(());
         }
     };
-    // Surface a Google-fallback (cloned voice unavailable) instead of
-    // silently playing a different voice than the user picked.
-    if let Some(warn) = &tts_result.fallback_used {
-        let _ = reply.edit(ctx, poise::CreateReply::default().content(warn.clone()).ephemeral(true)).await;
-    }
+    // Surface a Google-fallback (cloned voice unavailable) in the final
+    // "playing" message instead of silently switching voices. It is appended
+    // there because a separate edit would be overwritten milliseconds later.
+    let fallback_note = tts_result
+        .fallback_used
+        .as_ref()
+        .map(|w| format!("\n\n{w}"))
+        .unwrap_or_default();
 
     if let Err(e) = database::insert_sentence(&ctx.data().db_pool, &text).await {
         log::error!("Failed to insert sentence into database: {}", e);
@@ -644,7 +647,7 @@ async fn speak(
     // as "Unknown interaction" — the audio already played successfully, so
     // a failed message update is cosmetic, not a real failure.
     match reply.edit(ctx, poise::CreateReply::default()
-        .content(ctx.data().lang.playing.replacen("{}", &text, 1).replacen("{}", &tts_result.actual_voice, 1))
+        .content(ctx.data().lang.playing.replacen("{}", &text, 1).replacen("{}", &tts_result.actual_voice, 1) + &fallback_note)
         .components(components)
         .ephemeral(true)
     ).await {
@@ -929,11 +932,14 @@ async fn random(
             return Ok(());
         }
     };
-    // Surface a Google-fallback (cloned voice unavailable) instead of
-    // silently playing a different voice than the user picked.
-    if let Some(warn) = &tts_result.fallback_used {
-        let _ = reply.edit(ctx, poise::CreateReply::default().content(warn.clone()).ephemeral(true)).await;
-    }
+    // Surface a Google-fallback (cloned voice unavailable) in the final
+    // "playing" message instead of silently switching voices. It is appended
+    // there because a separate edit would be overwritten milliseconds later.
+    let fallback_note = tts_result
+        .fallback_used
+        .as_ref()
+        .map(|w| format!("\n\n{w}"))
+        .unwrap_or_default();
 
     let mut handler = handler_lock.lock().await;
     if handler.current_channel().is_none() {
@@ -966,7 +972,7 @@ async fn random(
     // Same pattern as speak: don't propagate reply.edit errors to on_error
     // since the audio already played successfully.
     match reply.edit(ctx, poise::CreateReply::default()
-        .content(ctx.data().lang.playing.replacen("{}", &tts_text, 1).replacen("{}", &tts_result.actual_voice, 1))
+        .content(ctx.data().lang.playing.replacen("{}", &tts_text, 1).replacen("{}", &tts_result.actual_voice, 1) + &fallback_note)
         .components(components)
         .ephemeral(true)
     ).await {
@@ -1164,11 +1170,14 @@ async fn ask(
             return Ok(());
         }
     };
-    // Surface a Google-fallback (cloned voice unavailable) instead of
-    // silently playing a different voice than the user picked.
-    if let Some(warn) = &tts_result.fallback_used {
-        let _ = reply.edit(ctx, poise::CreateReply::default().content(warn.clone()).ephemeral(true)).await;
-    }
+    // Surface a Google-fallback (cloned voice unavailable) in the final
+    // "playing" message instead of silently switching voices. It is appended
+    // there because a separate edit would be overwritten milliseconds later.
+    let fallback_note = tts_result
+        .fallback_used
+        .as_ref()
+        .map(|w| format!("\n\n{w}"))
+        .unwrap_or_default();
 
     let mut handler = handler_lock.lock().await;
     if handler.current_channel().is_none() {
@@ -1201,7 +1210,7 @@ async fn ask(
     // Use match instead of ? so expired interaction tokens don't propagate
     // to on_error — the audio already played successfully.
     match reply.edit(ctx, poise::CreateReply::default()
-        .content(ctx.data().lang.playing.replacen("{}", &llm_response, 1).replacen("{}", &tts_result.actual_voice, 1))
+        .content(ctx.data().lang.playing.replacen("{}", &llm_response, 1).replacen("{}", &tts_result.actual_voice, 1) + &fallback_note)
         .components(components)
         .ephemeral(true)
     ).await {
@@ -1355,11 +1364,14 @@ async fn translate(
             return Ok(());
         }
     };
-    // Surface a Google-fallback (cloned voice unavailable) instead of
-    // silently playing a different voice than the user picked.
-    if let Some(warn) = &tts_result.fallback_used {
-        let _ = reply.edit(ctx, poise::CreateReply::default().content(warn.clone()).ephemeral(true)).await;
-    }
+    // Surface a Google-fallback (cloned voice unavailable) in the final
+    // "playing" message instead of silently switching voices. It is appended
+    // there because a separate edit would be overwritten milliseconds later.
+    let fallback_note = tts_result
+        .fallback_used
+        .as_ref()
+        .map(|w| format!("\n\n{w}"))
+        .unwrap_or_default();
 
     let mut handler = handler_lock.lock().await;
     if handler.current_channel().is_none() {
@@ -1388,7 +1400,7 @@ async fn translate(
     ];
 
     match reply.edit(ctx, poise::CreateReply::default()
-        .content(ctx.data().lang.playing.replacen("{}", &translated, 1).replacen("{}", &tts_result.actual_voice, 1))
+        .content(ctx.data().lang.playing.replacen("{}", &translated, 1).replacen("{}", &tts_result.actual_voice, 1) + &fallback_note)
         .components(components)
         .ephemeral(true)
     ).await {
@@ -1581,11 +1593,14 @@ async fn joke(
             return Ok(());
         }
     };
-    // Surface a Google-fallback (cloned voice unavailable) instead of
-    // silently playing a different voice than the user picked.
-    if let Some(warn) = &tts_result.fallback_used {
-        let _ = reply.edit(ctx, poise::CreateReply::default().content(warn.clone()).ephemeral(true)).await;
-    }
+    // Surface a Google-fallback (cloned voice unavailable) in the final
+    // "playing" message instead of silently switching voices. It is appended
+    // there because a separate edit would be overwritten milliseconds later.
+    let fallback_note = tts_result
+        .fallback_used
+        .as_ref()
+        .map(|w| format!("\n\n{w}"))
+        .unwrap_or_default();
 
     let mut handler = handler_lock.lock().await;
     if handler.current_channel().is_none() {
@@ -1614,7 +1629,7 @@ async fn joke(
     ];
 
     match reply.edit(ctx, poise::CreateReply::default()
-        .content(ctx.data().lang.playing.replacen("{}", &tts_text, 1).replacen("{}", &tts_result.actual_voice, 1))
+        .content(ctx.data().lang.playing.replacen("{}", &tts_text, 1).replacen("{}", &tts_result.actual_voice, 1) + &fallback_note)
         .components(components)
         .ephemeral(true)
     ).await {

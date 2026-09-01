@@ -67,6 +67,11 @@ pub fn get_voice_token(voice: &str) -> String {
     if let Some(name) = voice.strip_prefix("clone:") {
         return format!("clone|{name}");
     }
+    // Plain clone names ("Salvini") map to the clone token so temp/cache
+    // paths can never collide with the Google token.
+    if let Some(name) = clone_voice_name(voice) {
+        return format!("clone|{name}");
+    }
     "Google".to_string()
 }
 
@@ -474,10 +479,13 @@ pub async fn get_or_generate_tts_with_effect(text: &str, voice: &str, effect: &s
                 )
             }
         };
+        // On success keep the plain name for display AND token mapping
+        // (get_voice_token now resolves plain clone names); on fallback the
+        // audio is genuinely Google.
         let actual_voice = if fallback_used.is_some() {
             "Google".to_string()
         } else {
-            format!("clone|{clone_name}")
+            clone_name
         };
 
         let temp_dir = std::env::var("TMP_DIR").unwrap_or_else(|_| "/tmp/discord-llm-bot".to_string());
