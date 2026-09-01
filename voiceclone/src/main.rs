@@ -30,7 +30,7 @@
 mod audio;
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::StatusCode,
     routing::{get, post},
     Json, Router,
@@ -638,6 +638,9 @@ async fn main() {
         .route("/voices/:name", axum::routing::delete(delete_voice))
         .route("/synthesize", post(synthesize))
         .route("/transcribe", post(transcribe))
+        // axum defaults to 2MB, which silently rejects ~10s+ WAV samples
+        // (base64-inflated JSON) that the create API otherwise allows.
+        .layer(DefaultBodyLimit::max(24 * 1024 * 1024))
         .with_state(state);
 
     let port: u16 = std::env::var("VOICECLONE_PORT")
