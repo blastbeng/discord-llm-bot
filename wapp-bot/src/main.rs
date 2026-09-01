@@ -358,11 +358,10 @@ async fn cmd_speak(state: &AppState, payload: &WebhookPayload, args: &str) {
 }
 
 async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
-    let (search_text, voice, mut effect) = parse_voice_effect(args);
+    let (search_text, voice, effect) = parse_voice_effect(args);
 
-    if effect == "none" && !args.contains("--effect") {
-        effect = "random".to_string();
-    }
+    // No effect by default — /random varies voice and sentence only. Users can
+    // still pick an effect explicitly (including "random").
 
     // When no voice, no effect to apply (explicitly "none"), no search text,
     // and disk caching is enabled, pick a random already-cached MP3 from

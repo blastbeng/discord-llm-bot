@@ -675,7 +675,7 @@ async fn random(
     #[autocomplete = "voice_autocomplete"]
     voice: Option<String>,
     #[description = "Il testo da cercare"] text: Option<String>,
-    #[description = "Effetto audio (default: random)"]
+    #[description = "Effetto audio (default: none)"]
     #[autocomplete = "effect_autocomplete"]
     effect: Option<String>,
 ) -> Result<(), Error> {
@@ -684,17 +684,17 @@ async fn random(
     // Track whether the user explicitly specified a voice or effect.
     // The cached-MP3 shortcut below must only trigger when no effect will be
     // applied, because a cached file was generated without any effect filter.
-    // When the user does not pick an effect, /random defaults to "random", so
-    // the shortcut only fires when the effect resolves to "none".
+    // With no effect selected /random defaults to "none", so the shortcut
+    // fires for plain speech (a random voice with no effect).
     let voice_explicitly_set = voice.is_some();
     // /random picks a RANDOM voice when the user does not select one: a mix of
     // the built-in Google voice and every registered cloned voice (clones
     // still fall back to Google if fish.audio fails). Every other command
     // keeps Google as its default.
     let voice = voice.unwrap_or_else(|| "random".to_string());
-    // Default to a random effect (which may itself resolve to "none") — the
-    // /random command is about variety, including plain speech.
-    let effect = effect.unwrap_or_else(|| "random".to_string());
+    // No effect by default — /random varies voice and sentence only. Users can
+    // still pick an effect explicitly (including "random").
+    let effect = effect.unwrap_or_else(|| "none".to_string());
     // "random" (user-chosen or the default) resolves against Google + clones.
     let actual_voice = if voice == "random" {
         tts::pick_random_voice().await

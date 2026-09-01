@@ -488,13 +488,10 @@ async fn cmd_speak(bot: &Bot, chat_id: ChatId, state: &AppState, args: &str) {
 }
 
 async fn cmd_random(bot: &Bot, chat_id: ChatId, state: &AppState, args: &str) {
-    let (search_text, voice, mut effect) = parse_voice_effect(args);
+    let (search_text, voice, effect) = parse_voice_effect(args);
 
-    // Mirror the Discord/WhatsApp bot: default to a random effect when the
-    // user doesn't pick one explicitly.
-    if effect == "none" && !args.contains("--effect") {
-        effect = "random".to_string();
-    }
+    // No effect by default — /random varies voice and sentence only. Users can
+    // still pick an effect explicitly (including "random").
 
     let voice_explicitly_set = args.contains("--voice");
     let save_mp3 = std::env::var("SAVE_MP3_ON_DISK")
