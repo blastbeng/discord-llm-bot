@@ -341,28 +341,37 @@ async fn voice_autocomplete(
     _ctx: Context<'_>,
     current: &str,
 ) -> Vec<serenity::AutocompleteChoice> {
-    // Built-in voices plus "random". Cloned voices are OFFERED only when the
-    // user types "clone" — they never appear for empty input, so the default
-    // flow (and /random) stays Google-only unless the user explicitly opts in.
+    // Built-ins first, then cloned voices. Clones are ALWAYS offered in the
+    // picker (filtered by what the user typed — typing "Salvini" matches
+    // "clone:Salvini"): selecting one is an explicit opt-in, so /random and
+    // every default/automatic path still stay Google-only.
+    // Discord hard limit: 25 autocomplete choices.
+    const MAX_CHOICES: usize = 25;
     let mut choices: Vec<serenity::AutocompleteChoice> = Vec::new();
     let cur = current.to_lowercase();
-    if cur.contains("clone") {
-        if let Ok(voices) = tts::list_cloned_voices().await {
-            for v in voices.iter().take(15) {
-                let name = format!("clone:{}", v.name);
-                if name.to_lowercase().contains(&cur) {
-                    choices.push(serenity::AutocompleteChoice::new(name.clone(), name));
-                }
-            }
-        }
-    }
-    let mut voices: Vec<&str> = tts::AVAILABLE_VOICES.to_vec();
-    voices.push("random");
-    for v in voices {
+
+    let builtin: Vec<&str> = tts::AVAILABLE_VOICES
+        .iter()
+        .chain(std::iter::once(&"random"))
+        .copied()
+        .collect();
+    for v in builtin {
         if v.to_lowercase().contains(&cur) {
             choices.push(serenity::AutocompleteChoice::new(v.to_string(), v.to_string()));
         }
     }
+    if let Ok(voices) = tts::list_cloned_voices().await {
+        for v in voices.iter() {
+            if choices.len() >= MAX_CHOICES {
+                break;
+            }
+            let name = format!("clone:{}", v.name);
+            if cur.is_empty() || name.to_lowercase().contains(&cur) {
+                choices.push(serenity::AutocompleteChoice::new(name.clone(), name));
+            }
+        }
+    }
+    choices.truncate(MAX_CHOICES);
     choices
 }
 
