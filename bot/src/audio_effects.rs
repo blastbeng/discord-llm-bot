@@ -369,13 +369,17 @@ fn apply_woman(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
 /// It manipulates the pitch track (PSOLA) and the formant/spectral envelope
 /// INDEPENDENTLY — exactly what tape shifts and chunked vocoders cannot do.
 /// Tuned on the real Google IT voice (male, median F0 ~124 Hz) via
-/// talky-talky: fsr 1.25 + npm 205 measured median F0 193.8 Hz, MOS 4.69;
-/// with the post-conversion shelf EQ below the chain measures MOS 4.75.
+/// talky-talky. Gender perception is dominated by RESONANCE, not pitch:
+/// uniformly scaling all formants up (fsr 1.25) reads as a cartoon vocal
+/// tract (chipmunk). Real female formants sit only ~10% above male, so the
+/// formant shift is kept small (1.10) while pitch carries the gender
+/// (npm 205, range 1.15 for livelier intonation). A subtle continuous
+/// high-passed air layer adds the female breathiness cue.
 const PRAAT_PITCH_FLOOR: &str = "75.0";
 const PRAAT_PITCH_CEILING: &str = "600.0";
-const PRAAT_FORMANT_SHIFT_RATIO: &str = "1.25";
+const PRAAT_FORMANT_SHIFT_RATIO: &str = "1.10";
 const PRAAT_NEW_PITCH_MEDIAN: &str = "205.0";
-const PRAAT_PITCH_RANGE_FACTOR: &str = "1.0";
+const PRAAT_PITCH_RANGE_FACTOR: &str = "1.15";
 const PRAAT_DURATION_FACTOR: &str = "1.0";
 
 const PRAAT_CHANGE_GENDER_SCRIPT: &str = r#"form Change gender
@@ -467,24 +471,36 @@ async fn apply_woman_praat(
                 out_rate, out_channels, sample_rate, channels
             ));
         }
-        // Post-conversion spectral polish (measured +0.06 MOS on top of the
-        // raw Praat output): +3 dB high shelf above ~3.5 kHz (female
-        // brightness) and -1.5 dB low shelf below ~250 Hz (residual chest).
+        // Post-conversion polish: +3 dB high shelf above ~3.5 kHz (female
+        // brightness), -1.5 dB low shelf below ~250 Hz (residual chest), and
+        // a subtle CONTINUOUS high-passed air layer (female breathiness cue;
+        // gated breath measured worse, continuous at very low level better).
         let sr = sample_rate as f32;
         let ch = channels.max(1) as usize;
         let mut air_lp = vec![0.0f32; ch];
         let mut low_lp = vec![0.0f32; ch];
+        let mut br_lp = vec![0.0f32; ch];
         let air_alpha = lp_alpha(3500.0, sr);
         let low_alpha = lp_alpha(250.0, sr);
+        let br_lp_alpha = lp_alpha(3000.0, sr);
+        let mut rng: u64 = 0x9E3779B97F4A7C15;
         let mut polished = out_samples;
         for i in 0..(polished.len() / ch) {
+            rng ^= rng >> 12;
+            rng ^= rng << 25;
+            rng ^= rng >> 27;
+            let noise = ((rng.wrapping_mul(0x2545F4914F6CDD1D) >> 33) as i32 as f32
+                / 2147483648.0)
+                * 0.004;
             for c in 0..ch {
                 let idx = i * ch + c;
                 let x = polished[idx];
                 air_lp[c] += air_alpha * (x - air_lp[c]);
                 low_lp[c] += low_alpha * (x - low_lp[c]);
+                br_lp[c] += br_lp_alpha * (noise - br_lp[c]);
                 let air = x - air_lp[c];
-                polished[idx] = x + 0.41 * air - 0.16 * low_lp[c];
+                let breath = noise - br_lp[c];
+                polished[idx] = x + 0.41 * air - 0.16 * low_lp[c] + 0.5 * breath;
             }
         }
         Ok(polished)
