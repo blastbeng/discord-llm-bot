@@ -369,11 +369,12 @@ fn apply_woman(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
 /// It manipulates the pitch track (PSOLA) and the formant/spectral envelope
 /// INDEPENDENTLY — exactly what tape shifts and chunked vocoders cannot do.
 /// Tuned on the real Google IT voice (male, median F0 ~124 Hz) via
-/// talky-talky: fsr 1.20 + npm 200 measured median F0 192.2 Hz, MOS 4.73.
+/// talky-talky: fsr 1.25 + npm 205 measured median F0 193.8 Hz, MOS 4.69;
+/// with the post-conversion shelf EQ below the chain measures MOS 4.75.
 const PRAAT_PITCH_FLOOR: &str = "75.0";
 const PRAAT_PITCH_CEILING: &str = "600.0";
-const PRAAT_FORMANT_SHIFT_RATIO: &str = "1.20";
-const PRAAT_NEW_PITCH_MEDIAN: &str = "200.0";
+const PRAAT_FORMANT_SHIFT_RATIO: &str = "1.25";
+const PRAAT_NEW_PITCH_MEDIAN: &str = "205.0";
 const PRAAT_PITCH_RANGE_FACTOR: &str = "1.0";
 const PRAAT_DURATION_FACTOR: &str = "1.0";
 
@@ -466,7 +467,27 @@ async fn apply_woman_praat(
                 out_rate, out_channels, sample_rate, channels
             ));
         }
-        Ok(out_samples)
+        // Post-conversion spectral polish (measured +0.06 MOS on top of the
+        // raw Praat output): +3 dB high shelf above ~3.5 kHz (female
+        // brightness) and -1.5 dB low shelf below ~250 Hz (residual chest).
+        let sr = sample_rate as f32;
+        let ch = channels.max(1) as usize;
+        let mut air_lp = vec![0.0f32; ch];
+        let mut low_lp = vec![0.0f32; ch];
+        let air_alpha = lp_alpha(3500.0, sr);
+        let low_alpha = lp_alpha(250.0, sr);
+        let mut polished = out_samples;
+        for i in 0..(polished.len() / ch) {
+            for c in 0..ch {
+                let idx = i * ch + c;
+                let x = polished[idx];
+                air_lp[c] += air_alpha * (x - air_lp[c]);
+                low_lp[c] += low_alpha * (x - low_lp[c]);
+                let air = x - air_lp[c];
+                polished[idx] = x + 0.41 * air - 0.16 * low_lp[c];
+            }
+        }
+        Ok(polished)
     }
     .await;
 
