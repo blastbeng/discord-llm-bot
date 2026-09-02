@@ -345,11 +345,11 @@ pub async fn ask(
     let lang = std::env::var("LANG").unwrap_or_else(|_| "ita".to_string());
     let (lang_instruction, personality) = match &*lang {
         "eng" => (
-            "Respond in English.",
+            "Respond in English. ALWAYS answer in English, no matter which language the question or any attached web results are in.",
             "You are a humorous Discord voice bot. Keep your answer to a single short sentence (max 200 characters). Be funny and casual.",
         ),
         _ => (
-            "Rispondi in italiano.",
+            "Rispondi in italiano. Rispondi SEMPRE in italiano, qualunque sia la lingua della domanda o dei risultati web allegati. Mai rispondere in inglese o in altre lingue.",
             "Sei un bot vocale Discord umoristico. Rispondi con una singola frase breve (massimo 200 caratteri). Sii divertente e alla mano.",
         ),
     };
@@ -379,8 +379,14 @@ pub async fn ask(
     for msg in &history[start..] {
         messages.push(serde_json::json!({"role": msg.role, "content": msg.content}));
     }
-    // Add the current question, enriched with the web-search context.
-    let enriched_question = format!("{question}{web_context}");
+    // Add the current question, enriched with the web-search context. The
+    // web snippets are usually English — end with a firm language reminder
+    // so the answer stays in the configured language.
+    let lang_reminder = match &*lang {
+        "eng" => "\n\nIMPORTANT: answer in English.",
+        _ => "\n\nIMPORTANTE: rispondi in italiano.",
+    };
+    let enriched_question = format!("{question}{web_context}{lang_reminder}");
     messages.push(serde_json::json!({"role": "user", "content": enriched_question}));
 
     let client = llm_client();
