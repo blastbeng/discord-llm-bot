@@ -518,10 +518,20 @@ async fn speak(
     // "random" resolves against Google + registered cloned voices (clones
     // still fall back to Google if fish.audio fails). Non-random values are
     // used as-is.
-    let actual_voice = if voice == "random" {
+    let voice_is_random = voice == "random";
+    let effect_is_random = effect == "random";
+    let actual_voice = if voice_is_random {
         tts::pick_random_voice().await
     } else {
         voice
+    };
+    // Effects apply ONLY to the built-in Google voice unless the user
+    // explicitly names both voice and effect: a randomized voice pick
+    // or a randomized effect pins the rendering voice to Google.
+    let actual_voice = if (voice_is_random && effect != "none") || effect_is_random {
+        "Google".to_string()
+    } else {
+        actual_voice
     };
 
     if !tts::is_valid_voice(&actual_voice) {
@@ -530,7 +540,7 @@ async fn speak(
     }
 
     // Resolve "random" effect to a random choice
-    let actual_effect = if effect == "random" {
+    let actual_effect = if effect_is_random {
         crate::audio_effects::random_effect().to_string()
     } else {
         effect
@@ -696,10 +706,20 @@ async fn random(
     // still pick an effect explicitly (including "random").
     let effect = effect.unwrap_or_else(|| "none".to_string());
     // "random" (user-chosen or the default) resolves against Google + clones.
-    let actual_voice = if voice == "random" {
+    let voice_is_random = voice == "random";
+    let effect_is_random = effect == "random";
+    let actual_voice = if voice_is_random {
         tts::pick_random_voice().await
     } else {
         voice
+    };
+    // Effects apply ONLY to the built-in Google voice unless the user
+    // explicitly names both voice and effect: a randomized voice pick
+    // or a randomized effect pins the rendering voice to Google.
+    let actual_voice = if (voice_is_random && effect != "none") || effect_is_random {
+        "Google".to_string()
+    } else {
+        actual_voice
     };
 
     if !tts::is_valid_voice(&actual_voice) {
@@ -708,7 +728,7 @@ async fn random(
     }
 
     // Resolve "random" effect to a random choice
-    let actual_effect = if effect == "random" {
+    let actual_effect = if effect_is_random {
         crate::audio_effects::random_effect().to_string()
     } else {
         effect
@@ -1021,10 +1041,20 @@ async fn ask(
     // "random" resolves against Google + registered cloned voices (clones
     // still fall back to Google if fish.audio fails). Non-random values are
     // used as-is.
-    let actual_voice = if voice == "random" {
+    let voice_is_random = voice == "random";
+    let effect_is_random = effect == "random";
+    let actual_voice = if voice_is_random {
         tts::pick_random_voice().await
     } else {
         voice
+    };
+    // Effects apply ONLY to the built-in Google voice unless the user
+    // explicitly names both voice and effect: a randomized voice pick
+    // or a randomized effect pins the rendering voice to Google.
+    let actual_voice = if (voice_is_random && effect != "none") || effect_is_random {
+        "Google".to_string()
+    } else {
+        actual_voice
     };
 
     if !tts::is_valid_voice(&actual_voice) {
@@ -1033,7 +1063,7 @@ async fn ask(
     }
 
     // Resolve "random" effect to a random choice
-    let actual_effect = if effect == "random" {
+    let actual_effect = if effect_is_random {
         crate::audio_effects::random_effect().to_string()
     } else {
         effect
@@ -1262,10 +1292,20 @@ async fn translate(
     // "random" resolves against Google + registered cloned voices (clones
     // still fall back to Google if fish.audio fails). Non-random values are
     // used as-is.
-    let actual_voice = if voice == "random" {
+    let voice_is_random = voice == "random";
+    let effect_is_random = effect == "random";
+    let actual_voice = if voice_is_random {
         tts::pick_random_voice().await
     } else {
         voice
+    };
+    // Effects apply ONLY to the built-in Google voice unless the user
+    // explicitly names both voice and effect: a randomized voice pick
+    // or a randomized effect pins the rendering voice to Google.
+    let actual_voice = if (voice_is_random && effect != "none") || effect_is_random {
+        "Google".to_string()
+    } else {
+        actual_voice
     };
 
     if !tts::is_valid_voice(&actual_voice) {
@@ -1273,7 +1313,7 @@ async fn translate(
         return Ok(());
     }
 
-    let actual_effect = if effect == "random" {
+    let actual_effect = if effect_is_random {
         crate::audio_effects::random_effect().to_string()
     } else {
         effect
@@ -1446,10 +1486,20 @@ async fn joke(
     // "random" resolves against Google + registered cloned voices (clones
     // still fall back to Google if fish.audio fails). Non-random values are
     // used as-is.
-    let actual_voice = if voice == "random" {
+    let voice_is_random = voice == "random";
+    let effect_is_random = effect == "random";
+    let actual_voice = if voice_is_random {
         tts::pick_random_voice().await
     } else {
         voice
+    };
+    // Effects apply ONLY to the built-in Google voice unless the user
+    // explicitly names both voice and effect: a randomized voice pick
+    // or a randomized effect pins the rendering voice to Google.
+    let actual_voice = if (voice_is_random && effect != "none") || effect_is_random {
+        "Google".to_string()
+    } else {
+        actual_voice
     };
 
     if !tts::is_valid_voice(&actual_voice) {
@@ -1457,7 +1507,7 @@ async fn joke(
         return Ok(());
     }
 
-    let actual_effect = if effect == "random" {
+    let actual_effect = if effect_is_random {
         crate::audio_effects::random_effect().to_string()
     } else {
         effect

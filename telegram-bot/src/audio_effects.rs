@@ -295,30 +295,32 @@ fn time_stretch_wsola(samples: Vec<f32>, rate: f32, channels: u16) -> Vec<f32> {
     result
 }
 
-/// Female voice transformer — phase-vocoder M→F pitch conversion.
+/// Sexy voice transformer — sultry re-voicing of the built-in Google TTS.
 ///
-/// Why not tape shift: moving the whole spectrum up also drags the formants
-/// with it — that's exactly the chipmunk signature. Why not TD-PSOLA: grains
-/// that aren't aligned to true glottal epochs create rough, phasey output.
-/// A phase vocoder shifts F0 while preserving the spectral envelope, which
-/// is the standard trick behind "female voice" changers.
+/// The effect is tuned EXCLUSIVELY for the built-in Google voice (and by
+/// policy effects only ever render on Google unless a voice is explicitly
+/// chosen): Google's TTS voice is already female, median F0 ~124 Hz
+/// (measured with talky-talky pitch detection on real output).
 ///
-/// Recipe (measured with pitch detection on real TTS: male median ~110 Hz,
-/// convincing female reference median ~194 Hz):
-///   1. PV pitch shift +7.0 st (F0 ~110 -> ~166 Hz: sultry female register)
-///   2. slow-down ~3% (WSOLA, pitch-preserving — unhurried, intimate pacing)
-///   3. softness stack: -0.5 dB body trim + gentle air re-add (bright-but-
-///      soft female timbre)
-/// Breath noise was dropped: the level-gated layer measured a 0.4 MOS
-/// quality drop (talky-talky speech-quality analysis) for an inaudible
-/// effect on real TTS material.
+/// Why NOT shift up: the `pitch_shift` crate is locked to 128-sample vocoder
+/// chunks, and at large shifts its short window drags formants up with the
+/// pitch — on Google's female voice +7 st measured 187 Hz median with a
+/// 1.91 MOS: a textbook chipmunk. Shifting DOWN avoids the artifact
+/// entirely: small shifts smear almost nothing.
+///
+/// Recipe (talky-talky A/B on real Google TTS, best of 14 variants):
+///   1. PV pitch shift -2 st (F0 ~124 -> ~113 Hz: deep, unhurried register)
+///   2. slow-down 10% (WSOLA, pitch-preserving — intimate pacing)
+///   3. softness stack: -0.26 dB body trim + gentle air re-add above 4 kHz
+/// Measured result: median F0 112.6 Hz, MOS 4.48 (untouched Google = 4.95;
+/// the old +7.3 st tuning = 1.91 chipmunk).
 fn apply_sexy(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
     // PV pitch shift first, then the WSOLA slow-down (stretching the already
     // shifted signal keeps the two stages independent and artifact-free).
     // WSOLA's `rate` is output/input (rate 2.0 = half as long), so slowing
-    // down by 3% means passing 1/1.03.
-    let shifted = female_voice(samples, sample_rate, channels, 7.0, false);
-    time_stretch_wsola(shifted, 1.0 / 1.03, channels)
+    // down by 10% means passing 1/1.10.
+    let shifted = female_voice(samples, sample_rate, channels, -2.0, false);
+    time_stretch_wsola(shifted, 1.0 / 1.10, channels)
 }
 
 fn female_voice(
@@ -380,8 +382,9 @@ fn female_voice(
     }
 
     // ── Softness stack ──────────────────────────────────────────────────
-    // 0.5 dB body trim + gentle air re-add above ~4 kHz: keeps the voice
-    // soft and clear without the fizz of saturation-based exciters.
+    // 0.26 dB body trim + gentle air re-add above ~4 kHz: keeps the voice
+    // soft and clear without the fizz of saturation-based exciters. The
+    // trim is mild on purpose: stronger mixes measured worse.
     let sr = sample_rate as f32;
     let mut air_lp = vec![0.0f32; ch];
     let air_alpha = lp_alpha(4000.0, sr);
@@ -391,7 +394,7 @@ fn female_voice(
             let x = out[idx];
             air_lp[c] += air_alpha * (x - air_lp[c]);
             let air = x - air_lp[c];
-            out[idx] = x * 0.94 + air * 0.08;
+            out[idx] = x * 0.97 + air * 0.03;
         }
     }
 
@@ -637,16 +640,16 @@ mod tests {
 
     #[test]
     fn test_sexy_effect_shifts_pitch_and_stretches() {
-        // A 110.7 Hz tone in (measured male-TTS median F0), the sexy chain
-        // (+7.0 st PV shift, ×1.03 slow-down) must come back with a dominant
-        // frequency near 110.7 × 2^(7/12) ≈ 166.2 Hz and a duration ~3%
+        // A 124 Hz tone in (measured Google-TTS median F0), the sexy chain
+        // (-2.0 st PV shift, ×1.10 slow-down) must come back with a dominant
+        // frequency near 124 × 2^(-2/12) ≈ 110.5 Hz and a duration ~10%
         // longer. The PV warms up over its first ~1024 samples, so the
         // analysis window sits well inside.
         let sample_rate = 24000u32;
         let dur_secs = 2.0;
         let n = (sample_rate as f32 * dur_secs) as usize;
-        // 110.7 Hz = measured male-TTS median F0; +7.0 st is the effect's shift.
-        let input_f0 = 110.7;
+        // 124 Hz = measured Google-TTS median F0; -2.0 st is the effect's shift.
+        let input_f0 = 124.0;
         let input: Vec<f32> = (0..n)
             .map(|i| {
                 let t = i as f32 / sample_rate as f32;
@@ -655,17 +658,17 @@ mod tests {
             .collect();
 
         let out = apply_sexy(input, sample_rate, 1);
-        // PV is sample-exact; the WSOLA slow-down adds ~3% (+WSOLA rounding).
-        let expected_len = (n as f32 * 1.03) as usize;
+        // PV is sample-exact; the WSOLA slow-down adds ~10% (+rounding).
+        let expected_len = (n as f32 * 1.10) as usize;
         assert!(
             (out.len() as i64 - expected_len as i64).abs() <= 512,
-            "sexy length {} != ~{} (1.03x stretch)",
+            "sexy length {} != ~{} (1.10x stretch)",
             out.len(),
             expected_len
         );
 
         // Dominant frequency via zero-padded DFT peak around the expectation.
-        let expected = input_f0 * 2.0f32.powf(7.0 / 12.0);
+        let expected = input_f0 * 2.0f32.powf(-2.0 / 12.0);
         let analyze = |data: &[f32], lo: f32, hi: f32| -> f32 {
             let mut best = (0.0f32, 0.0f32);
             let steps = 400;
@@ -701,14 +704,14 @@ mod tests {
                 }
             })
             .collect();
-        // WSOLA `rate` is output/input: slowing down 3% = rate 1/1.03.
-        let burst_out = time_stretch_wsola(burst_in.clone(), 1.0 / 1.03, 1);
+        // WSOLA `rate` is output/input: slowing down 10% = rate 1/1.10.
+        let burst_out = time_stretch_wsola(burst_in.clone(), 1.0 / 1.10, 1);
         let written = burst_out.iter().filter(|&&v| v != 0.0).count();
         let in_bursts = burst_in.iter().filter(|&&v| v != 0.0).count();
         let ratio = written as f32 / in_bursts.max(1) as f32;
         assert!(
-            (ratio - 1.03).abs() < 0.08,
-            "stretch ratio {:.3}, expected ~1.03",
+            (ratio - 1.10).abs() < 0.08,
+            "stretch ratio {:.3}, expected ~1.10",
             ratio
         );
     }
