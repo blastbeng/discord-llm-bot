@@ -21,6 +21,7 @@ symphonia = { version = "0.6", features = ["mp3"] }
 # Without this, songbird's probe can't find the MP3 marker and reports "probe reach EOF".
 symphonia05 = { package = "symphonia", version = "0.5", features = ["mp3"] }
 minimp3 = "0.6"
+hound = "3.4"
 mp3lame-encoder = "0.2"
 urlencoding = "2.1"
 regex = "1"
