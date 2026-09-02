@@ -171,6 +171,17 @@ async fn handle_message(bot: Bot, msg: Message, state: Arc<AppState>) -> Respons
     let Some(text) = msg.text() else { return Ok(()) };
     let text = text.trim();
 
+    // The /buttons reply keyboard sends its button LABEL as a plain message
+    // ("🎲 Random", "😄 Joke", ...). Map each label to the matching slash
+    // command so keyboard presses act exactly like typing the command.
+    let text = match text {
+        "🎲 Random" => "/random",
+        "😄 Joke" => "/joke",
+        "🎤 My voices" => "/myvoices",
+        "❓ Help" => "/help",
+        other => other,
+    };
+
     // Parse "/command" or "/command@BotName args".
     let (command, args) = match text.split_once(' ') {
         Some((cmd, rest)) => (cmd, rest.trim().to_string()),
