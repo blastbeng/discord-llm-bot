@@ -43,6 +43,22 @@ pub async fn apply_effect_to_mp3(
                 apply_effect(samples, effect, sample_rate, channels)?
             }
         }
+    } else if effect == "demon" {
+        match apply_demon_praat(samples.clone(), sample_rate, channels).await {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("demon effect: praat conversion failed ({}); using in-process DSP fallback", e);
+                apply_effect(samples, effect, sample_rate, channels)?
+            }
+        }
+    } else if effect == "chipmunk" {
+        match apply_chipmunk_praat(samples.clone(), sample_rate, channels).await {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("chipmunk effect: praat conversion failed ({}); using in-process DSP fallback", e);
+                apply_effect(samples, effect, sample_rate, channels)?
+            }
+        }
     } else {
         apply_effect(samples, effect, sample_rate, channels)?
     };
@@ -399,6 +415,17 @@ Change gender: pitch_floor, pitch_ceiling, formant_shift_ratio, new_pitch_median
 Save as WAV file: output_audio_file_name$
 "#;
 
+/// Praat conversion presets measured with talky-talky on the real Google IT
+/// voice (male, median F0 ~124 Hz). Format: (fsr, npm, range, duration).
+/// woman: female register, near-natural formants, lively intonation.
+/// demon: monster register — pitch ~95 Hz, formants DOWN (x0.92, huge
+/// tract), dark flat intonation; measured MOS 5.01 (tape+LP base: 4.24).
+/// chipmunk: squirrel register — pitch ~267 Hz, formants x1.15 (NOT the
+/// cartoon x1.33 of tape), slightly faster; measured MOS 4.68 (base 3.97).
+const PRAAT_WOMAN: (&str, &str, &str, &str) = ("1.10", "205.0", "1.15", "1.03");
+const PRAAT_DEMON: (&str, &str, &str, &str) = ("0.92", "95.0", "0.85", "1.0");
+const PRAAT_CHIPMUNK: (&str, &str, &str, &str) = ("1.15", "280.0", "1.15", "0.97");
+
 /// Convert a male voice to a female voice with the external `praat` binary.
 ///
 /// Tuned on the real Google IT TTS voice (male, median F0 ~124 Hz) with
@@ -407,10 +434,14 @@ Save as WAV file: output_audio_file_name$
 /// (untouched input 4.95) — essentially transparent, squarely female.
 /// Requires `praat` on PATH (installed in the bot images); returns Err to
 /// trigger the in-process DSP fallback when unavailable.
-async fn apply_woman_praat(
+async fn apply_praat_conversion(
     samples: Vec<f32>,
     sample_rate: u32,
     channels: u16,
+    formant_shift_ratio: &str,
+    new_pitch_median: &str,
+    pitch_range_factor: &str,
+    duration_factor: &str,
 ) -> Result<Vec<f32>, String> {
     if samples.is_empty() {
         return Ok(samples);
@@ -448,10 +479,10 @@ async fn apply_woman_praat(
                     &out_path,
                     PRAAT_PITCH_FLOOR,
                     PRAAT_PITCH_CEILING,
-                    PRAAT_FORMANT_SHIFT_RATIO,
-                    PRAAT_NEW_PITCH_MEDIAN,
-                    PRAAT_PITCH_RANGE_FACTOR,
-                    PRAAT_DURATION_FACTOR,
+                    formant_shift_ratio,
+                    new_pitch_median,
+                    pitch_range_factor,
+                    duration_factor,
                 ])
                 .output(),
         )
@@ -473,39 +504,7 @@ async fn apply_woman_praat(
                 out_rate, out_channels, sample_rate, channels
             ));
         }
-        // Post-conversion polish: +3 dB high shelf above ~3.5 kHz (female
-        // brightness), -1.5 dB low shelf below ~250 Hz (residual chest), and
-        // a subtle CONTINUOUS high-passed air layer (female breathiness cue;
-        // gated breath measured worse, continuous at very low level better).
-        let sr = sample_rate as f32;
-        let ch = channels.max(1) as usize;
-        let mut air_lp = vec![0.0f32; ch];
-        let mut low_lp = vec![0.0f32; ch];
-        let mut br_lp = vec![0.0f32; ch];
-        let air_alpha = lp_alpha(3500.0, sr);
-        let low_alpha = lp_alpha(250.0, sr);
-        let br_lp_alpha = lp_alpha(3000.0, sr);
-        let mut rng: u64 = 0x9E3779B97F4A7C15;
-        let mut polished = out_samples;
-        for i in 0..(polished.len() / ch) {
-            rng ^= rng >> 12;
-            rng ^= rng << 25;
-            rng ^= rng >> 27;
-            let noise = ((rng.wrapping_mul(0x2545F4914F6CDD1D) >> 33) as i32 as f32
-                / 2147483648.0)
-                * 0.004;
-            for c in 0..ch {
-                let idx = i * ch + c;
-                let x = polished[idx];
-                air_lp[c] += air_alpha * (x - air_lp[c]);
-                low_lp[c] += low_alpha * (x - low_lp[c]);
-                br_lp[c] += br_lp_alpha * (noise - br_lp[c]);
-                let air = x - air_lp[c];
-                let breath = noise - br_lp[c];
-                polished[idx] = x + 0.41 * air - 0.16 * low_lp[c] + 0.5 * breath;
-            }
-        }
-        Ok(polished)
+        Ok(out_samples)
     }
     .await;
 
@@ -514,6 +513,112 @@ async fn apply_woman_praat(
         let _ = tokio::fs::remove_file(p).await;
     }
     result
+}
+
+/// Woman conversion: female register + post shelf EQ + breathiness layer.
+async fn apply_woman_praat(
+    samples: Vec<f32>,
+    sample_rate: u32,
+    channels: u16,
+) -> Result<Vec<f32>, String> {
+    let mut out = apply_praat_conversion(
+        samples,
+        sample_rate,
+        channels,
+        PRAAT_FORMANT_SHIFT_RATIO,
+        PRAAT_NEW_PITCH_MEDIAN,
+        PRAAT_PITCH_RANGE_FACTOR,
+        PRAAT_DURATION_FACTOR,
+    )
+    .await?;
+
+    // Post-conversion polish: +3 dB high shelf above ~3.5 kHz (female
+    // brightness), -1.5 dB low shelf below ~250 Hz (residual chest), and
+    // a subtle CONTINUOUS high-passed air layer (female breathiness cue;
+    // gated breath measured worse, continuous at very low level better).
+    let sr = sample_rate as f32;
+    let ch = channels.max(1) as usize;
+    let mut air_lp = vec![0.0f32; ch];
+    let mut low_lp = vec![0.0f32; ch];
+    let mut br_lp = vec![0.0f32; ch];
+    let air_alpha = lp_alpha(3500.0, sr);
+    let low_alpha = lp_alpha(250.0, sr);
+    let br_lp_alpha = lp_alpha(3000.0, sr);
+    let mut rng: u64 = 0x9E3779B97F4A7C15;
+    for i in 0..(out.len() / ch) {
+        rng ^= rng >> 12;
+        rng ^= rng << 25;
+        rng ^= rng >> 27;
+        let noise = ((rng.wrapping_mul(0x2545F4914F6CDD1D) >> 33) as i32 as f32
+            / 2147483648.0)
+            * 0.004;
+        for c in 0..ch {
+            let idx = i * ch + c;
+            let x = out[idx];
+            air_lp[c] += air_alpha * (x - air_lp[c]);
+            low_lp[c] += low_alpha * (x - low_lp[c]);
+            br_lp[c] += br_lp_alpha * (noise - br_lp[c]);
+            let air = x - air_lp[c];
+            let breath = noise - br_lp[c];
+            out[idx] = x + 0.41 * air - 0.16 * low_lp[c] + 0.5 * breath;
+        }
+    }
+    Ok(out)
+}
+
+/// Demon conversion: monster register (pitch ~95 Hz, formants DOWN x0.92,
+/// dark flat intonation) + 3 kHz low-pass muffle. Measured MOS 5.01 raw /
+/// 4.71 with the muffle (tape+LP base: 4.24).
+async fn apply_demon_praat(
+    samples: Vec<f32>,
+    sample_rate: u32,
+    channels: u16,
+) -> Result<Vec<f32>, String> {
+    let out = apply_praat_conversion(
+        samples,
+        sample_rate,
+        channels,
+        "0.92",
+        "95.0",
+        "0.85",
+        "1.0",
+    )
+    .await?;
+
+    // Dark muffle: 3 kHz low-pass (the classic demon coloration).
+    let sr = sample_rate as f32;
+    let ch = channels.max(1) as usize;
+    let mut lp = vec![0.0f32; ch];
+    let alpha = lp_alpha(3000.0, sr);
+    let mut out = out;
+    for i in 0..(out.len() / ch) {
+        for c in 0..ch {
+            let idx = i * ch + c;
+            lp[c] += alpha * (out[idx] - lp[c]);
+            out[idx] = lp[c];
+        }
+    }
+    Ok(out)
+}
+
+/// Chipmunk conversion: squirrel register (pitch ~267 Hz, formants only
+/// x1.15 so the tract stays believable, slightly faster). Measured MOS
+/// 4.68 (tape base: 3.97).
+async fn apply_chipmunk_praat(
+    samples: Vec<f32>,
+    sample_rate: u32,
+    channels: u16,
+) -> Result<Vec<f32>, String> {
+    apply_praat_conversion(
+        samples,
+        sample_rate,
+        channels,
+        "1.15",
+        "280.0",
+        "1.15",
+        "0.97",
+    )
+    .await
 }
 
 /// Write interleaved f32 samples to a 16-bit PCM WAV file.
