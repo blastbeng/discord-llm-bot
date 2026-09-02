@@ -449,7 +449,7 @@ pub async fn ask(
 
     let system_prompt = format!(
         "{personality}\n\
-        You are known as \"{bot_nickname}\".\n\
+        You are known as \"{bot_nickname}\". Your name is \"Pezzente\" — ALWAYS remember and use this identity.\n\
         {lang_instruction}\n\
         Here are some example phrases that reflect your personality and style:\n\
         {sentences_text}\n\

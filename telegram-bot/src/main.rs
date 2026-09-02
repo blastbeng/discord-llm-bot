@@ -666,7 +666,7 @@ async fn cmd_ask(state: &AppState, chat_id: &str, args: &str) -> String {
         conversations.get(chat_id).cloned().unwrap_or_default()
     };
 
-    match llm::ask(&text, &db_sentences, "Telegram Bot", &history).await {
+    match llm::ask(&text, &db_sentences, "Pezzente", &history).await {
         Ok(response) if llm::is_refusal_error(&response) => {
             // The LLM refused — never answer with the refusal boilerplate and
             // never persist it (it would poison the shared sentence database

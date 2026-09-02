@@ -1095,7 +1095,7 @@ async fn ask(
             g.members.get(&ctx.cache().current_user().id)
                 .and_then(|m| m.nick.clone())
         })
-        .unwrap_or_else(|| "Bot".to_string());
+        .unwrap_or_else(|| "Pezzente".to_string());
 
     // Fetch database sentences to use as personality context for the LLM
     let db_sentences = database::select_all_sentence(&ctx.data().db_pool).await.unwrap_or_default();
