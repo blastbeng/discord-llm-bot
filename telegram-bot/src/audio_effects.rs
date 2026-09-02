@@ -422,7 +422,6 @@ Save as WAV file: output_audio_file_name$
 /// tract), dark flat intonation; measured MOS 5.01 (tape+LP base: 4.24).
 /// chipmunk: squirrel register — pitch ~267 Hz, formants x1.15 (NOT the
 /// cartoon x1.33 of tape), slightly faster; measured MOS 4.68 (base 3.97).
-const PRAAT_WOMAN: (&str, &str, &str, &str) = ("1.10", "205.0", "1.15", "1.03");
 const PRAAT_DEMON: (&str, &str, &str, &str) = ("0.80", "65.0", "0.60", "1.0");
 const PRAAT_CHIPMUNK: (&str, &str, &str, &str) = ("1.28", "360.0", "1.30", "0.93");
 

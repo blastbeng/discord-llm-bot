@@ -18,7 +18,10 @@ use std::sync::Arc;
 use rand::seq::SliceRandom;
 use teloxide::prelude::*;
 use teloxide::net::Download as _;
-use teloxide::types::{ChatId, ChatKind, InputFile, Message};
+use teloxide::types::{
+    ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, KeyboardButton,
+    KeyboardMarkup, Message,
+};
 
 /// Shared application state, mirroring the WhatsApp bot's `AppState`.
 struct AppState {
@@ -122,15 +125,30 @@ async fn main() {
 
     log::info!("telegram-bot: starting long-polling (enabled)");
 
-    let handler = {
-        let state = state.clone();
-        move |bot: Bot, msg: Message| {
+    // Full dispatcher: messages (commands + plain text) AND callback queries
+    // from the inline "Play" buttons. teloxide::repl only handles messages,
+    // so callback presses would be silently dropped with a spinner.
+    let handler = dptree::entry()
+        .branch(Update::filter_message().endpoint({
             let state = state.clone();
-            async move { handle_message(bot, msg, state).await }
-        }
-    };
+            move |bot: Bot, msg: Message| {
+                let state = state.clone();
+                async move { handle_message(bot, msg, state).await }
+            }
+        }))
+        .branch(Update::filter_callback_query().endpoint({
+            let state = state.clone();
+            move |bot: Bot, q: CallbackQuery| {
+                let state = state.clone();
+                async move { handle_callback(bot, q, state).await }
+            }
+        }));
 
-    teloxide::repl(bot, handler).await;
+    Dispatcher::builder(bot, handler)
+        .enable_ctrlc_handler()
+        .build()
+        .dispatch()
+        .await;
 }
 
 /// Dispatch an incoming message to the appropriate command handler.
@@ -187,13 +205,13 @@ async fn handle_message(bot: Bot, msg: Message, state: Arc<AppState>) -> Respons
             let r = cmd_help(&state).await;
             let _ = bot.send_message(chat_id, r).await;
         }
+        "/buttons" => cmd_buttons(&bot, chat_id).await,
         _ => {
-            // In a private (direct) chat, treat any non-command message as an
-            // /ask query — the user is chatting with the bot directly, so a
-            // plain message should get an LLM answer. Messages that start with
-            // '/' (unrecognized slash commands) are still ignored, and unknown
-            // messages in groups/other chats are ignored silently to avoid noise.
-            if !text.starts_with('/') && matches!(msg.chat.kind, ChatKind::Private(_)) {
+            // DEFAULT FEATURE: any non-command message is treated as an /ask
+            // query — just texting with the bot IS the ask command. Messages
+            // starting with '/' (unrecognized slash commands) are ignored to
+            // avoid answering typo'd commands as questions.
+            if !text.starts_with('/') {
                 let r = cmd_ask(&state, &chat_id.to_string(), text).await;
                 let _ = bot.send_message(chat_id, r).await;
             }
@@ -202,32 +220,51 @@ async fn handle_message(bot: Bot, msg: Message, state: Arc<AppState>) -> Respons
     Ok(())
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────
-
-/// Pick a random cached MP3 file from the audios/ directory, if any exist.
-async fn pick_cached_mp3() -> Option<String> {
-    let mut entries = tokio::fs::read_dir("audios").await.ok()?;
-    let mut mp3_files = Vec::new();
-    while let Ok(Some(entry)) = entries.next_entry().await {
-        let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "mp3") {
-            if let Some(s) = path.to_str() {
-                // Exclude cloned-voice files so /random never plays a clone.
-                // Clone cache files are "clone|Name_hash.mp3" (legacy sidecar-written)
-                        // or "clone_Name_hash.mp3" (bot-written with plain
-                        // names); exclude both forms.
-                        if !s.contains("clone|") && !s.contains("clone_") {
-                    mp3_files.push(s.to_string());
-                }
-            }
-        }
-    }
-    if mp3_files.is_empty() {
-        return None;
-    }
-    let mut rng = rand::thread_rng();
-    mp3_files.choose(&mut rng).map(|s| s.clone())
+/// /buttons — show the quick-action reply keyboard (random, jokes, my
+/// voices, help). A reply keyboard persists at the bottom of the chat and
+/// its buttons simply send the matching command text, so no callback
+/// plumbing is needed for these.
+async fn cmd_buttons(bot: &Bot, chat_id: ChatId) {
+    let keyboard = KeyboardMarkup::new(vec![
+        vec![
+            KeyboardButton::new("🎲 Random"),
+            KeyboardButton::new("😄 Joke"),
+        ],
+        vec![
+            KeyboardButton::new("🎤 My voices"),
+            KeyboardButton::new("❓ Help"),
+        ],
+    ])
+    .resize_keyboard()
+    .input_field_placeholder("…or just text me anything");
+    let _ = bot
+        .send_message(chat_id, "Quick buttons ready! Tap one below, or just write me anything.")
+        .reply_markup(keyboard)
+        .await;
 }
+
+/// Handle a callback query from an inline keyboard button (the ▶️ Play
+/// button under a /random sentence). Always answers the callback first so
+/// the client-side spinner clears, then performs the action.
+async fn handle_callback(bot: Bot, q: CallbackQuery, state: Arc<AppState>) -> ResponseResult<()> {
+    if !state.enabled {
+        return Ok(());
+    }
+    // Acknowledge immediately (dismisses the spinner).
+    let _ = bot.answer_callback_query(q.id.clone()).await;
+
+    let Some(data) = q.data.as_deref() else { return Ok(()) };
+    let Some(msg) = q.regular_message() else { return Ok(()) };
+    let chat_id = msg.chat.id;
+
+    if let Some(sentence) = data.strip_prefix("play:") {
+        log::info!("telegram-bot: play button pressed for a random sentence");
+        play_sentence(&bot, chat_id, &state, sentence).await;
+    }
+    Ok(())
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────
 
 /// Parse "text" / "text --voice X --effect Y" into (text, voice, effect).
 fn parse_voice_effect(args: &str) -> (String, String, String) {
@@ -498,45 +535,12 @@ async fn cmd_speak(bot: &Bot, chat_id: ChatId, state: &AppState, args: &str) {
 }
 
 async fn cmd_random(bot: &Bot, chat_id: ChatId, state: &AppState, args: &str) {
-    let (search_text, voice, effect) = parse_voice_effect(args);
+    let (search_text, _voice, _effect) = parse_voice_effect(args);
 
-    // No effect by default — /random varies voice and sentence only. Users can
-    // still pick an effect explicitly (including "random").
-
-    let voice_explicitly_set = args.contains("--voice");
-    let save_mp3 = std::env::var("SAVE_MP3_ON_DISK")
-        .unwrap_or_else(|_| "false".to_string())
-        .to_lowercase() == "true";
-
-    // /random picks a RANDOM voice when the user does not select one: a mix of
-    // the built-in Google voice and every registered cloned voice (clones
-    // still fall back to Google if fish.audio fails). Every other command
-    // keeps Google as its default. EXCEPTION: when an effect is in play
-    // (explicit or randomized) the voice is pinned to Google — effects apply
-    // ONLY to the built-in Google voice unless the user explicitly names a
-    // specific voice.
-    let effect_pins_google = effect != "none";
-    let voice = if voice_explicitly_set {
-        voice
-    } else if effect_pins_google {
-        "Google".to_string()
-    } else {
-        tts::pick_random_voice().await
-    };
-    let voice_is_builtin = tts::AVAILABLE_VOICES.contains(&voice.as_str());
-
-    // Fast path: pick a random cached MP3 when no voice was selected (and the
-    // default random pick resolved to the built-in Google voice), no effect to
-    // apply (explicitly "none"), no search text, and disk caching is enabled.
-    // The cache only stores Google-voice files, so a cloned pick must fall
-    // through to real TTS generation.
-    if !voice_explicitly_set && voice_is_builtin && effect == "none" && search_text.is_empty() && save_mp3 {
-        if let Some(chosen) = pick_cached_mp3().await {
-            log::info!("telegram-bot random: picked cached MP3: {}", chosen);
-            send_audio(bot, chat_id, &chosen).await;
-            return;
-        }
-    }
+    // /random now returns ONLY the sentence text with an optional ▶️ Play
+    // button; the audio is generated on demand when the button is pressed.
+    // Explicit --voice/--effect flags are accepted but ignored for the text
+    // reply (the Play button always renders with the default voice/effect).
 
     // Fetch sentences from database.
     let sentences = if !search_text.is_empty() {
@@ -578,48 +582,55 @@ async fn cmd_random(bot: &Bot, chat_id: ChatId, state: &AppState, args: &str) {
         log::error!("telegram-bot random: failed to record sentence usage: {}", e);
     }
 
+    // Send the text with an inline ▶️ Play button. The callback data carries
+    // the sentence itself (Telegram allows up to 64 bytes of callback data —
+    // sentences are truncated to fit, matching the TTS 200-char limit).
+    let callback_data = format!("play:{}", truncate_for_callback(&random_sentence));
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+        "▶️ Play",
+        callback_data,
+    )]]);
+    let _ = bot
+        .send_message(chat_id, &random_sentence)
+        .reply_markup(keyboard)
+        .await;
+}
+
+/// Truncate a sentence for use as inline-button callback data (Telegram
+/// caps callback_data at 64 bytes; keep a safe margin).
+fn truncate_for_callback(s: &str) -> String {
+    let max_bytes = 60;
+    if s.len() <= max_bytes {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    for ch in s.chars() {
+        if out.len() + ch.len_utf8() > max_bytes - 3 {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push('…');
+    out
+}
+
+/// Generate and send the audio for a sentence (the ▶️ Play action). Uses the
+/// default voice/effect policy: a random voice when no effect is in play,
+/// Google otherwise — mirroring the /random command's rules.
+async fn play_sentence(bot: &Bot, chat_id: ChatId, state: &AppState, sentence: &str) {
     // Google TTS truncates on text longer than ~200 chars.
-    let tts_text: String = if random_sentence.chars().count() > 200 {
-        let truncated: String = random_sentence.chars().take(200).collect();
+    let tts_text: String = if sentence.chars().count() > 200 {
+        let truncated: String = sentence.chars().take(200).collect();
         format!("{truncated}...")
     } else {
-        random_sentence.clone()
+        sentence.to_string()
     };
 
-    // "random" resolves against Google + registered cloned voices (clones
-    // still fall back to Google if fish.audio fails). Non-random values are
-    // used as-is.
-    let voice_is_random = voice == "random";
-    let effect_is_random = effect == "random";
-    let actual_voice = if voice_is_random {
-        tts::pick_random_voice().await
-    } else {
-        voice
-    };
-    // Effects apply ONLY to the built-in Google voice unless the user
-    // explicitly names both voice and effect: a randomized voice pick
-    // or a randomized effect pins the rendering voice to Google.
-    let actual_voice = if (voice_is_random && effect != "none") || effect_is_random {
-        "Google".to_string()
-    } else {
-        actual_voice
-    };
-    if !tts::is_valid_voice(&actual_voice) {
-        let _ = bot.send_message(chat_id, &state.lang.invalid_voice).await;
-        return;
-    }
+    // Voice policy: the Play button renders with the built-in Google voice
+    // and no effect (effects apply only when explicitly requested).
+    let actual_voice = "Google".to_string();
 
-    let actual_effect = if effect_is_random {
-        crate::audio_effects::random_effect().to_string()
-    } else {
-        effect
-    };
-    if !crate::audio_effects::is_valid_effect(&actual_effect) {
-        let _ = bot.send_message(chat_id, &state.lang.invalid_effect).await;
-        return;
-    }
-
-    match tts::get_or_generate_tts_with_effect(&tts_text, &actual_voice, &actual_effect).await {
+    match tts::get_or_generate_tts_with_effect(&tts_text, &actual_voice, "none").await {
         Ok(tts_result) => {
             // Surface a Google-fallback (cloned voice unavailable) to the user.
             if let Some(warn) = &tts_result.fallback_used {
@@ -628,7 +639,7 @@ async fn cmd_random(bot: &Bot, chat_id: ChatId, state: &AppState, args: &str) {
             send_audio(bot, chat_id, &tts_result.file_path).await;
         }
         Err(e) => {
-            log::error!("TTS generation failed: {}", e);
+            log::error!("TTS generation failed (play button): {}", e);
             let _ = bot.send_message(chat_id, &state.lang.error_generating_audio).await;
         }
     }
