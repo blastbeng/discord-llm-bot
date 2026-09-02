@@ -30,7 +30,7 @@ COPY src ./src
 RUN cargo build --release
 RUN test -f target/release/wapp-bot
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \

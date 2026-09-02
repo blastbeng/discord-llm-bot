@@ -48,7 +48,7 @@ RUN test -f target/release/discord-llm-bot
 # =============================================================================
 # Stage 4: Runtime — minimal image with only the binary and runtime deps
 # =============================================================================
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
