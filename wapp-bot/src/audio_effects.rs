@@ -423,7 +423,7 @@ Save as WAV file: output_audio_file_name$
 /// chipmunk: squirrel register — pitch ~267 Hz, formants x1.15 (NOT the
 /// cartoon x1.33 of tape), slightly faster; measured MOS 4.68 (base 3.97).
 const PRAAT_WOMAN: (&str, &str, &str, &str) = ("1.10", "205.0", "1.15", "1.03");
-const PRAAT_DEMON: (&str, &str, &str, &str) = ("0.88", "75.0", "0.70", "1.0");
+const PRAAT_DEMON: (&str, &str, &str, &str) = ("0.80", "65.0", "0.60", "1.0");
 const PRAAT_CHIPMUNK: (&str, &str, &str, &str) = ("1.28", "360.0", "1.30", "0.93");
 
 /// Convert a male voice to a female voice with the external `praat` binary.
@@ -588,10 +588,10 @@ async fn apply_chipmunk_praat(
     .await
 }
 
-/// Demon conversion: monster register (pitch ~83 Hz, formants DOWN x0.88,
-/// dark flat intonation x0.70) + 2.8 kHz low-pass muffle. The previous
-/// sub-octave growl layer (slower copy mixed underneath) created comb
-/// filtering that read as reverb - removed per user feedback.
+/// Demon conversion: monster register (pitch ~65 Hz target, formants DOWN
+/// x0.80, dark flat intonation x0.60) + 2.2 kHz low-pass muffle. The
+/// previous sub-octave growl layer (slower copy mixed underneath) created
+/// comb filtering that read as reverb - removed per user feedback.
 async fn apply_demon_praat(
     samples: Vec<f32>,
     sample_rate: u32,
@@ -608,11 +608,11 @@ async fn apply_demon_praat(
     )
     .await?;
 
-    // Dark muffle: 2.8 kHz low-pass (the classic demon coloration).
+    // Dark muffle: 2.2 kHz low-pass (the classic demon coloration).
     let sr = sample_rate as f32;
     let ch = channels.max(1) as usize;
     let mut lp = vec![0.0f32; ch];
-    let alpha = lp_alpha(2800.0, sr);
+    let alpha = lp_alpha(2200.0, sr);
     let mut out = out;
     for i in 0..(out.len() / ch) {
         for c in 0..ch {
