@@ -174,7 +174,7 @@ The Telegram bot mirrors the WhatsApp bot's commands (long polling, no webhook n
 ## Voices & Effects
 
 - **Voices**: Google by default. Optional per-user **voice cloning** (fish.audio cloud cloning + `clone:<name>` voices — see below).
-- **Effects**: `none`, `echo`, `reverb`, `bass`, `chipmunk`, `demon`, `telephone`, `underwater`. Use `--effect random`.
+- **Effects**: `none`, `chipmunk`, `demon`, `sexy` (sultry female voice). Use `--effect random` to pick one at random.
 
 ## Voice Cloning (fish.audio)
 
