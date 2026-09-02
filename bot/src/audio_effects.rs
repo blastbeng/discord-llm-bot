@@ -423,8 +423,8 @@ Save as WAV file: output_audio_file_name$
 /// chipmunk: squirrel register — pitch ~267 Hz, formants x1.15 (NOT the
 /// cartoon x1.33 of tape), slightly faster; measured MOS 4.68 (base 3.97).
 const PRAAT_WOMAN: (&str, &str, &str, &str) = ("1.10", "205.0", "1.15", "1.03");
-const PRAAT_DEMON: (&str, &str, &str, &str) = ("0.88", "80.0", "0.80", "1.0");
-const PRAAT_CHIPMUNK: (&str, &str, &str, &str) = ("1.25", "350.0", "1.30", "0.95");
+const PRAAT_DEMON: (&str, &str, &str, &str) = ("0.88", "75.0", "0.70", "1.0");
+const PRAAT_CHIPMUNK: (&str, &str, &str, &str) = ("1.28", "360.0", "1.30", "0.93");
 
 /// Convert a male voice to a female voice with the external `praat` binary.
 ///
@@ -588,11 +588,10 @@ async fn apply_chipmunk_praat(
     .await
 }
 
-/// Demon conversion: monster register (pitch ~87 Hz, formants DOWN x0.88,
-/// dark flat intonation x0.8) + 2.8 kHz muffle + a sub-octave growl layer
-/// (a 6% slower copy mixed underneath adds the demonic chest rumble).
-/// The previous npm 95/fsr 0.92 version read as "just a deep voice" per
-/// user; the growl layer is what makes it demonic.
+/// Demon conversion: monster register (pitch ~83 Hz, formants DOWN x0.88,
+/// dark flat intonation x0.70) + 2.8 kHz low-pass muffle. The previous
+/// sub-octave growl layer (slower copy mixed underneath) created comb
+/// filtering that read as reverb - removed per user feedback.
 async fn apply_demon_praat(
     samples: Vec<f32>,
     sample_rate: u32,
@@ -609,45 +608,17 @@ async fn apply_demon_praat(
     )
     .await?;
 
+    // Dark muffle: 2.8 kHz low-pass (the classic demon coloration).
     let sr = sample_rate as f32;
     let ch = channels.max(1) as usize;
-    let frames = out.len() / ch;
-
-    // Sub-octave growl: a 6%-slower copy of the voice (tape down), heavily
-    // low-passed, mixed underneath at ~35%. This adds the demonic chest
-    // rumble that a pure pitch shift lacks.
-    let growl_speed = 0.94f32;
-    let growl = change_speed(out.clone(), growl_speed, channels);
     let mut lp = vec![0.0f32; ch];
-    let lp_alpha_g = lp_alpha(500.0, sr);
-    let mut growl_lp = growl;
-    for i in 0..(growl_lp.len() / ch) {
-        for c in 0..ch {
-            let idx = i * ch + c;
-            lp[c] += lp_alpha_g * (growl_lp[idx] - lp[c]);
-            growl_lp[idx] = lp[c];
-        }
-    }
-
-    // Dark muffle on the main voice (2.8 kHz).
+    let alpha = lp_alpha(2800.0, sr);
     let mut out = out;
-    let mut lp2 = vec![0.0f32; ch];
-    let lp_alpha_m = lp_alpha(2800.0, sr);
-    for i in 0..frames {
+    for i in 0..(out.len() / ch) {
         for c in 0..ch {
             let idx = i * ch + c;
-            lp2[c] += lp_alpha_m * (out[idx] - lp2[c]);
-            out[idx] = lp2[c];
-        }
-    }
-
-    // Mix: growl layer underneath (it is longer; use only the overlapping
-    // region, aligning at the start).
-    let n = out.len().min(growl_lp.len());
-    for i in 0..(n / ch) {
-        for c in 0..ch {
-            let idx = i * ch + c;
-            out[idx] = 0.75 * out[idx] + 0.45 * growl_lp[idx];
+            lp[c] += alpha * (out[idx] - lp[c]);
+            out[idx] = lp[c];
         }
     }
     Ok(out)
