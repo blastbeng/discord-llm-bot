@@ -373,14 +373,16 @@ fn apply_woman(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
 /// uniformly scaling all formants up (fsr 1.25) reads as a cartoon vocal
 /// tract (chipmunk). Real female formants sit only ~10% above male, so the
 /// formant shift is kept small (1.10) while pitch carries the gender
-/// (npm 205, range 1.15 for livelier intonation). A subtle continuous
-/// high-passed air layer adds the female breathiness cue.
+/// (npm 205, range 1.15 for livelier intonation). A slight duration
+/// stretch (1.03) smooths the PSOLA grain artifacts and matches female
+/// articulation. A subtle continuous high-passed air layer adds the
+/// female breathiness cue.
 const PRAAT_PITCH_FLOOR: &str = "75.0";
 const PRAAT_PITCH_CEILING: &str = "600.0";
 const PRAAT_FORMANT_SHIFT_RATIO: &str = "1.10";
 const PRAAT_NEW_PITCH_MEDIAN: &str = "205.0";
 const PRAAT_PITCH_RANGE_FACTOR: &str = "1.15";
-const PRAAT_DURATION_FACTOR: &str = "1.0";
+const PRAAT_DURATION_FACTOR: &str = "1.03";
 
 const PRAAT_CHANGE_GENDER_SCRIPT: &str = r#"form Change gender
     sentence Input_audio_file_name
@@ -812,7 +814,14 @@ mod tests {
         let out = apply_woman_praat(samples, sample_rate, 1)
             .await
             .expect("praat conversion must succeed when installed");
-        assert_eq!(out.len(), n, "praat must preserve sample count");
+        // Duration_factor 1.03 stretches the output by ~3%.
+        let expected = (n as f64 * 1.03) as usize;
+        assert!(
+            (out.len() as i64 - expected as i64).abs() <= 512,
+            "praat output length {} != ~{} (1.03x duration)",
+            out.len(),
+            expected
+        );
         let peak = out.iter().fold(0.0f32, |p, s| p.max(s.abs()));
         assert!(peak > 0.01, "praat output is silent (peak {peak})");
     }
