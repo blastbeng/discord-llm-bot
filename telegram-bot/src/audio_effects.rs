@@ -368,6 +368,15 @@ fn apply_woman(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
 /// formant_shift_ratio, new_pitch_median, pitch_range_factor, duration_factor.
 /// It manipulates the pitch track (PSOLA) and the formant/spectral envelope
 /// INDEPENDENTLY — exactly what tape shifts and chunked vocoders cannot do.
+/// Tuned on the real Google IT voice (male, median F0 ~124 Hz) via
+/// talky-talky: fsr 1.20 + npm 200 measured median F0 192.2 Hz, MOS 4.73.
+const PRAAT_PITCH_FLOOR: &str = "75.0";
+const PRAAT_PITCH_CEILING: &str = "600.0";
+const PRAAT_FORMANT_SHIFT_RATIO: &str = "1.20";
+const PRAAT_NEW_PITCH_MEDIAN: &str = "200.0";
+const PRAAT_PITCH_RANGE_FACTOR: &str = "1.0";
+const PRAAT_DURATION_FACTOR: &str = "1.0";
+
 const PRAAT_CHANGE_GENDER_SCRIPT: &str = r#"form Change gender
     sentence Input_audio_file_name
     sentence Output_audio_file_name
@@ -419,10 +428,24 @@ async fn apply_woman_praat(
             .await
             .map_err(|e| format!("script write: {e}"))?;
 
+        // Praat requires EVERY form argument after the script path — passing
+        // only input/output makes the script abort with "Found 2 arguments
+        // but expected more" (this bug silently forced the DSP fallback).
         let output = tokio::time::timeout(
             std::time::Duration::from_secs(20),
             tokio::process::Command::new("praat")
-                .args(["--run", &script_path, &in_path, &out_path])
+                .args([
+                    "--run",
+                    &script_path,
+                    &in_path,
+                    &out_path,
+                    PRAAT_PITCH_FLOOR,
+                    PRAAT_PITCH_CEILING,
+                    PRAAT_FORMANT_SHIFT_RATIO,
+                    PRAAT_NEW_PITCH_MEDIAN,
+                    PRAAT_PITCH_RANGE_FACTOR,
+                    PRAAT_DURATION_FACTOR,
+                ])
                 .output(),
         )
         .await
@@ -430,9 +453,10 @@ async fn apply_woman_praat(
         .map_err(|e| format!("praat spawn: {e}"))?;
         if !output.status.success() {
             return Err(format!(
-                "praat exited {}: {}",
+                "praat exited {}: stderr={} stdout={}",
                 output.status,
-                String::from_utf8_lossy(&output.stderr).chars().take(200).collect::<String>()
+                String::from_utf8_lossy(&output.stderr).chars().take(200).collect::<String>(),
+                String::from_utf8_lossy(&output.stdout).chars().take(200).collect::<String>()
             ));
         }
         let (out_samples, out_rate, out_channels) = read_wav_file(&out_path).await?;
@@ -721,6 +745,39 @@ mod tests {
         for (a, b) in samples.iter().zip(back.iter()) {
             assert!((a - b).abs() < 2.5 / 32768.0, "{a} vs {b}");
         }
+    }
+
+    #[tokio::test]
+    async fn test_praat_woman_conversion_end_to_end() {
+        // Guards the exact Praat invocation used in production: form
+        // arguments, file IO, and output format. Skips when praat is absent.
+        let available = tokio::process::Command::new("praat")
+            .arg("--version")
+            .output()
+            .await
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !available {
+            eprintln!("praat not installed; skipping end-to-end test");
+            return;
+        }
+        // Speech-like input: 124 Hz tone + harmonics (male Google register).
+        let sample_rate = 24000u32;
+        let n = sample_rate as usize * 2;
+        let samples: Vec<f32> = (0..n)
+            .map(|i| {
+                let t = i as f32 / sample_rate as f32;
+                (std::f32::consts::TAU * 124.0 * t).sin() * 0.4
+                    + (std::f32::consts::TAU * 248.0 * t).sin() * 0.2
+                    + (std::f32::consts::TAU * 372.0 * t).sin() * 0.1
+            })
+            .collect();
+        let out = apply_woman_praat(samples, sample_rate, 1)
+            .await
+            .expect("praat conversion must succeed when installed");
+        assert_eq!(out.len(), n, "praat must preserve sample count");
+        let peak = out.iter().fold(0.0f32, |p, s| p.max(s.abs()));
+        assert!(peak > 0.01, "praat output is silent (peak {peak})");
     }
 
     #[test]
