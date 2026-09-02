@@ -295,49 +295,54 @@ fn time_stretch_wsola(samples: Vec<f32>, rate: f32, channels: u16) -> Vec<f32> {
     result
 }
 
-/// Woman voice transformer — female re-voicing of the built-in Google TTS.
+/// Woman voice transformer — male→female conversion of the built-in Google
+/// TTS (the Google IT voice is MALE: median F0 ~124 Hz, measured).
 ///
-/// The effect is tuned EXCLUSIVELY for the built-in Google voice (and by
-/// policy effects only ever render on Google unless a voice is explicitly
-/// chosen): Google's TTS voice is already female, median F0 ~124 Hz
-/// (measured with talky-talky pitch detection on real output).
+/// Research-grounded recipe (DAFX "gender change", VTLN literature): a
+/// convincing M→F conversion needs F0 shifted into the female range
+/// (~165-255 Hz, Italian speech ~190-220) AND the vocal-tract/formant
+/// scaling raised only ~x1.1-1.25, with the male chest resonance removed.
+/// Pitch and formants must move INDEPENDENTLY — a pure tape shift couples
+/// them (formants x1.57 at F0 195 = child tract = chipmunk), and the only
+/// formant-preserving pitch shifter available (the `pitch_shift` crate,
+/// 128-sample vocoder chunks) measured MOS 1.8-3.7 at every usable shift on
+/// 24 kHz speech, so it is not used here.
 ///
-/// Technique: TAPE shift, not a phase vocoder. The `pitch_shift` crate is
-/// locked to 128-sample vocoder chunks; at large shifts its short window
-/// drags formants with the pitch (chipmunk: +7 st measured 187 Hz / MOS
-/// 1.91) and even moderate upshifts smear (best vocoder variant: MOS 3.7).
-/// A tape shift raises pitch AND formants together — which is exactly what
-/// distinguishes a female voice — with zero vocoder artifacts, and the
-/// resulting duration shortening is corrected with the pitch-preserving
-/// WSOLA stretch.
-///
-/// Recipe (talky-talky A/B on real Google TTS, best of 25 variants):
-///   1. tape shift +2.5 st (F0 ~124 -> ~142 Hz, formants up: true female)
-///   2. WSOLA time-correction back to ~original duration (no extra pacing)
-///   3. softness stack: -0.26 dB body trim + gentle air re-add above 4 kHz
-/// Measured result: median F0 141.6 Hz, MOS 4.70 (untouched Google = 4.95;
-/// the -2 st "dark" tuning = 4.48 but reads as a booming announcer, not a
-/// woman; extra slow-down on top of tape hurts: 4.24).
+/// Best artifact-free compromise (best of 31 measured variants, talky-talky
+/// pitch+quality analysis on real Google TTS):
+///   1. tape shift +4.0 st: F0 ~124 -> ~154 Hz (female alto register),
+///      formants rise together to x1.26 (inside the female x1.1-1.25 band)
+///   2. WSOLA time-correction back to ~original duration (pitch-preserving)
+///   3. M→F spectral tilt: cut ~35% of the male chest resonance below
+///      ~250 Hz, re-add +10% air above 4 kHz (female brightness)
+/// Measured: median F0 154.1 Hz, MOS 4.25 (raw Google = 4.95; +2.5 st tape
+/// without tilt = "not a woman" per user; +5..6 st = MOS 3.0-3.3; every
+/// pitch_shift-crate chain = 1.8-3.7; gated breath = noisiness collapse).
 fn apply_woman(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
-    // Tape shift: pitch and formants move together (female signature).
-    let speed = 2.0f32.powf(2.5 / 12.0);
+    // Tape shift: pitch and formants move together (formant rise is part of
+    // the female signature, as long as it stays in the x1.1-1.3 band).
+    let speed = 2.0f32.powf(4.0 / 12.0);
     let taped = change_speed(samples, speed, channels);
     // WSOLA corrects the tape shortening back to ~original duration.
     // WSOLA's `rate` is output/input (rate 2.0 = half as long).
     let mut out = time_stretch_wsola(taped, 1.0 / speed, channels);
 
-    // Softness stack: 0.26 dB body trim + gentle air re-add above ~4 kHz.
+    // M→F spectral tilt: remove the male chest resonance (low shelf dip at
+    // ~250 Hz) and re-add female presence (air above ~4 kHz).
     let sr = sample_rate as f32;
     let ch = channels.max(1) as usize;
     let mut air_lp = vec![0.0f32; ch];
+    let mut low_lp = vec![0.0f32; ch];
     let air_alpha = lp_alpha(4000.0, sr);
+    let low_alpha = lp_alpha(250.0, sr);
     for i in 0..(out.len() / ch) {
         for c in 0..ch {
             let idx = i * ch + c;
             let x = out[idx];
             air_lp[c] += air_alpha * (x - air_lp[c]);
+            low_lp[c] += low_alpha * (x - low_lp[c]);
             let air = x - air_lp[c];
-            out[idx] = x * 0.97 + air * 0.03;
+            out[idx] = (x - 0.35 * low_lp[c]) + air * 0.10;
         }
     }
     out
@@ -557,14 +562,14 @@ mod tests {
     #[test]
     fn test_woman_effect_shifts_pitch_and_stretches() {
         // A 124 Hz tone in (measured Google-TTS median F0), the woman chain
-        // (tape +2.5 st, WSOLA time-correction) must come back with a
-        // dominant frequency near 124 × 2^(2.5/12) ≈ 141.7 Hz and a duration
+        // (tape +4.0 st, WSOLA time-correction) must come back with a
+        // dominant frequency near 124 × 2^(4/12) ≈ 156.2 Hz and a duration
         // ~equal to the input (WSOLA corrects the tape shortening). The
         // analysis window sits well inside the signal.
         let sample_rate = 24000u32;
         let dur_secs = 2.0;
         let n = (sample_rate as f32 * dur_secs) as usize;
-        // 124 Hz = measured Google-TTS median F0; +2.5 st tape is the shift.
+        // 124 Hz = measured Google-TTS median F0; +4.0 st tape is the shift.
         let input_f0 = 124.0;
         let input: Vec<f32> = (0..n)
             .map(|i| {
@@ -584,7 +589,7 @@ mod tests {
         );
 
         // Dominant frequency via zero-padded DFT peak around the expectation.
-        let expected = input_f0 * 2.0f32.powf(2.5 / 12.0);
+        let expected = input_f0 * 2.0f32.powf(4.0 / 12.0);
         let analyze = |data: &[f32], lo: f32, hi: f32| -> f32 {
             let mut best = (0.0f32, 0.0f32);
             let steps = 400;
