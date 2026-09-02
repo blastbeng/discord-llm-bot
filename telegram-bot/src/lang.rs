@@ -167,11 +167,13 @@ impl Lang {
                     /deletevoice <name> — Delete a cloned voice\n\
                     /joke — Fetch a random joke (text response)\n\n\
                     *AI & LLM:*\n\
-                    /ask <question> — Ask the AI a question (text response)\n\
+                    /ask <question> — Ask the AI a question (text response, with web search)\n\
                     /translate <text> <lang> — Translate text via LLM (text response)\n\n\
                     *Utility:*\n\
+                    /buttons — Show the quick-action buttons (random, jokes, my voices, help)\n\
                     /stats — Show bot statistics\n\
                     /help — Show this help message\n\n\
+                    Tip: just write me anything (no command) and I will answer like /ask!\n\n\
                     *Available voices:* {}\n\
                     *Available effects:* {}".to_string(),
                 speak_usage: "Usage: /speak <text> [--voice Google] [--effect none]".to_string(),
@@ -275,11 +277,13 @@ impl Lang {
                     /deletevoice <nome> — Elimina una voce clonata\n\
                     /joke — Recupera una battuta casuale (risposta di testo)\n\n\
                     *IA & LLM:*\n\
-                    /ask <domanda> — Fai una domanda all'IA (risposta di testo)\n\
+                    /ask <domanda> — Fai una domanda all'IA (risposta di testo, con ricerca web)\n\
                     /translate <testo> <lingua> — Traduce testo via LLM (risposta di testo)\n\n\
                     *Utilità:*\n\
+                    /buttons — Mostra i pulsanti rapidi (random, battute, voci, help)\n\
                     /stats — Mostra le statistiche del bot\n\
                     /help — Mostra questo messaggio di aiuto\n\n\
+                    Suggerimento: scrivimi qualsiasi cosa (senza comando) e risponderò come /ask!\n\n\
                     *Voci disponibili:* {}\n\
                     *Effetti disponibili:* {}".to_string(),
                 speak_usage: "Uso: /speak <testo> [--voice Google] [--effect none]".to_string(),

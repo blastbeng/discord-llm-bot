@@ -317,6 +317,22 @@ pub async fn ask(
         return Err("No LLM endpoints configured".to_string());
     }
 
+    // Web search: give the LLM fresh web context for the question (MCP
+    // gateway first, then SearXNG direct, then DuckDuckGo). Failures are
+    // non-fatal — the answer just loses the web context.
+    let web_context = match web_search(question).await {
+        Some(ctx) => {
+            log::info!("llm::ask: web context acquired ({} chars)", ctx.len());
+            format!(
+                "\n\nWeb search results for the question (may contain the answer):\n{ctx}\nUse these results if they are relevant; ignore them if not."
+            )
+        }
+        None => {
+            log::info!("llm::ask: no web context available");
+            String::new()
+        }
+    };
+
     // Build the system prompt with database context.
     // Limit to 30 sentences to keep the prompt size reasonable.
     let sentences_sample: Vec<&str> = db_sentences.iter().take(30).map(|s| s.as_str()).collect();
@@ -363,8 +379,9 @@ pub async fn ask(
     for msg in &history[start..] {
         messages.push(serde_json::json!({"role": msg.role, "content": msg.content}));
     }
-    // Add the current question
-    messages.push(serde_json::json!({"role": "user", "content": question}));
+    // Add the current question, enriched with the web-search context.
+    let enriched_question = format!("{question}{web_context}");
+    messages.push(serde_json::json!({"role": "user", "content": enriched_question}));
 
     let client = llm_client();
     let mut last_error = String::new();
@@ -1486,4 +1503,253 @@ pub async fn eavesdrop_response(
     }
 
     Err(format!("All LLM endpoints failed. Last error: {}", last_error))
+}
+
+// ─── Web search (MCP gateway + fallbacks) ─────────────────────────
+
+/// Search the web for recent information relevant to `question`.
+///
+/// Primary path: the local Docker MCP gateway (`MCP_GATEWAY_URL` +
+/// `MCP_GATEWAY_TOKEN`), calling the `searxng_web_search` tool over the
+/// MCP streamable-HTTP transport. Fallbacks, in order: the SearXNG
+/// instance directly (HTML endpoint, `SEARXNG_URL`), then DuckDuckGo's
+/// HTML endpoint. Returns a compact multi-line digest of title+snippet
+/// pairs, or None when every path fails (the caller then just answers
+/// without web context).
+pub async fn web_search(question: &str) -> Option<String> {
+    if let Some(r) = mcp_web_search(question).await {
+        log::info!("llm::web_search: mcp gateway ok ({} chars)", r.len());
+        return Some(r);
+    }
+    log::warn!("llm::web_search: mcp gateway unavailable, trying fallbacks");
+    if let Some(r) = searxng_direct_search(question).await {
+        log::info!("llm::web_search: searxng direct ok");
+        return Some(r);
+    }
+    if let Some(r) = duckduckgo_search(question).await {
+        log::info!("llm::web_search: duckduckgo fallback ok");
+        return Some(r);
+    }
+    log::warn!("llm::web_search: all search paths failed");
+    None
+}
+
+/// Call the MCP gateway's searxng_web_search tool. The gateway speaks the
+/// MCP streamable-HTTP transport: initialize -> initialized -> tools/call,
+/// keeping the Mcp-Session-Id header across calls.
+async fn mcp_web_search(question: &str) -> Option<String> {
+    let url = std::env::var("MCP_GATEWAY_URL").ok()?;
+    let token = std::env::var("MCP_GATEWAY_TOKEN").ok()?;
+    if url.is_empty() || token.is_empty() {
+        return None;
+    }
+    let client = llm_client();
+
+    // 1) initialize — capture the session id.
+    let init_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "discord-llm-bot", "version": "1.0"}
+        }
+    });
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&init_body)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .ok()?;
+    let session = resp
+        .headers()
+        .get("Mcp-Session-Id")
+        .and_then(|v| v.to_str().ok())?
+        .to_string();
+    if !resp.status().is_success() {
+        log::warn!("llm::mcp_web_search: initialize failed ({})", resp.status());
+        return None;
+    }
+    let _ = resp.text().await;
+
+    // 2) initialized notification (no response body expected).
+    let _ = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Mcp-Session-Id", &session)
+        .json(&serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await;
+
+    // 3) tools/call searxng_web_search.
+    let call_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "searxng_web_search",
+            "arguments": {"query": question, "num_results": 5}
+        }
+    });
+    let resp = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Mcp-Session-Id", &session)
+        .json(&call_body)
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        log::warn!("llm::mcp_web_search: tools/call failed ({})", resp.status());
+        return None;
+    }
+    let body = resp.text().await.ok()?;
+    // The gateway answers with SSE frames: "event: message\ndata: {...}".
+    let json_line = body
+        .lines()
+        .find(|l| l.starts_with("data: "))?
+        .strip_prefix("data: ")?;
+    let v: serde_json::Value = serde_json::from_str(json_line_trim(json_line)).ok()?;
+    let text = v
+        .get("result")?
+        .get("content")?
+        .get(0)?
+        .get("text")?
+        .as_str()?
+        .to_string();
+    if text.is_empty() {
+        return None;
+    }
+    // Compact the digest: keep only Title/Description lines, cap length.
+    let mut digest = String::new();
+    for line in text.lines() {
+        if line.starts_with("Title:") || line.starts_with("Description:") {
+            digest.push_str(line.trim());
+            digest.push('\n');
+        }
+        if digest.len() > 1500 {
+            break;
+        }
+    }
+    if digest.is_empty() {
+        Some(text.chars().take(1500).collect())
+    } else {
+        Some(digest)
+    }
+}
+
+fn json_line_trim(s: &str) -> &str {
+    s.trim()
+}
+
+/// Fallback 1: query the SearXNG instance directly (JSON format endpoint).
+async fn searxng_direct_search(question: &str) -> Option<String> {
+    let base = std::env::var("SEARXNG_URL").unwrap_or_else(|_| "http://searxng:8080".to_string());
+    let client = llm_client();
+    let resp = client
+        .get(format!("{base}/search"))
+        .query(&[("q", question), ("format", "json"), ("language", "it")])
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let v: serde_json::Value = resp.json().await.ok()?;
+    let results = v.get("results")?.as_array()?;
+    let mut digest = String::new();
+    for r in results.iter().take(5) {
+        let title = r.get("title").and_then(|t| t.as_str()).unwrap_or("");
+        let content = r.get("content").and_then(|c| c.as_str()).unwrap_or("");
+        if !title.is_empty() {
+            digest.push_str(&format!("Title: {title}\nDescription: {content}\n"));
+        }
+        if digest.len() > 1500 {
+            break;
+        }
+    }
+    if digest.is_empty() { None } else { Some(digest) }
+}
+
+/// Fallback 2: DuckDuckGo HTML endpoint, results scraped from the lite page.
+async fn duckduckgo_search(question: &str) -> Option<String> {
+    let client = llm_client();
+    let resp = client
+        .post("https://html.duckduckgo.com/html/")
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(format!("q={}", urlencode(question)))
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let html = resp.text().await.ok()?;
+    // Extract result titles+snippets: <a class="result__a" ...>Title</a>
+    // and <a class="result__snippet" ...>snippet</a>.
+    let mut digest = String::new();
+    let mut chars = html.char_indices().peekable();
+    let _ = &mut chars;
+    for part in html.split("result__a") {
+        if digest.len() > 1500 {
+            break;
+        }
+        if let Some(t0) = part.find('>') {
+            if let Some(t1) = part[t0 + 1..].find('<') {
+                let title = &part[t0 + 1..t0 + 1 + t1];
+                if !title.is_empty() && digest.len() + title.len() < 1500 {
+                    digest.push_str(&format!("Title: {}\n", strip_tags(title)));
+                }
+            }
+        }
+        if let Some(s0) = part.find("result__snippet") {
+            if let Some(gt) = part[s0..].find('>') {
+                if let Some(lt) = part[s0 + gt + 1..].find('<') {
+                    let snip = &part[s0 + gt + 1..s0 + gt + 1 + lt];
+                    digest.push_str(&format!("Description: {}\n", strip_tags(snip)));
+                }
+            }
+        }
+    }
+    if digest.is_empty() { None } else { Some(digest) }
+}
+
+fn strip_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn urlencode(s: &str) -> String {
+    let mut out = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
 }
