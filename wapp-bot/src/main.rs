@@ -387,9 +387,15 @@ async fn cmd_random(state: &AppState, payload: &WebhookPayload, args: &str) {
     // /random picks a RANDOM voice when the user does not select one: a mix of
     // the built-in Google voice and every registered cloned voice (clones
     // still fall back to Google if fish.audio fails). Every other command
-    // keeps Google as its default.
+    // keeps Google as its default. EXCEPTION: when an effect is in play
+    // (explicit or randomized) the voice is pinned to Google — effects apply
+    // ONLY to the built-in Google voice unless the user explicitly names a
+    // specific voice.
+    let effect_pins_google = effect != "none";
     let voice = if voice_explicitly_set {
         voice
+    } else if effect_pins_google {
+        "Google".to_string()
     } else {
         tts::pick_random_voice().await
     };
