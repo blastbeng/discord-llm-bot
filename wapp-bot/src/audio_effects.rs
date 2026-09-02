@@ -295,7 +295,7 @@ fn time_stretch_wsola(samples: Vec<f32>, rate: f32, channels: u16) -> Vec<f32> {
     result
 }
 
-/// Sexy voice transformer — sultry re-voicing of the built-in Google TTS.
+/// Woman voice transformer — female re-voicing of the built-in Google TTS.
 ///
 /// The effect is tuned EXCLUSIVELY for the built-in Google voice (and by
 /// policy effects only ever render on Google unless a voice is explicitly
@@ -318,7 +318,7 @@ fn time_stretch_wsola(samples: Vec<f32>, rate: f32, channels: u16) -> Vec<f32> {
 /// Measured result: median F0 141.6 Hz, MOS 4.70 (untouched Google = 4.95;
 /// the -2 st "dark" tuning = 4.48 but reads as a booming announcer, not a
 /// woman; extra slow-down on top of tape hurts: 4.24).
-fn apply_sexy(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
+fn apply_woman(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
     // Tape shift: pitch and formants move together (female signature).
     let speed = 2.0f32.powf(2.5 / 12.0);
     let taped = change_speed(samples, speed, channels);
@@ -381,7 +381,7 @@ fn apply_effect(
         "chipmunk" => Ok(apply_chipmunk(samples, sample_rate, channels)),
         "demon" => Ok(apply_demon(samples, sample_rate, channels)),
         // Sultry female voice: phase-vocoder M→F conversion + slow pacing.
-        "sexy" => Ok(apply_sexy(samples, sample_rate, channels)),
+        "woman" => Ok(apply_woman(samples, sample_rate, channels)),
         // Female voices: PHASE VOCODER pitch shift (formant-preserving —
         // the spectral envelope does NOT move, which is what made tape
         // shifts read as chipmunk). Targets measured on real Google TTS
@@ -453,7 +453,7 @@ pub async fn compress_and_save_mp3_with_effect(
 pub fn is_valid_effect(effect: &str) -> bool {
     matches!(
         effect,
-        "none" | "chipmunk" | "demon" | "sexy" | "random"
+        "none" | "chipmunk" | "demon" | "woman" | "random"
     )
 }
 
@@ -462,7 +462,7 @@ pub const AVAILABLE_EFFECTS: &[&str] = &[
     "none",
     "chipmunk",
     "demon",
-    "sexy",
+    "woman",
     "random",
 ];
 
@@ -473,7 +473,7 @@ pub const RANDOM_EFFECT_POOL: &[&str] = &[
     "none",
     "chipmunk",
     "demon",
-    "sexy",
+    "woman",
 ];
 
 /// Pick a uniformly random effect from [`RANDOM_EFFECT_POOL`] (real effects
@@ -496,7 +496,7 @@ mod tests {
         assert!(is_valid_effect("none"));
         assert!(is_valid_effect("chipmunk"));
         assert!(is_valid_effect("demon"));
-        assert!(is_valid_effect("sexy"));
+        assert!(is_valid_effect("woman"));
         assert!(is_valid_effect("random"));
         assert!(!is_valid_effect("woman1"));
         assert!(!is_valid_effect("woman2"));
@@ -555,8 +555,8 @@ mod tests {
     }
 
     #[test]
-    fn test_sexy_effect_shifts_pitch_and_stretches() {
-        // A 124 Hz tone in (measured Google-TTS median F0), the sexy chain
+    fn test_woman_effect_shifts_pitch_and_stretches() {
+        // A 124 Hz tone in (measured Google-TTS median F0), the woman chain
         // (tape +2.5 st, WSOLA time-correction) must come back with a
         // dominant frequency near 124 × 2^(2.5/12) ≈ 141.7 Hz and a duration
         // ~equal to the input (WSOLA corrects the tape shortening). The
@@ -573,12 +573,12 @@ mod tests {
             })
             .collect();
 
-        let out = apply_sexy(input, sample_rate, 1);
+        let out = apply_woman(input, sample_rate, 1);
         // Tape shortens by 2^(2.5/12); WSOLA corrects back to ~input length.
         let expected_len = n;
         assert!(
             (out.len() as i64 - expected_len as i64).abs() <= 512,
-            "sexy length {} != ~{} (time-corrected)",
+            "woman length {} != ~{} (time-corrected)",
             out.len(),
             expected_len
         );
