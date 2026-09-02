@@ -302,90 +302,33 @@ fn time_stretch_wsola(samples: Vec<f32>, rate: f32, channels: u16) -> Vec<f32> {
 /// chosen): Google's TTS voice is already female, median F0 ~124 Hz
 /// (measured with talky-talky pitch detection on real output).
 ///
-/// Why NOT shift up: the `pitch_shift` crate is locked to 128-sample vocoder
-/// chunks, and at large shifts its short window drags formants up with the
-/// pitch — on Google's female voice +7 st measured 187 Hz median with a
-/// 1.91 MOS: a textbook chipmunk. Shifting DOWN avoids the artifact
-/// entirely: small shifts smear almost nothing.
+/// Technique: TAPE shift, not a phase vocoder. The `pitch_shift` crate is
+/// locked to 128-sample vocoder chunks; at large shifts its short window
+/// drags formants with the pitch (chipmunk: +7 st measured 187 Hz / MOS
+/// 1.91) and even moderate upshifts smear (best vocoder variant: MOS 3.7).
+/// A tape shift raises pitch AND formants together — which is exactly what
+/// distinguishes a female voice — with zero vocoder artifacts, and the
+/// resulting duration shortening is corrected with the pitch-preserving
+/// WSOLA stretch.
 ///
-/// Recipe (talky-talky A/B on real Google TTS, best of 14 variants):
-///   1. PV pitch shift -2 st (F0 ~124 -> ~113 Hz: deep, unhurried register)
-///   2. slow-down 10% (WSOLA, pitch-preserving — intimate pacing)
+/// Recipe (talky-talky A/B on real Google TTS, best of 25 variants):
+///   1. tape shift +2.5 st (F0 ~124 -> ~142 Hz, formants up: true female)
+///   2. WSOLA time-correction back to ~original duration (no extra pacing)
 ///   3. softness stack: -0.26 dB body trim + gentle air re-add above 4 kHz
-/// Measured result: median F0 112.6 Hz, MOS 4.48 (untouched Google = 4.95;
-/// the old +7.3 st tuning = 1.91 chipmunk).
+/// Measured result: median F0 141.6 Hz, MOS 4.70 (untouched Google = 4.95;
+/// the -2 st "dark" tuning = 4.48 but reads as a booming announcer, not a
+/// woman; extra slow-down on top of tape hurts: 4.24).
 fn apply_sexy(samples: Vec<f32>, sample_rate: u32, channels: u16) -> Vec<f32> {
-    // PV pitch shift first, then the WSOLA slow-down (stretching the already
-    // shifted signal keeps the two stages independent and artifact-free).
-    // WSOLA's `rate` is output/input (rate 2.0 = half as long), so slowing
-    // down by 10% means passing 1/1.10.
-    let shifted = female_voice(samples, sample_rate, channels, -2.0, false);
-    time_stretch_wsola(shifted, 1.0 / 1.10, channels)
-}
+    // Tape shift: pitch and formants move together (female signature).
+    let speed = 2.0f32.powf(2.5 / 12.0);
+    let taped = change_speed(samples, speed, channels);
+    // WSOLA corrects the tape shortening back to ~original duration.
+    // WSOLA's `rate` is output/input (rate 2.0 = half as long).
+    let mut out = time_stretch_wsola(taped, 1.0 / speed, channels);
 
-fn female_voice(
-    samples: Vec<f32>,
-    sample_rate: u32,
-    channels: u16,
-    pitch_semitones: f32,
-    breathy: bool,
-) -> Vec<f32> {
-    let ch = channels.max(1) as usize;
-    let n = samples.len();
-    if n == 0 {
-        return samples;
-    }
-    let mut out = vec![0.0f32; n];
-
-    for c in 0..ch {
-        // De-interleave this channel.
-        let chan: Vec<f32> = samples.iter().skip(c).step_by(ch).copied().collect();
-        // Dither away digital silence (the vocoder's phase-diff math can
-        // produce NaN on all-zero input frames).
-        // TTS may lead with digital silence; the vocoder's phase-diff math
-        // can emit NaN on all-zero frames, so add ±1e-7 dither. NOTE the
-        // scale: (rng>>40) spans 0..2^24, so the divisor must bring the
-        // result to ±1e-7 total (a first version produced a ±2.0 offset!).
-        let mut rng: u64 = 0x9E3779B97F4A7C15 ^ ((c as u64 + 1).wrapping_mul(0xD1B54A32D192ED03));
-        let dithered: Vec<f32> = chan
-            .iter()
-            .map(|x| {
-                rng ^= rng >> 12;
-                rng ^= rng << 25;
-                rng ^= rng >> 27;
-                let u = (rng >> 40) as f32 / 16777216.0; // 0..1
-                x + (u - 0.5) * 2.0e-7
-            })
-            .collect();
-
-        let state_vec: Vec<f32> = vec![0.0; pitch_shift::TOTAL_F32];
-        let state_box: Box<[f32; pitch_shift::TOTAL_F32]> =
-            state_vec.into_boxed_slice().try_into().unwrap();
-        let mut shifter = pitch_shift::Shifter::new(state_box);
-
-        let mut shifted: Vec<f32> = Vec::with_capacity(chan.len() + 1024);
-        for chunk in dithered.chunks(128) {
-            if chunk.len() < 128 {
-                break;
-            }
-            let produced = shifter.shift(chunk, pitch_semitones, 128, sample_rate as f32);
-            shifted.extend_from_slice(produced);
-        }
-        // Skip the 1024-sample warmup (zeros), then interleave back.
-        let skip = 1024.min(shifted.len());
-        for (i, v) in shifted[skip..].iter().enumerate() {
-            let dst = skip * ch + c + i * ch;
-            if dst < out.len() {
-                out[dst] = *v;
-            }
-        }
-    }
-
-    // ── Softness stack ──────────────────────────────────────────────────
-    // 0.26 dB body trim + gentle air re-add above ~4 kHz: keeps the voice
-    // soft and clear without the fizz of saturation-based exciters. The
-    // trim is mild on purpose: stronger mixes measured worse.
+    // Softness stack: 0.26 dB body trim + gentle air re-add above ~4 kHz.
     let sr = sample_rate as f32;
+    let ch = channels.max(1) as usize;
     let mut air_lp = vec![0.0f32; ch];
     let air_alpha = lp_alpha(4000.0, sr);
     for i in 0..(out.len() / ch) {
@@ -397,36 +340,9 @@ fn female_voice(
             out[idx] = x * 0.97 + air * 0.03;
         }
     }
-
-    // Optional breath: quiet noise gated to quiet moments (word gaps).
-    if breathy {
-        let env_alpha = lp_alpha(700.0, sr);
-        let mut env = vec![0.0f32; ch];
-        let mut rng: u64 = 0x9E3779B97F4A7C15;
-        let frames = out.len() / ch;
-        for i in 0..frames {
-            rng ^= rng >> 12;
-            rng ^= rng << 25;
-            rng ^= rng >> 27;
-            let noise =
-                ((rng.wrapping_mul(0x2545F4914F6CDD1D) >> 33) as i32 as f32 / 2147483648.0) * 0.010;
-            for c in 0..ch {
-                let idx = i * ch + c;
-                let x = out[idx];
-                env[c] += env_alpha * (x.abs() - env[c]);
-                let quiet = (1.0 - (env[c] * 6.0).clamp(0.0, 1.0)) * 0.5;
-                out[idx] = x + noise * quiet;
-            }
-        }
-    }
-    // Trim any pad tail the shifter added (it outputs 128 per 128 in — exact).
-    out.truncate(n);
     out
 }
 
-/// Resample-based speed change (pitch and tempo move together, exactly like
-/// tape speed — the classic way to build chipmunk/demon voices). Linear
-/// interpolation keeps the interleaved channel layout intact.
 fn change_speed(samples: Vec<f32>, speed: f32, channels: u16) -> Vec<f32> {
     if (speed - 1.0).abs() < 0.01 || channels == 0 {
         return samples;
@@ -641,14 +557,14 @@ mod tests {
     #[test]
     fn test_sexy_effect_shifts_pitch_and_stretches() {
         // A 124 Hz tone in (measured Google-TTS median F0), the sexy chain
-        // (-2.0 st PV shift, ×1.10 slow-down) must come back with a dominant
-        // frequency near 124 × 2^(-2/12) ≈ 110.5 Hz and a duration ~10%
-        // longer. The PV warms up over its first ~1024 samples, so the
-        // analysis window sits well inside.
+        // (tape +2.5 st, WSOLA time-correction) must come back with a
+        // dominant frequency near 124 × 2^(2.5/12) ≈ 141.7 Hz and a duration
+        // ~equal to the input (WSOLA corrects the tape shortening). The
+        // analysis window sits well inside the signal.
         let sample_rate = 24000u32;
         let dur_secs = 2.0;
         let n = (sample_rate as f32 * dur_secs) as usize;
-        // 124 Hz = measured Google-TTS median F0; -2.0 st is the effect's shift.
+        // 124 Hz = measured Google-TTS median F0; +2.5 st tape is the shift.
         let input_f0 = 124.0;
         let input: Vec<f32> = (0..n)
             .map(|i| {
@@ -658,17 +574,17 @@ mod tests {
             .collect();
 
         let out = apply_sexy(input, sample_rate, 1);
-        // PV is sample-exact; the WSOLA slow-down adds ~10% (+rounding).
-        let expected_len = (n as f32 * 1.10) as usize;
+        // Tape shortens by 2^(2.5/12); WSOLA corrects back to ~input length.
+        let expected_len = n;
         assert!(
             (out.len() as i64 - expected_len as i64).abs() <= 512,
-            "sexy length {} != ~{} (1.10x stretch)",
+            "sexy length {} != ~{} (time-corrected)",
             out.len(),
             expected_len
         );
 
         // Dominant frequency via zero-padded DFT peak around the expectation.
-        let expected = input_f0 * 2.0f32.powf(-2.0 / 12.0);
+        let expected = input_f0 * 2.0f32.powf(2.5 / 12.0);
         let analyze = |data: &[f32], lo: f32, hi: f32| -> f32 {
             let mut best = (0.0f32, 0.0f32);
             let steps = 400;
