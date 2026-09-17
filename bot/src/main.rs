@@ -2716,22 +2716,42 @@ async fn play_soundboard_item(
         .map_err(|e| format!("Failed to create soundboard cache dir: {}", e))?;
     let cache_path = format!("{}/{}.mp3", cache_dir, format!("{:x}", md5::compute(url.as_bytes())));
 
-    // Ensure the plain audio is cached (download only on a cache miss).
-    if !tokio::fs::try_exists(&cache_path).await.unwrap_or(false) {
-        let bytes = reqwest::Client::builder()
+    // Ensure the plain audio is cached (download only on a cache miss, or when
+    // the cached entry is not real audio — e.g. an error page a previous build
+    // cached when the download was blocked).
+    if !is_cached_audio(&cache_path).await {
+        let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(20))
             .build()
-            .map_err(|e| format!("Failed to build download client: {}", e))?
+            .map_err(|e| format!("Failed to build download client: {}", e))?;
+        let resp = client
             .get(url)
+            // MyInstants sits behind Cloudflare: the bare reqwest UA gets a 403
+            // HTML block page instead of the mp3. The search request works
+            // with this same UA, so send it here too.
+            .header("User-Agent", "Mozilla/5.0 (discord-llm-bot soundboard)")
             .send()
             .await
-            .map_err(|e| format!("Failed to download sound: {}", e))?
+            .map_err(|e| format!("Failed to download sound: {}", e))?;
+        let status = resp.status();
+        let bytes = resp
             .bytes()
             .await
             .map_err(|e| format!("Failed to read sound: {}", e))?
             .to_vec();
-        if bytes.is_empty() {
-            return Err("The sound file was empty.".to_string());
+        if !status.is_success() || !looks_like_audio(&bytes) {
+            // Never cache a failed download — a cached block page would poison
+            // every future click of this sound.
+            let hint = if bytes.starts_with(b"<") {
+                " (site refused the download, try again later)"
+            } else {
+                ""
+            };
+            return Err(format!(
+                "The sound download failed (HTTP {}{}).",
+                status.as_u16(),
+                hint
+            ));
         }
         tokio::fs::write(&cache_path, &bytes)
             .await
@@ -2779,6 +2799,34 @@ async fn play_soundboard_item(
     }
 
     Ok("Playing soundboard sound.".to_string())
+}
+
+/// Whether the cached sound file exists AND starts with a real audio
+/// signature. Cache entries that are not audio (e.g. a Cloudflare block page
+/// saved by an older build) report false so they get re-downloaded.
+async fn is_cached_audio(path: &str) -> bool {
+    use tokio::io::AsyncReadExt;
+    let Ok(mut f) = tokio::fs::File::open(path).await else {
+        return false;
+    };
+    let mut magic = [0u8; 4];
+    match f.read_exact(&mut magic).await {
+        Ok(_) => looks_like_audio(&magic),
+        Err(_) => false,
+    }
+}
+
+/// Cheap magic-byte check for the audio formats MyInstants may serve (mp3 via
+/// an ID3 tag or a raw MPEG frame, plus wav/ogg/flac just in case).
+fn looks_like_audio(bytes: &[u8]) -> bool {
+    if bytes.len() < 4 {
+        return false;
+    }
+    bytes.starts_with(b"ID3")
+        || (bytes[0] == 0xFF && bytes[1] & 0xE0 == 0xE0)
+        || bytes.starts_with(b"RIFF")
+        || bytes.starts_with(b"OggS")
+        || bytes.starts_with(b"fLaC")
 }
 
 /// Keep the soundboard download cache bounded: if it exceeds `max_files`,
