@@ -3485,14 +3485,26 @@ async fn main() {
                                 let action = parts[0];
                                 let session_id = parts.get(1).copied().unwrap_or("").to_string();
                                 let Some(guild_id) = component.guild_id else { return Ok(()) };
+                                log::info!(
+                                    "Component interaction: soundboard {} by user {} (session {})",
+                                    action, component.user.id, session_id
+                                );
 
                                 match action {
                                     "close" => {
                                         data.soundboard_sessions.lock().unwrap().remove(&session_id);
+                                        // UpdateMessage (type 7) rewrites the message the button
+                                        // is attached to. edit_response cannot be used here: it
+                                        // edits the *initial interaction response*, which does
+                                        // not exist until this interaction is acknowledged.
                                         let _ = component
-                                            .edit_response(
+                                            .create_response(
                                                 ctx,
-                                                serenity::EditInteractionResponse::new().content("Soundboard chiuso.").components(Vec::new()),
+                                                serenity::CreateInteractionResponse::UpdateMessage(
+                                                    serenity::CreateInteractionResponseMessage::new()
+                                                        .content("Soundboard chiuso.")
+                                                        .components(Vec::new()),
+                                                ),
                                             )
                                             .await;
                                     }
@@ -3513,10 +3525,37 @@ async fn main() {
                                                 None
                                             }
                                         };
-                                        if let Some((embed, rows)) = view {
-                                            let _ = component
-                                                .edit_response(ctx, serenity::EditInteractionResponse::new().embed(embed).components(rows))
-                                                .await;
+                                        match view {
+                                            Some((embed, rows)) => {
+                                                // UpdateMessage (type 7) rewrites the message the
+                                                // button is attached to; edit_response cannot be
+                                                // used because this interaction was never
+                                                // acknowledged before.
+                                                let _ = component
+                                                    .create_response(
+                                                        ctx,
+                                                        serenity::CreateInteractionResponse::UpdateMessage(
+                                                            serenity::CreateInteractionResponseMessage::new()
+                                                                .embed(embed)
+                                                                .components(rows),
+                                                        ),
+                                                    )
+                                                    .await;
+                                            }
+                                            None => {
+                                                // Session expired/evicted — tell the user instead
+                                                // of failing silently.
+                                                let _ = component
+                                                    .create_response(
+                                                        ctx,
+                                                        serenity::CreateInteractionResponse::Message(
+                                                            serenity::CreateInteractionResponseMessage::new()
+                                                                .content("Sessione soundboard scaduta, rifai /soundboard.")
+                                                                .ephemeral(true),
+                                                        ),
+                                                    )
+                                                    .await;
+                                            }
                                         }
                                     }
                                     "play" => {
@@ -3525,11 +3564,31 @@ async fn main() {
                                             let sessions = data.soundboard_sessions.lock().unwrap();
                                             sessions.get(&session_id).cloned()
                                         };
-                                        let Some(session) = session else { return Ok(()) };
+                                        let Some(session) = session else {
+                                            // Session expired/evicted — tell the user instead of
+                                            // leaving a dead "thinking" interaction.
+                                            let _ = component
+                                                .create_response(
+                                                    ctx,
+                                                    serenity::CreateInteractionResponse::Message(
+                                                        serenity::CreateInteractionResponseMessage::new()
+                                                            .content("Sessione soundboard scaduta, rifai /soundboard.")
+                                                            .ephemeral(true),
+                                                    ),
+                                                )
+                                                .await;
+                                            return Ok(());
+                                        };
                                         if index >= session.items.len() {
                                             return Ok(());
                                         }
                                         let item = &session.items[index];
+                                        log::info!(
+                                            "Component interaction: soundboard play '{}' ({}) by user {}",
+                                            item.title,
+                                            item.url,
+                                            component.user.id
+                                        );
                                         let _ = component
                                             .create_response(
                                                 ctx,
